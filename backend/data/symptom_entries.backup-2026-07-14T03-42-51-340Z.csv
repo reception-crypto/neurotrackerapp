@@ -1,0 +1,10 @@
+SubmissionId,ReceivedAt,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent
+NT-1783998204959-884681837,2026-07-14T03:03:25.361Z,2026-07-14,13:03,lachy,Primary,Migraine,Headache,0,50
+NT-1783998204959-884681837,2026-07-14T03:03:25.361Z,2026-07-14,13:03,lachy,Primary,Migraine,Nausea,0,50
+NT-1783998204959-884681837,2026-07-14T03:03:25.361Z,2026-07-14,13:03,lachy,Primary,Migraine,Vomiting,0,50
+NT-1783997549172-884681837,2026-07-14T03:03:27.956Z,2026-07-14,12:52,lachy,Primary,Migraine,Headache,4,70
+NT-1783997549172-884681837,2026-07-14T03:03:27.956Z,2026-07-14,12:52,lachy,Primary,Migraine,Nausea,3,70
+NT-1783997549172-884681837,2026-07-14T03:03:27.956Z,2026-07-14,12:52,lachy,Primary,Migraine,Vomiting,4,70
+2026-07-14T03:31:35.607Z,2026-07-14,13:31,lachy pascoeeee,Primary,Migraine,Headache,8,70
+2026-07-14T03:31:35.607Z,2026-07-14,13:31,lachy pascoeeee,Primary,Migraine,Brain fog,8,70
+2026-07-14T03:31:35.607Z,2026-07-14,13:31,lachy pascoeeee,Primary,Migraine,Fatigue,7,70

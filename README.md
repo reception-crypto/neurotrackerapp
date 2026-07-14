@@ -1,17 +1,76 @@
-# neurotrackerapp
+# NeuroTracker Clinical
 
-A new Flutter project.
+Minimal Flutter application for patients to record three symptoms per disorder and a daily wellness percentage. The project includes a CSV-backed clinician portal with individual and cohort analytics.
 
-## Getting Started
+## Version
 
-This project is a starting point for a Flutter application.
+`1.0.0+1`
 
-A few resources to get you started if this is your first Flutter project:
+## Mobile features
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- Migraine, dysautonomia, CIDP and myasthenia gravis
+- Optional second disorder
+- Three selected symptoms per disorder
+- Daily symptom scores from 0–10 (`10 = worst`)
+- Wellness score from 10%–100% (`100% = best`)
+- Daily local reminder
+- Offline-first local storage
+- Automatic retry queue for failed uploads
+- Visible synced/pending status
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Run on the clinic network
+
+```cmd
+flutter pub get
+flutter run --dart-define=NEUROTRACKER_API_URL=http://YOUR-SERVER-IP:3000 --dart-define=NEUROTRACKER_API_KEY=YOUR_API_KEY
+```
+
+## Android release build
+
+Patient release builds should use an HTTPS backend:
+
+```cmd
+flutter build apk --release --dart-define=NEUROTRACKER_API_URL=https://YOUR-SERVER --dart-define=NEUROTRACKER_API_KEY=YOUR_API_KEY
+```
+
+The APK is created at:
+
+```text
+build/app/outputs/flutter-apk/app-release.apk
+```
+
+The current Android release build is configured with the debug signing key for internal testing. Configure a permanent release keystore before broader distribution.
+
+## iOS cloud build
+
+The iOS bundle identifier is:
+
+```text
+au.com.pascoeneurology.neurotracker
+```
+
+A signed iOS build still requires Apple-authorised signing and distribution. Cloud macOS services can compile the project, but they cannot bypass Apple signing requirements.
+
+## Backend
+
+```cmd
+cd backend
+npm install
+npm start
+```
+
+Portal:
+
+```text
+http://localhost:3000/admin
+```
+
+Population analytics:
+
+```text
+http://localhost:3000/admin/population
+```
+
+## Privacy and deployment
+
+This application handles identifiable health information. Do not release it to patients over public networks until the backend is protected by HTTPS, appropriate access controls, secure backups and clinic-approved privacy documentation.

@@ -24,6 +24,54 @@ class WellnessScreen extends StatefulWidget {
 
 class _WellnessScreenState extends State<WellnessScreen> {
   int wellnessPercent = 50;
+  bool submitting = false;
+
+  Future<void> _submit() async {
+    if (submitting) return;
+    setState(() => submitting = true);
+
+    final entry = CsvService.generateDailyEntry(
+      profile: widget.profile,
+      symptomScores: widget.symptomScores,
+      wellnessPercent: wellnessPercent,
+    );
+    final rows = CsvService.rowsFromEntry(entry);
+
+    await StorageService.saveEntryRows(rows);
+    await StorageService.addPendingEntry(entry);
+    final uploaded = await UploadService.uploadDailyEntry(entry);
+    if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
+    final pending = await StorageService.pendingCount();
+
+    if (!mounted) return;
+    setState(() => submitting = false);
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(uploaded ? 'Check-in synced' : 'Check-in saved'),
+        content: Text(
+          uploaded
+              ? 'Today’s check-in has been securely sent to the clinic.'
+              : 'Today’s check-in is safely stored on this phone and will retry automatically when the clinic server is available.\n\nPending uploads: $pending',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DailySymptomScreen(profile: widget.profile),
+      ),
+      (_) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,11 +84,15 @@ class _WellnessScreenState extends State<WellnessScreen> {
           children: [
             Text('Step 2 of 2', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
-            Text('Overall Wellness', style: Theme.of(context).textTheme.headlineMedium),
+            Text('Overall Wellness',
+                style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 16),
             Text(
               'Thinking about your day as a whole, how well have you felt today?\n\n100% represents your best possible day.\n10% represents your worst possible day.',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: AppTheme.secondaryText),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyLarge
+                  ?.copyWith(color: AppTheme.secondaryText),
             ),
             const SizedBox(height: 26),
             Wrap(
@@ -62,47 +114,8 @@ class _WellnessScreenState extends State<WellnessScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: () async {
-                    final entry = CsvService.generateDailyEntry(
-                      profile: widget.profile,
-                      symptomScores: widget.symptomScores,
-                      wellnessPercent: wellnessPercent,
-                    );
-                    final rows = CsvService.rowsFromEntry(entry);
-
-                    for (final row in rows) {
-                      await StorageService.saveEntry(row);
-                    }
-
-                    final uploaded = await UploadService.uploadDailyEntry(entry);
-
-                    if (!context.mounted) return;
-                    showDialog(
-                      context: context,
-                      builder: (_) => AlertDialog(
-                        title: Text(uploaded ? 'Saved and Uploaded' : 'Saved Locally'),
-                        content: Text(
-                          uploaded
-                              ? 'Today’s check-in was recorded and uploaded to the clinic database.\n\n${rows.join('\n')}'
-                              : 'Today’s check-in was recorded on this phone, but the clinic database could not be reached.\n\n${rows.join('\n')}',
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () {
-                              Navigator.pop(context);
-                              Navigator.pushAndRemoveUntil(
-                                context,
-                                MaterialPageRoute(builder: (_) => DailySymptomScreen(profile: widget.profile)),
-                                (_) => false,
-                              );
-                            },
-                            child: const Text('OK'),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                  child: const Text('Submit'),
+                  onPressed: submitting ? null : _submit,
+                  child: Text(submitting ? 'Saving…' : 'Submit'),
                 ),
               ),
             ),

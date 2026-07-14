@@ -2,7 +2,8 @@ import '../models/daily_entry.dart';
 import '../models/patient_profile.dart';
 
 class CsvService {
-  static const header = 'Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent';
+  static const header =
+      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent';
 
   static DailyEntry generateDailyEntry({
     required PatientProfile profile,
@@ -14,6 +15,8 @@ class CsvService {
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final time =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    final submissionId =
+        'NT-${now.millisecondsSinceEpoch}-${profile.fullName.hashCode.abs()}';
 
     final records = <SymptomScoreRecord>[];
 
@@ -40,6 +43,7 @@ class CsvService {
     }
 
     return DailyEntry(
+      submissionId: submissionId,
       date: date,
       time: time,
       patientName: profile.fullName,
@@ -51,6 +55,7 @@ class CsvService {
   static List<String> rowsFromEntry(DailyEntry entry) {
     return entry.records.map((record) {
       return [
+        _escape(entry.submissionId),
         entry.date,
         entry.time,
         _escape(entry.patientName),
@@ -63,9 +68,7 @@ class CsvService {
     }).toList();
   }
 
-  static String buildCsv(List<String> rows) {
-    return [header, ...rows].join('\n');
-  }
+  static String buildCsv(List<String> rows) => [header, ...rows].join('\n');
 
   static String _escape(String value) {
     if (value.contains(',') || value.contains('"') || value.contains('\n')) {

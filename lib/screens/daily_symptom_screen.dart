@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../models/patient_profile.dart';
 import '../theme/app_theme.dart';
+import '../services/storage_service.dart';
+import '../services/upload_service.dart';
 import '../widgets/score_button.dart';
 import 'settings_screen.dart';
 import 'wellness_screen.dart';
@@ -17,12 +19,20 @@ class DailySymptomScreen extends StatefulWidget {
 
 class _DailySymptomScreenState extends State<DailySymptomScreen> {
   late Map<String, int> scores;
+  int pendingUploads = 0;
+
+  Future<void> _refreshSyncStatus() async {
+    await UploadService.retryPendingUploads();
+    final count = await StorageService.pendingCount();
+    if (mounted) setState(() => pendingUploads = count);
+  }
 
   String _key(String track, String disorder, String symptom) => '$track|$disorder|$symptom';
 
   @override
   void initState() {
     super.initState();
+    _refreshSyncStatus();
     scores = {};
     for (final symptom in widget.profile.primarySymptoms) {
       scores[_key('Primary', widget.profile.primaryDisorder, symptom)] = 0;
@@ -51,7 +61,29 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Step 1 of 2', style: Theme.of(context).textTheme.titleLarge),
+            Row(
+              children: [
+                Expanded(child: Text('Step 1 of 2', style: Theme.of(context).textTheme.titleLarge)),
+                InkWell(
+                  onTap: _refreshSyncStatus,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          pendingUploads == 0 ? Icons.cloud_done : Icons.cloud_upload,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(pendingUploads == 0 ? 'Synced' : '$pendingUploads pending'),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             Text('Today’s Symptoms', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),

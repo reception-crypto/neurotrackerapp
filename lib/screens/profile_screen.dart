@@ -37,59 +37,68 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Patient Profile')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Setup', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 20),
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Full name'),
-            ),
-            const SizedBox(height: 20),
-            DropdownButtonFormField<String>(
-              value: primaryDisorder,
-              decoration: const InputDecoration(labelText: 'Primary disorder'),
-              dropdownColor: const Color(0xFF2A2A2A),
-              items: disorderItems,
-              onChanged: (value) => setState(() => primaryDisorder = value ?? 'Migraine'),
-            ),
-            const SizedBox(height: 12),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: useSecondDisorder,
-              onChanged: (value) => setState(() => useSecondDisorder = value ?? false),
-              title: const Text('Track a second disorder'),
-              subtitle: const Text('Optional. Patients still select three symptoms for each disorder.'),
-              controlAffinity: ListTileControlAffinity.leading,
-            ),
-            if (useSecondDisorder) ...[
-              const SizedBox(height: 8),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Setup', style: Theme.of(context).textTheme.headlineMedium),
+              const SizedBox(height: 20),
+              TextField(
+                controller: nameController,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(labelText: 'Full name'),
+              ),
+              const SizedBox(height: 20),
               DropdownButtonFormField<String>(
-                value: secondaryDisorder,
-                decoration: const InputDecoration(labelText: 'Second disorder'),
+                initialValue: primaryDisorder,
+                decoration: const InputDecoration(labelText: 'Primary disorder'),
                 dropdownColor: const Color(0xFF2A2A2A),
                 items: disorderItems,
-                onChanged: (value) => setState(() => secondaryDisorder = value ?? 'Dysautonomia'),
+                onChanged: (value) => setState(() => primaryDisorder = value ?? 'Migraine'),
               ),
-            ],
-            const SizedBox(height: 20),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Daily reminder time'),
-              subtitle: Text(reminderTime.format(context)),
-              trailing: const Icon(Icons.schedule),
-              onTap: () async {
-                final picked = await showTimePicker(context: context, initialTime: reminderTime);
-                if (picked != null) setState(() => reminderTime = picked);
-              },
-            ),
-            const Spacer(),
-            SafeArea(
-              minimum: const EdgeInsets.only(bottom: 20),
-              child: SizedBox(
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: useSecondDisorder,
+                onChanged: (value) => setState(() => useSecondDisorder = value ?? false),
+                title: const Text('Track a second disorder'),
+                subtitle: const Text(
+                  'Optional. Patients still select three symptoms for each disorder.',
+                ),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+              if (useSecondDisorder) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  key: ValueKey(secondaryDisorder),
+                  initialValue: secondaryDisorder,
+                  decoration: const InputDecoration(labelText: 'Second disorder'),
+                  dropdownColor: const Color(0xFF2A2A2A),
+                  items: disorderItems,
+                  onChanged: (value) => setState(
+                    () => secondaryDisorder = value ?? 'Dysautonomia',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Daily reminder time'),
+                subtitle: Text(reminderTime.format(context)),
+                trailing: const Icon(Icons.schedule),
+                onTap: () async {
+                  final picked = await showTimePicker(
+                    context: context,
+                    initialTime: reminderTime,
+                  );
+                  if (picked != null) setState(() => reminderTime = picked);
+                },
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: nameController.text.trim().isEmpty
@@ -100,7 +109,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               builder: (_) => SymptomSelectionScreen(
                                 fullName: nameController.text.trim(),
                                 primaryDisorder: primaryDisorder,
-                                secondaryDisorder: useSecondDisorder ? secondaryDisorder : null,
+                                secondaryDisorder:
+                                    useSecondDisorder ? secondaryDisorder : null,
                                 reminderTime: reminderTime,
                               ),
                             ),
@@ -108,8 +118,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: const Text('Continue'),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

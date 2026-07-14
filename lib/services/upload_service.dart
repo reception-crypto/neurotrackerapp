@@ -4,10 +4,12 @@ import 'package:http/http.dart' as http;
 
 import '../models/daily_entry.dart';
 import 'api_config.dart';
+import 'storage_service.dart';
 
 class UploadService {
   static Future<bool> uploadDailyEntry(DailyEntry entry) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}/api/symptom-entry');
+    final base = ApiConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$base/api/symptom-entry');
 
     try {
       final response = await http
@@ -19,11 +21,25 @@ class UploadService {
             },
             body: jsonEncode(entry.toApiJson()),
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 10));
 
-      return response.statusCode >= 200 && response.statusCode < 300;
+      final succeeded = response.statusCode >= 200 && response.statusCode < 300;
+      if (succeeded) await StorageService.recordSuccessfulSync();
+      return succeeded;
     } catch (_) {
       return false;
     }
+  }
+
+  static Future<int> retryPendingUploads() async {
+    final pending = await StorageService.loadPendingEntries();
+    var uploaded = 0;
+    for (final entry in pending) {
+      if (await uploadDailyEntry(entry)) {
+        await StorageService.removePendingEntry(entry.submissionId);
+        uploaded++;
+      }
+    }
+    return uploaded;
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/patient_profile.dart';
 import '../models/symptom_data.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import 'daily_symptom_screen.dart';
 
@@ -20,16 +21,84 @@ class SymptomSelectionScreen extends StatefulWidget {
   });
 
   @override
-  State<SymptomSelectionScreen> createState() => _SymptomSelectionScreenState();
+  State<SymptomSelectionScreen> createState() =>
+      _SymptomSelectionScreenState();
 }
 
 class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
   final List<String> primarySymptoms = [];
   final List<String> secondarySymptoms = [];
+  bool _saving = false;
 
-  bool get requiresSecondary => widget.secondaryDisorder != null && widget.secondaryDisorder!.isNotEmpty;
+  bool get requiresSecondary =>
+      widget.secondaryDisorder != null &&
+      widget.secondaryDisorder!.isNotEmpty;
 
-  bool get canFinish => primarySymptoms.length == 3 && (!requiresSecondary || secondarySymptoms.length == 3);
+  bool get canFinish =>
+      primarySymptoms.length == 3 &&
+      (!requiresSecondary || secondarySymptoms.length == 3);
+
+  Future<void> _finishSetup() async {
+    if (!canFinish || _saving) return;
+
+    setState(() => _saving = true);
+
+    try {
+      final profile = PatientProfile(
+        fullName: widget.fullName,
+        primaryDisorder: widget.primaryDisorder,
+        primarySymptoms: List<String>.from(primarySymptoms),
+        secondaryDisorder:
+            requiresSecondary ? widget.secondaryDisorder : null,
+        secondarySymptoms: requiresSecondary
+            ? List<String>.from(secondarySymptoms)
+            : const [],
+        reminderTime: widget.reminderTime,
+      );
+
+      await StorageService.saveProfile(profile);
+
+      final permissionGranted =
+          await NotificationService.requestPermission();
+
+      if (permissionGranted) {
+        await NotificationService.scheduleDailyReminder(
+          hour: widget.reminderTime.hour,
+          minute: widget.reminderTime.minute,
+        );
+      }
+
+      if (!mounted) return;
+
+      if (!permissionGranted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Profile saved. Notifications are currently disabled and can be enabled in phone settings.',
+            ),
+          ),
+        );
+      }
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DailySymptomScreen(profile: profile),
+        ),
+        (_) => false,
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() => _saving = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Setup could not be completed: $error'),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +109,10 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Select symptoms', style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              'Select symptoms',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 10),
             Text(
               requiresSecondary
@@ -75,26 +147,16 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: canFinish
-                      ? () async {
-                          final profile = PatientProfile(
-                            fullName: widget.fullName,
-                            primaryDisorder: widget.primaryDisorder,
-                            primarySymptoms: List<String>.from(primarySymptoms),
-                            secondaryDisorder: requiresSecondary ? widget.secondaryDisorder : null,
-                            secondarySymptoms: requiresSecondary ? List<String>.from(secondarySymptoms) : const [],
-                            reminderTime: widget.reminderTime,
-                          );
-                          await StorageService.saveProfile(profile);
-                          if (!context.mounted) return;
-                          Navigator.pushAndRemoveUntil(
-                            context,
-                            MaterialPageRoute(builder: (_) => DailySymptomScreen(profile: profile)),
-                            (_) => false,
-                          );
-                        }
-                      : null,
-                  child: const Text('Finish Setup'),
+                  onPressed: canFinish && !_saving ? _finishSetup : null,
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : const Text('Finish Setup'),
                 ),
               ),
             ),
@@ -134,15 +196,19 @@ class _SymptomChecklist extends StatelessWidget {
             const SizedBox(height: 8),
             ...symptoms.map((symptom) {
               final selected = selectedSymptoms.contains(symptom);
+
               return CheckboxListTile(
                 title: Text(symptom),
                 value: selected,
                 onChanged: (value) {
                   if (value == true) {
-                    if (selectedSymptoms.length < 3) selectedSymptoms.add(symptom);
+                    if (selectedSymptoms.length < 3) {
+                      selectedSymptoms.add(symptom);
+                    }
                   } else {
                     selectedSymptoms.remove(symptom);
                   }
+
                   onChanged();
                 },
               );

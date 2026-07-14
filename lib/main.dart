@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
-import 'theme/app_theme.dart';
 import 'screens/startup_screen.dart';
+import 'services/notification_service.dart';
+import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialise();
   runApp(const NeuroTrackerApp());
 }
 
@@ -13,7 +16,7 @@ class NeuroTrackerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NeuroTracker',
+      title: 'NeuroTracker Clinical',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkBlueTheme,
       home: const StartupScreen(),
