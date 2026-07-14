@@ -1,0 +1,117 @@
+import 'package:flutter/material.dart';
+
+import '../models/symptom_data.dart';
+import 'symptom_selection_screen.dart';
+
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final nameController = TextEditingController();
+  String primaryDisorder = 'Migraine';
+  bool useSecondDisorder = false;
+  String secondaryDisorder = 'Dysautonomia';
+  TimeOfDay reminderTime = const TimeOfDay(hour: 19, minute: 0);
+
+  @override
+  void initState() {
+    super.initState();
+    nameController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    super.dispose();
+  }
+
+  List<DropdownMenuItem<String>> get disorderItems => disorderSymptoms.keys
+      .map((disorder) => DropdownMenuItem(value: disorder, child: Text(disorder)))
+      .toList();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Patient Profile')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Setup', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 20),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Full name'),
+            ),
+            const SizedBox(height: 20),
+            DropdownButtonFormField<String>(
+              value: primaryDisorder,
+              decoration: const InputDecoration(labelText: 'Primary disorder'),
+              dropdownColor: const Color(0xFF2A2A2A),
+              items: disorderItems,
+              onChanged: (value) => setState(() => primaryDisorder = value ?? 'Migraine'),
+            ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: useSecondDisorder,
+              onChanged: (value) => setState(() => useSecondDisorder = value ?? false),
+              title: const Text('Track a second disorder'),
+              subtitle: const Text('Optional. Patients still select three symptoms for each disorder.'),
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+            if (useSecondDisorder) ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: secondaryDisorder,
+                decoration: const InputDecoration(labelText: 'Second disorder'),
+                dropdownColor: const Color(0xFF2A2A2A),
+                items: disorderItems,
+                onChanged: (value) => setState(() => secondaryDisorder = value ?? 'Dysautonomia'),
+              ),
+            ],
+            const SizedBox(height: 20),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Daily reminder time'),
+              subtitle: Text(reminderTime.format(context)),
+              trailing: const Icon(Icons.schedule),
+              onTap: () async {
+                final picked = await showTimePicker(context: context, initialTime: reminderTime);
+                if (picked != null) setState(() => reminderTime = picked);
+              },
+            ),
+            const Spacer(),
+            SafeArea(
+              minimum: const EdgeInsets.only(bottom: 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: nameController.text.trim().isEmpty
+                      ? null
+                      : () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => SymptomSelectionScreen(
+                                fullName: nameController.text.trim(),
+                                primaryDisorder: primaryDisorder,
+                                secondaryDisorder: useSecondDisorder ? secondaryDisorder : null,
+                                reminderTime: reminderTime,
+                              ),
+                            ),
+                          ),
+                  child: const Text('Continue'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

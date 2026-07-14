@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NeuroTracker Clinician Portal</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #1e1e1e; color: #f8fafc; }
+    header { padding: 22px 28px; border-bottom: 1px solid #3a3a3a; }
+    h1 { margin: 0; color: #bfdbfe; font-size: 26px; }
+    main { padding: 22px 28px; }
+    .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+    input { padding: 11px 12px; border-radius: 8px; border: 1px solid #4b5563; background: #2a2a2a; color: #f8fafc; min-width: 260px; }
+    button, a.button { background: #60a5fa; color: #111827; border: none; padding: 11px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-block; }
+    table { width: 100%; border-collapse: collapse; background: #2a2a2a; border-radius: 10px; overflow: hidden; }
+    th, td { padding: 10px; border-bottom: 1px solid #3a3a3a; text-align: left; font-size: 14px; }
+    th { color: #bfdbfe; background: #242424; position: sticky; top: 0; }
+    .muted { color: #d1d5db; }
+    .error { color: #fecaca; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>NeuroTracker Clinician Portal</h1>
+    <div class="muted">Recent symptom and wellness entries</div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <input id="search" placeholder="Search patient, disorder, symptom..." />
+      <button onclick="loadEntries()">Refresh</button>
+      <a class="button" href="/admin/export.csv">Download CSV</a>
+    </div>
+    <div id="status" class="muted">Loading...</div>
+    <div style="overflow:auto; max-height: 72vh;">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Time</th><th>Patient</th><th>Disorder</th>
+            <th>Symptom 1</th><th>Score</th><th>Symptom 2</th><th>Score</th><th>Symptom 3</th><th>Score</th>
+            <th>Wellness</th><th>Submitted</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+  <script>
+    let entries = [];
+
+    function rowMatches(row, query) {
+      if (!query) return true;
+      const haystack = Object.values(row).join(' ').toLowerCase();
+      return haystack.includes(query.toLowerCase());
+    }
+
+    function render() {
+      const query = document.getElementById('search').value.trim();
+      const tbody = document.getElementById('rows');
+      const filtered = entries.filter(row => rowMatches(row, query));
+      tbody.innerHTML = filtered.map(r => `
+        <tr>
+          <td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.time)}</td><td>${escapeHtml(r.patient_name)}</td><td>${escapeHtml(r.disorder)}</td>
+          <td>${escapeHtml(r.symptom_1)}</td><td>${r.score_1}</td><td>${escapeHtml(r.symptom_2)}</td><td>${r.score_2}</td><td>${escapeHtml(r.symptom_3)}</td><td>${r.score_3}</td>
+          <td>${r.wellness_percent}%</td><td>${escapeHtml(r.submitted_at)}</td>
+        </tr>
+      `).join('');
+      document.getElementById('status').textContent = `${filtered.length} shown / ${entries.length} total`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    }
+
+    async function loadEntries() {
+      document.getElementById('status').textContent = 'Loading...';
+      try {
+        const response = await fetch('/admin/api/entries');
+        if (!response.ok) throw new Error('Could not load entries.');
+        entries = await response.json();
+        render();
+      } catch (error) {
+        document.getElementById('status').innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    document.getElementById('search').addEventListener('input', render);
+    loadEntries();
+  </script>
+</body>
+</html>

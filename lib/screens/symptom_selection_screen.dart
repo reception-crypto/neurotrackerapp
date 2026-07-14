@@ -1,0 +1,155 @@
+import 'package:flutter/material.dart';
+
+import '../models/patient_profile.dart';
+import '../models/symptom_data.dart';
+import '../services/storage_service.dart';
+import 'daily_symptom_screen.dart';
+
+class SymptomSelectionScreen extends StatefulWidget {
+  final String fullName;
+  final String primaryDisorder;
+  final String? secondaryDisorder;
+  final TimeOfDay reminderTime;
+
+  const SymptomSelectionScreen({
+    super.key,
+    required this.fullName,
+    required this.primaryDisorder,
+    required this.secondaryDisorder,
+    required this.reminderTime,
+  });
+
+  @override
+  State<SymptomSelectionScreen> createState() => _SymptomSelectionScreenState();
+}
+
+class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
+  final List<String> primarySymptoms = [];
+  final List<String> secondarySymptoms = [];
+
+  bool get requiresSecondary => widget.secondaryDisorder != null && widget.secondaryDisorder!.isNotEmpty;
+
+  bool get canFinish => primarySymptoms.length == 3 && (!requiresSecondary || secondarySymptoms.length == 3);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Choose Symptoms')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Select symptoms', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 10),
+            Text(
+              requiresSecondary
+                  ? 'Select exactly three symptoms for each disorder.'
+                  : 'Select exactly three symptoms to track.',
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ListView(
+                children: [
+                  _SymptomChecklist(
+                    title: 'Primary: ${widget.primaryDisorder}',
+                    disorder: widget.primaryDisorder,
+                    selectedSymptoms: primarySymptoms,
+                    onChanged: () => setState(() {}),
+                  ),
+                  if (requiresSecondary) ...[
+                    const SizedBox(height: 24),
+                    _SymptomChecklist(
+                      title: 'Second: ${widget.secondaryDisorder}',
+                      disorder: widget.secondaryDisorder!,
+                      selectedSymptoms: secondarySymptoms,
+                      onChanged: () => setState(() {}),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SafeArea(
+              minimum: const EdgeInsets.only(bottom: 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: canFinish
+                      ? () async {
+                          final profile = PatientProfile(
+                            fullName: widget.fullName,
+                            primaryDisorder: widget.primaryDisorder,
+                            primarySymptoms: List<String>.from(primarySymptoms),
+                            secondaryDisorder: requiresSecondary ? widget.secondaryDisorder : null,
+                            secondarySymptoms: requiresSecondary ? List<String>.from(secondarySymptoms) : const [],
+                            reminderTime: widget.reminderTime,
+                          );
+                          await StorageService.saveProfile(profile);
+                          if (!context.mounted) return;
+                          Navigator.pushAndRemoveUntil(
+                            context,
+                            MaterialPageRoute(builder: (_) => DailySymptomScreen(profile: profile)),
+                            (_) => false,
+                          );
+                        }
+                      : null,
+                  child: const Text('Finish Setup'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SymptomChecklist extends StatelessWidget {
+  final String title;
+  final String disorder;
+  final List<String> selectedSymptoms;
+  final VoidCallback onChanged;
+
+  const _SymptomChecklist({
+    required this.title,
+    required this.disorder,
+    required this.selectedSymptoms,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final symptoms = disorderSymptoms[disorder] ?? [];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 6),
+            Text('${selectedSymptoms.length}/3 selected'),
+            const SizedBox(height: 8),
+            ...symptoms.map((symptom) {
+              final selected = selectedSymptoms.contains(symptom);
+              return CheckboxListTile(
+                title: Text(symptom),
+                value: selected,
+                onChanged: (value) {
+                  if (value == true) {
+                    if (selectedSymptoms.length < 3) selectedSymptoms.add(symptom);
+                  } else {
+                    selectedSymptoms.remove(symptom);
+                  }
+                  onChanged();
+                },
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
