@@ -7,6 +7,7 @@ const basicAuth = require('basic-auth');
 const PDFDocument = require('pdfkit');
 
 const app = express();
+app.set('trust proxy', 1);
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST ||
   (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
@@ -425,7 +426,7 @@ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
   doc.fontSize(20).text('NeuroTracker Clinical Report');doc.moveDown();
   doc.fontSize(11).text(`Patient: ${req.query.patient||'Cohort'}`);doc.text(`Disorder: ${req.query.disorder||'All'}`);doc.text(`Generated: ${new Date().toLocaleString('en-AU')}`);doc.moveDown();
   const dates=unique(rows,'Date');doc.text(`Date range: ${dates[0]||'-'} to ${dates[dates.length-1]||'-'}`);doc.text(`Submission rows: ${rows.length}`);doc.moveDown();
-  unique(rows,'Symptom').forEach(sym=>{const vals=rows.filter(r=>r.Symptom===sym).map(r=>r.ScoreNumber);doc.text(`${sym}: mean ${round1(mean(vals))}/10, range ${Math.min(...vals)}–${Math.max(...vals)}`)});
+  unique(rows,'Symptom').forEach(sym=>{const vals=rows.filter(r=>r.Symptom===sym).map(r=>r.ScoreNumber);doc.text(`${sym}: mean ${round1(mean(vals))}/10, range ${Math.min(...vals)}â€“${Math.max(...vals)}`)});
   const wellness=[...new Map(rows.filter(r=>r.WellnessNumber>0).map(r=>[`${r.Patient}|${r.Date}`,r.WellnessNumber])).values()];doc.moveDown().text(`Average wellness: ${round1(mean(wellness))}%`);
   doc.end();
 });
@@ -469,7 +470,7 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
   const patientChecks=allPatients.map(p=>`<label><input type="checkbox" name="patient" value="${html(p)}" ${overlayPatients.includes(p)?'checked':''}>${html(p)}</label>`).join('');
   const body=`<div class="cards"><div class="stat"><div class="label">Disorder</div><div class="value" style="font-size:20px">${html(disorder)}</div></div><div class="stat"><div class="label">Patients</div><div class="value">${cohort.length}</div></div><div class="stat"><div class="label">Latest cohort mean</div><div class="value">${latest.average}${metric==='wellness'?'%':'/10'}</div></div><div class="stat"><div class="label">Improving</div><div class="value good">${improving}</div></div><div class="stat"><div class="label">Deteriorating</div><div class="value flag">${deteriorating}</div></div><div class="stat"><div class="label">Cohort outliers</div><div class="value">${flagged.length}</div></div></div>
   <form class="panel toolbar" id="filters"><div class="field"><label>Disorder</label><select name="disorder">${options}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option></select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button type="button" onclick="applyFilters()">Update view</button></div></form>
-  <section class="panel"><h2>Cohort summary</h2><p class="muted">Faint grey lines are individual patients. Blue is the cohort mean, purple dashed is the median, and the shaded band is ±1 standard deviation.</p>${svgChart(cohort,metric,aggregation,'summary')}<div class="legend"><span><i class="swatch" style="background:#1d4ed8"></i>Cohort mean</span><span><i class="swatch" style="background:#7c3aed"></i>Median</span><span><i class="swatch" style="background:#93c5fd;height:12px"></i>±1 SD</span></div></section>
+  <section class="panel"><h2>Cohort summary</h2><p class="muted">Faint grey lines are individual patients. Blue is the cohort mean, purple dashed is the median, and the shaded band is Â±1 standard deviation.</p>${svgChart(cohort,metric,aggregation,'summary')}<div class="legend"><span><i class="swatch" style="background:#1d4ed8"></i>Cohort mean</span><span><i class="swatch" style="background:#7c3aed"></i>Median</span><span><i class="swatch" style="background:#93c5fd;height:12px"></i>Â±1 SD</span></div></section>
   <section class="panel"><h2>Patient overlay</h2><p class="muted">Select up to 10 patients for a legible comparison. The first 10 are shown by default.</p><div class="patient-list" id="patientList">${patientChecks}</div><div style="display:flex;gap:8px;margin:10px 0 16px"><button style="width:auto" onclick="selectFirstTen()">First 10</button><button class="button secondary" style="width:auto" onclick="clearPatients()">Clear</button></div>${svgChart(overlay,metric,aggregation,'overlay')}</section>
   <section class="panel"><h2>Outliers and response status</h2><p class="muted">Outliers compare each patient's latest aggregated value with the latest cohort mean. Threshold: ${threshold}${metric==='wellness'?' percentage points':' score points'}.</p><div class="table-wrap"><table><thead><tr><th>Patient</th><th>Status</th><th>Latest</th><th>Deviation</th><th>Flag</th></tr></thead><tbody>${deviations.map(x=>`<tr><td>${html(x.patient)}</td><td class="${x.status==='Improving'?'good':x.status==='Deteriorating'?'flag':''}">${x.status}</td><td>${x.latest}${metric==='wellness'?'%':'/10'}</td><td>${x.deviation>0?'+':''}${x.deviation}</td><td class="${Math.abs(x.deviation)>=threshold?'flag':''}">${Math.abs(x.deviation)>=threshold?'Cohort outlier':'Within range'}</td></tr>`).join('')}</tbody></table></div></section>
   <script>function applyFilters(){const f=document.getElementById('filters');const q=new URLSearchParams(new FormData(f));const checked=[...document.querySelectorAll('#patientList input:checked')].slice(0,10).map(x=>x.value);if(checked.length)q.set('patients',checked.join('|'));location.href='/admin/population?'+q.toString()}function clearPatients(){document.querySelectorAll('#patientList input').forEach(x=>x.checked=false)}function selectFirstTen(){[...document.querySelectorAll('#patientList input')].forEach((x,i)=>x.checked=i<10)}</script>`;
@@ -477,7 +478,20 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
 });
 
 if (require.main === module) {
-  app.listen(host,port,()=>console.log(`NeuroTracker backend running at http://${host}:${port}`));
+  const server = app.listen(port,host,()=>console.log(`NeuroTracker listening on http://${host}:${port}`));
+
+  const shutdown = signal => {
+    console.log(`${signal} received. Shutting down NeuroTracker...`);
+    server.close(error => {
+      if (error) {
+        console.error('Error while shutting down:',error);
+        process.exitCode=1;
+      }
+    });
+  };
+
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
 }
 
 module.exports = { app, csvPath };

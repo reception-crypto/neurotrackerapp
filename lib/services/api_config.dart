@@ -1,7 +1,7 @@
 class ApiConfig {
   static const String baseUrl = String.fromEnvironment(
     'NEUROTRACKER_API_URL',
-    defaultValue: 'http://192.168.1.15:3000',
+    defaultValue: 'http://tracker.melindapascoeneurology.com',
   );
 
   static const String apiKey = String.fromEnvironment(
