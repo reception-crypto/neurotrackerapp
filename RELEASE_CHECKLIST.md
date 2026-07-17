@@ -20,6 +20,9 @@
 - [ ] Verify duplicate submission IDs are not duplicated in CSV
 - [ ] Confirm app icon and launch screen on Android
 - [ ] Confirm app icon and launch screen on iOS cloud build
+- [ ] Create and securely back up the permanent Android release keystore
+- [ ] Build a signed release APK and record its SHA-256 checksum
+- [ ] Confirm GitHub Verify workflow passes
 
 ## Backend verification
 
@@ -38,6 +41,7 @@
 
 - [ ] Use synthetic data only during final rehearsal
 - [ ] Provide patient privacy notice and support contact
+- [ ] Have the clinic approve the in-app privacy and consent wording
 - [ ] Explain the app is not for emergencies
 - [ ] Enrol a small initial cohort
 - [ ] Record device type and app version for troubleshooting

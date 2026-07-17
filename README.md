@@ -45,7 +45,24 @@ The APK is created at:
 build/app/outputs/flutter-apk/app-release.apk
 ```
 
-The current Android release build is configured with the debug signing key for internal testing. Configure a permanent release keystore before broader distribution.
+Release builds require a permanent signing keystore. Create it once and keep
+both the keystore and passwords outside source control:
+
+```cmd
+keytool -genkeypair -v -keystore %USERPROFILE%\neurotracker-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias neurotracker
+```
+
+Create `android/key.properties` locally:
+
+```properties
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=neurotracker
+storeFile=C:\\Users\\YOUR_USER\\neurotracker-release.jks
+```
+
+Back up the keystore and passwords securely. Losing them can prevent future
+updates to an installed Android application.
 
 Android debug/profile builds permit cleartext HTTP for clinic-LAN testing.
 Release builds reject cleartext traffic and therefore require an HTTPS API URL.
