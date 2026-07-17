@@ -6,6 +6,8 @@ import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import 'consent_screen.dart';
+import 'history_screen.dart';
+import 'profile_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -138,6 +140,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? 'Not configured'
                   : profile!.reminderTime.format(context)),
               onTap: _changeReminder,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('Check-in history'),
+              subtitle: const Text('Review entries saved on this device'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const HistoryScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.manage_accounts),
+              title: const Text('Edit patient profile'),
+              subtitle: Text(
+                profile == null
+                    ? 'Profile unavailable'
+                    : '${profile!.primaryDisorder}${profile!.hasSecondaryDisorder ? ' and ${profile!.secondaryDisorder}' : ''}',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: profile == null
+                  ? null
+                  : () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ProfileScreen(initialProfile: profile),
+                        ),
+                      ),
             ),
           ),
           const SizedBox(height: 20),

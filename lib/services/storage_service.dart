@@ -12,6 +12,7 @@ class StorageService {
   static const String _lastSyncKey = 'last_successful_sync';
   static const String _lastSubmissionDateKey = 'last_submission_date';
   static const String _consentKey = 'consent_acceptance';
+  static const String _entryHistoryKey = 'daily_entry_history';
 
   static Future<void> saveProfile(PatientProfile profile) async {
     final prefs = await SharedPreferences.getInstance();
@@ -56,6 +57,39 @@ class StorageService {
       pending.add(jsonEncode(entry.toJson()));
       await prefs.setStringList(_pendingKey, pending);
     }
+  }
+
+  static Future<void> saveEntryToHistory(DailyEntry entry) async {
+    final prefs = await SharedPreferences.getInstance();
+    final history = prefs.getStringList(_entryHistoryKey) ?? <String>[];
+    if (!history.any((raw) {
+      try {
+        return (jsonDecode(raw) as Map<String, dynamic>)['submissionId'] ==
+            entry.submissionId;
+      } catch (_) {
+        return false;
+      }
+    })) {
+      history.add(jsonEncode(entry.toJson()));
+      await prefs.setStringList(_entryHistoryKey, history);
+    }
+  }
+
+  static Future<List<DailyEntry>> loadEntryHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final history = prefs.getStringList(_entryHistoryKey) ?? <String>[];
+    final entries = <DailyEntry>[];
+    for (final raw in history) {
+      try {
+        entries.add(DailyEntry.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        ));
+      } catch (_) {
+        // Ignore malformed legacy history entries.
+      }
+    }
+    entries.sort((a, b) => '${b.date} ${b.time}'.compareTo('${a.date} ${a.time}'));
+    return entries;
   }
 
   static Future<List<DailyEntry>> loadPendingEntries() async {
@@ -130,5 +164,6 @@ class StorageService {
     await prefs.remove(_lastSyncKey);
     await prefs.remove(_lastSubmissionDateKey);
     await prefs.remove(_consentKey);
+    await prefs.remove(_entryHistoryKey);
   }
 }

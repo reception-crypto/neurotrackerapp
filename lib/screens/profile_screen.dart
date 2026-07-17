@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../models/patient_profile.dart';
 import '../models/symptom_data.dart';
 import 'symptom_selection_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final PatientProfile? initialProfile;
+
+  const ProfileScreen({super.key, this.initialProfile});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -20,6 +23,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialProfile;
+    if (initial != null) {
+      nameController.text = initial.fullName;
+      primaryDisorder = initial.primaryDisorder;
+      useSecondDisorder = initial.hasSecondaryDisorder;
+      secondaryDisorder = initial.secondaryDisorder ?? 'Dysautonomia';
+      reminderTime = initial.reminderTime;
+    }
     nameController.addListener(() => setState(() {}));
   }
 
@@ -32,6 +43,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<DropdownMenuItem<String>> get disorderItems => disorderSymptoms.keys
       .map((disorder) => DropdownMenuItem(value: disorder, child: Text(disorder)))
       .toList();
+
+  bool get canContinue =>
+      nameController.text.trim().isNotEmpty &&
+      (!useSecondDisorder || secondaryDisorder != primaryDisorder);
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +97,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     () => secondaryDisorder = value ?? 'Dysautonomia',
                   ),
                 ),
+                if (secondaryDisorder == primaryDisorder)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Choose a different second disorder.',
+                      style: TextStyle(color: Colors.orangeAccent),
+                    ),
+                  ),
               ],
               const SizedBox(height: 16),
               ListTile(
@@ -101,17 +124,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: nameController.text.trim().isEmpty
+                  onPressed: !canContinue
                       ? null
                       : () => Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (_) => SymptomSelectionScreen(
+                                patientId: widget.initialProfile?.patientId,
                                 fullName: nameController.text.trim(),
                                 primaryDisorder: primaryDisorder,
                                 secondaryDisorder:
                                     useSecondDisorder ? secondaryDisorder : null,
                                 reminderTime: reminderTime,
+                                initialPrimarySymptoms:
+                                    widget.initialProfile?.primaryDisorder ==
+                                            primaryDisorder
+                                        ? widget.initialProfile!.primarySymptoms
+                                        : const [],
+                                initialSecondarySymptoms:
+                                    widget.initialProfile?.secondaryDisorder ==
+                                            (useSecondDisorder ? secondaryDisorder : null)
+                                        ? widget.initialProfile!.secondarySymptoms
+                                        : const [],
                               ),
                             ),
                           ),

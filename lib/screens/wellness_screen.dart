@@ -58,6 +58,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
     final rows = CsvService.rowsFromEntry(entry);
 
     await StorageService.saveEntryRows(rows);
+    await StorageService.saveEntryToHistory(entry);
     await StorageService.recordSubmissionDate(entry.date);
     await StorageService.addPendingEntry(entry);
     final uploaded = await UploadService.uploadDailyEntry(entry);

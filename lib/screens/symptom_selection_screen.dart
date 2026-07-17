@@ -7,17 +7,23 @@ import '../services/storage_service.dart';
 import 'daily_symptom_screen.dart';
 
 class SymptomSelectionScreen extends StatefulWidget {
+  final String? patientId;
   final String fullName;
   final String primaryDisorder;
   final String? secondaryDisorder;
   final TimeOfDay reminderTime;
+  final List<String> initialPrimarySymptoms;
+  final List<String> initialSecondarySymptoms;
 
   const SymptomSelectionScreen({
     super.key,
+    this.patientId,
     required this.fullName,
     required this.primaryDisorder,
     required this.secondaryDisorder,
     required this.reminderTime,
+    this.initialPrimarySymptoms = const [],
+    this.initialSecondarySymptoms = const [],
   });
 
   @override
@@ -26,9 +32,16 @@ class SymptomSelectionScreen extends StatefulWidget {
 }
 
 class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
-  final List<String> primarySymptoms = [];
-  final List<String> secondarySymptoms = [];
+  late final List<String> primarySymptoms;
+  late final List<String> secondarySymptoms;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    primarySymptoms = List<String>.from(widget.initialPrimarySymptoms);
+    secondarySymptoms = List<String>.from(widget.initialSecondarySymptoms);
+  }
 
   bool get requiresSecondary =>
       widget.secondaryDisorder != null &&
@@ -45,7 +58,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
 
     try {
       final profile = PatientProfile(
-        patientId: PatientProfile.generatePatientId(),
+        patientId: widget.patientId ?? PatientProfile.generatePatientId(),
         fullName: widget.fullName,
         primaryDisorder: widget.primaryDisorder,
         primarySymptoms: List<String>.from(primarySymptoms),

@@ -17,6 +17,8 @@ Minimal Flutter application for patients to record three symptoms per disorder a
 - Offline-first local storage
 - Automatic retry queue for failed uploads
 - Visible synced/pending status
+- Editable profile and tracked symptom selections
+- Local expandable check-in history
 - Required deliberate selection for every symptom and wellness score
 - Stable patient and submission identifiers
 - Idempotent retry handling to prevent duplicate clinical records

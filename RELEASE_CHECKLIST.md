@@ -7,6 +7,8 @@
 - [ ] `flutter analyze`
 - [ ] Test first-run consent and profile setup
 - [ ] Test one-disorder and two-disorder profiles
+- [ ] Edit an existing profile and confirm its patient ID is preserved
+- [ ] Confirm a newly saved check-in appears in local history
 - [ ] Confirm Next remains disabled until every symptom has been rated
 - [ ] Confirm Submit remains disabled until wellness has been selected
 - [ ] Verify notification permission and reminder delivery
