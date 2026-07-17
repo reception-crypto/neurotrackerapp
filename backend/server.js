@@ -1,7 +1,6 @@
 require('dotenv').config();
 
 const express = require('express');
-const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const basicAuth = require('basic-auth');
@@ -12,10 +11,15 @@ const port = Number(process.env.PORT || 3000);
 const apiKey = process.env.API_KEY || 'change-this-mobile-upload-key';
 const adminUser = process.env.ADMIN_USER || process.env.ADMIN_USERNAME || 'admin';
 const adminPassword = process.env.ADMIN_PASSWORD || 'change-this-admin-password';
-const dataDir = path.join(__dirname, 'data');
+const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
 
-const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent'];
+const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId'];
+
+if (process.env.NODE_ENV === 'production' &&
+    (apiKey.startsWith('change-this') || adminPassword.startsWith('change-this'))) {
+  throw new Error('API_KEY and ADMIN_PASSWORD must be configured for production.');
+}
 
 function ensureCsvFile() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -64,7 +68,7 @@ function validWellness(value) {
   return Number.isFinite(n) && n >= 0 && n <= 100;
 }
 
-function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness) {
+function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '') {
   if (!looksLikeDate(date) || !patient || !disorder || !symptom || !validScore(score)) return null;
   return {
     ReceivedAt: receivedAt || `${date}T${time || '00:00'}:00`,
@@ -76,6 +80,8 @@ function normalisedRecord(receivedAt, date, time, patient, track, disorder, symp
     Symptom: symptom,
     Score: String(Number(score)),
     WellnessPercent: validWellness(wellness) ? String(Number(wellness)) : '',
+    SubmissionId: String(submissionId || ''),
+    PatientId: String(patientId || ''),
   };
 }
 
@@ -118,7 +124,14 @@ function normaliseCsvRows(parsed) {
   for (const values of dataRows) {
     if (!values.some(v => String(v || '').trim())) continue;
 
-    // Current server schema: ReceivedAt,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent
+    // Current schema with stable submission and patient identifiers.
+    if (values.length === 11 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
+      const record = normalisedRecord(...values.slice(0, 11));
+      if (record) normalised.push(record);
+      continue;
+    }
+
+    // Previous server schema without identifiers.
     if (values.length === 9 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
       const record = normalisedRecord(...values.slice(0, 9));
       if (record) normalised.push(record);
@@ -148,6 +161,7 @@ function normaliseCsvRows(parsed) {
       const record = normalisedRecord(
         get('ReceivedAt'), get('Date'), get('Time'), get('Patient'), get('Track'),
         get('Disorder'), get('Symptom'), get('Score'), get('WellnessPercent'),
+        get('SubmissionId'), get('PatientId'),
       );
       if (record) normalised.push(record);
       continue;
@@ -362,22 +376,42 @@ function pageShell(title, body) {
 }
 
 repairCsvIfNeeded();
-app.use(cors());
 app.use(express.json({limit:'256kb'}));
 app.use('/static', express.static(path.join(__dirname,'public')));
 
 app.get('/health',(req,res)=>res.json({ok:true,storage:'csv'}));
 app.post('/api/symptom-entry',requireApiKey,(req,res)=>{
   const b=req.body||{}, wellness=b.wellnessPercent??b.wellness_score??b.wellness??'';
+  const submissionId=String(b.submissionId||'').trim();
+  const patientId=String(b.patientId||'').trim();
+  const patientName=String(b.patientName||b.fullName||'').trim();
+  if (!submissionId || !patientId || !patientName || !looksLikeDate(b.date) || !validWellness(wellness) || Number(wellness) < 10) {
+    return res.status(400).json({error:'Invalid or incomplete submission.'});
+  }
   const records=Array.isArray(b.records)&&b.records.length?b.records:[
     {track:'Primary',disorder:b.disorder,symptom:b.symptom1,score:b.score1},
     {track:'Primary',disorder:b.disorder,symptom:b.symptom2,score:b.score2},
     {track:'Primary',disorder:b.disorder,symptom:b.symptom3,score:b.score3}
   ];
+  if (![3,6].includes(records.length) || records.some(r =>
+    !r || !r.track || !r.disorder || !r.symptom || !validScore(r.score)
+  )) {
+    return res.status(400).json({error:'Exactly three valid symptom scores per disorder are required.'});
+  }
+  const disorderCounts=records.reduce((counts,r)=>{
+    const key=`${r.track}|${r.disorder}`;
+    counts[key]=(counts[key]||0)+1;
+    return counts;
+  },{});
+  if (Object.values(disorderCounts).some(count=>count!==3) || Object.keys(disorderCounts).length!==records.length/3) {
+    return res.status(400).json({error:'Each tracked disorder must contain exactly three symptom scores.'});
+  }
+  const duplicate=readRows().some(row=>row.SubmissionId===submissionId);
+  if (duplicate) return res.status(200).json({ok:true,duplicate:true,submissionId});
   const receivedAt=new Date().toISOString();
-  const lines=records.filter(r=>r&&r.symptom).map(r=>[receivedAt,b.date,b.time,b.patientName||b.fullName,r.track||'Primary',r.disorder,r.symptom,r.score,wellness].map(escapeCsv).join(',')+'\n');
+  const lines=records.map(r=>[receivedAt,b.date,b.time,patientName,r.track,r.disorder,r.symptom,r.score,wellness,submissionId,patientId].map(escapeCsv).join(',')+'\n');
   fs.appendFileSync(csvPath,lines.join(''),'utf8');
-  res.status(201).json({ok:true,rows:lines.length});
+  res.status(201).json({ok:true,duplicate:false,submissionId,rows:lines.length});
 });
 
 app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurotracker_symptom_entries.csv'));
@@ -440,4 +474,8 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
   res.send(pageShell('Population analytics',body));
 });
 
-app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
+if (require.main === module) {
+  app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
+}
+
+module.exports = { app, csvPath };

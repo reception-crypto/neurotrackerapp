@@ -26,3 +26,21 @@ ReceivedAt,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent
 2026-07-14T05:03:42.414Z,2026-07-14,15:03,testyyy,Second,Dysautonomia,Dizziness,8,70
 2026-07-14T05:03:42.414Z,2026-07-14,15:03,testyyy,Second,Dysautonomia,Light-headedness,2,70
 2026-07-14T05:03:42.414Z,2026-07-14,15:03,testyyy,Second,Dysautonomia,Palpitations,3,70
+2026-07-16T23:36:45.962Z,2026-07-15,11:01,testyyy,Primary,Migraine,Headache,3,80
+2026-07-16T23:36:45.962Z,2026-07-15,11:01,testyyy,Primary,Migraine,Brain fog,4,80
+2026-07-16T23:36:45.962Z,2026-07-15,11:01,testyyy,Primary,Migraine,Fatigue,4,80
+2026-07-16T23:36:45.962Z,2026-07-15,11:01,testyyy,Second,Dysautonomia,Dizziness,4,80
+2026-07-16T23:36:45.962Z,2026-07-15,11:01,testyyy,Second,Dysautonomia,Light-headedness,4,80
+2026-07-16T23:36:45.962Z,2026-07-15,11:01,testyyy,Second,Dysautonomia,Palpitations,4,80
+2026-07-16T23:36:46.039Z,2026-07-16,13:58,testyyy,Primary,Migraine,Headache,3,80
+2026-07-16T23:36:46.039Z,2026-07-16,13:58,testyyy,Primary,Migraine,Brain fog,2,80
+2026-07-16T23:36:46.039Z,2026-07-16,13:58,testyyy,Primary,Migraine,Fatigue,4,80
+2026-07-16T23:36:46.039Z,2026-07-16,13:58,testyyy,Second,Dysautonomia,Dizziness,3,80
+2026-07-16T23:36:46.039Z,2026-07-16,13:58,testyyy,Second,Dysautonomia,Light-headedness,2,80
+2026-07-16T23:36:46.039Z,2026-07-16,13:58,testyyy,Second,Dysautonomia,Palpitations,3,80
+2026-07-16T23:37:35.313Z,2026-07-17,09:37,lp,Primary,Migraine,Headache,4,40
+2026-07-16T23:37:35.313Z,2026-07-17,09:37,lp,Primary,Migraine,Nausea,2,40
+2026-07-16T23:37:35.313Z,2026-07-17,09:37,lp,Primary,Migraine,Vomiting,3,40
+2026-07-16T23:37:35.313Z,2026-07-17,09:37,lp,Second,Dysautonomia,Dizziness,3,40
+2026-07-16T23:37:35.313Z,2026-07-17,09:37,lp,Second,Dysautonomia,Light-headedness,2,40
+2026-07-16T23:37:35.313Z,2026-07-17,09:37,lp,Second,Dysautonomia,Palpitations,3,40

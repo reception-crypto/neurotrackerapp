@@ -7,6 +7,8 @@
 - [ ] `flutter analyze`
 - [ ] Test first-run consent and profile setup
 - [ ] Test one-disorder and two-disorder profiles
+- [ ] Confirm Next remains disabled until every symptom has been rated
+- [ ] Confirm Submit remains disabled until wellness has been selected
 - [ ] Verify notification permission and reminder delivery
 - [ ] Submit while backend is available: status becomes Synced
 - [ ] Submit while backend is stopped: status becomes Pending
@@ -20,6 +22,7 @@
 - [ ] Replace default API key and admin password
 - [ ] Back up `backend/data/symptom_entries.csv`
 - [ ] Confirm `/health`
+- [ ] Run `npm test`
 - [ ] Confirm patient portal graphs
 - [ ] Confirm population graphs
 - [ ] Confirm PDF report generation

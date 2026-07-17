@@ -10,6 +10,8 @@ class StorageService {
   static const String _entriesKey = 'daily_entries';
   static const String _pendingKey = 'pending_uploads';
   static const String _lastSyncKey = 'last_successful_sync';
+  static const String _lastSubmissionDateKey = 'last_submission_date';
+  static const String _consentKey = 'consent_acceptance';
 
   static Future<void> saveProfile(PatientProfile profile) async {
     final prefs = await SharedPreferences.getInstance();
@@ -20,7 +22,12 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_profileKey);
     if (raw == null) return null;
-    return PatientProfile.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    final json = jsonDecode(raw) as Map<String, dynamic>;
+    final profile = PatientProfile.fromJson(json);
+    if ((json['patientId'] as String?)?.trim().isNotEmpty != true) {
+      await prefs.setString(_profileKey, jsonEncode(profile.toJson()));
+    }
+    return profile;
   }
 
   static Future<void> saveEntryRows(List<String> csvRows) async {
@@ -88,6 +95,27 @@ class StorageService {
     await prefs.setString(_lastSyncKey, DateTime.now().toIso8601String());
   }
 
+  static Future<void> recordSubmissionDate(String date) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastSubmissionDateKey, date);
+  }
+
+  static Future<bool> hasSubmittedOn(String date) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_lastSubmissionDateKey) == date;
+  }
+
+  static Future<void> recordConsent({required String policyVersion}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _consentKey,
+      jsonEncode({
+        'policyVersion': policyVersion,
+        'acceptedAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+    );
+  }
+
   static Future<DateTime?> lastSuccessfulSync() async {
     final prefs = await SharedPreferences.getInstance();
     final value = prefs.getString(_lastSyncKey);
@@ -100,5 +128,7 @@ class StorageService {
     await prefs.remove(_entriesKey);
     await prefs.remove(_pendingKey);
     await prefs.remove(_lastSyncKey);
+    await prefs.remove(_lastSubmissionDateKey);
+    await prefs.remove(_consentKey);
   }
 }

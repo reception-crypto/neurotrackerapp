@@ -17,6 +17,9 @@ Minimal Flutter application for patients to record three symptoms per disorder a
 - Offline-first local storage
 - Automatic retry queue for failed uploads
 - Visible synced/pending status
+- Required deliberate selection for every symptom and wellness score
+- Stable patient and submission identifiers
+- Idempotent retry handling to prevent duplicate clinical records
 
 ## Run on the clinic network
 
@@ -56,8 +59,13 @@ A signed iOS build still requires Apple-authorised signing and distribution. Clo
 ```cmd
 cd backend
 npm install
+npm test
 npm start
 ```
+
+Set `API_KEY`, `ADMIN_PASSWORD`, and preferably `ADMIN_USER` in
+`backend/.env`. Production mode refuses to start with the placeholder
+credentials.
 
 Portal:
 
@@ -74,3 +82,7 @@ http://localhost:3000/admin/population
 ## Privacy and deployment
 
 This application handles identifiable health information. Do not release it to patients over public networks until the backend is protected by HTTPS, appropriate access controls, secure backups and clinic-approved privacy documentation.
+
+CSV files under `backend/data` are runtime clinical data and must not be
+committed to source control. Existing installations are migrated in place to
+retain legacy records while adding stable submission and patient identifiers.

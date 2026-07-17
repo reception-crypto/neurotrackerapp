@@ -10,7 +10,7 @@ import 'daily_symptom_screen.dart';
 
 class WellnessScreen extends StatefulWidget {
   final PatientProfile profile;
-  final Map<String, int> symptomScores;
+  final Map<String, int?> symptomScores;
 
   const WellnessScreen({
     super.key,
@@ -23,7 +23,7 @@ class WellnessScreen extends StatefulWidget {
 }
 
 class _WellnessScreenState extends State<WellnessScreen> {
-  int wellnessPercent = 50;
+  int? wellnessPercent;
   bool submitting = false;
 
   Future<void> _submit() async {
@@ -33,11 +33,32 @@ class _WellnessScreenState extends State<WellnessScreen> {
     final entry = CsvService.generateDailyEntry(
       profile: widget.profile,
       symptomScores: widget.symptomScores,
-      wellnessPercent: wellnessPercent,
+      wellnessPercent: wellnessPercent!,
     );
+    if (await StorageService.hasSubmittedOn(entry.date)) {
+      if (!mounted) return;
+      setState(() => submitting = false);
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Already recorded today'),
+          content: const Text(
+            'A check-in has already been saved for today. Contact the clinic if it needs to be corrected.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     final rows = CsvService.rowsFromEntry(entry);
 
     await StorageService.saveEntryRows(rows);
+    await StorageService.recordSubmissionDate(entry.date);
     await StorageService.addPendingEntry(entry);
     final uploaded = await UploadService.uploadDailyEntry(entry);
     if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
@@ -114,7 +135,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: submitting ? null : _submit,
+                  onPressed: submitting || wellnessPercent == null ? null : _submit,
                   child: Text(submitting ? 'Saving…' : 'Submit'),
                 ),
               ),

@@ -1,0 +1,792 @@
+From 54deabd01c7fee5108338fe7cd72baf88b3e57df Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Thu, 16 Jul 2026 18:55:02 -0500
+Subject: [PATCH] Harden symptom submission integrity
+
+---
+ .gitignore                                |  4 ++
+ README.md                                 | 12 ++++
+ RELEASE_CHECKLIST.md                      |  3 +
+ backend/package-lock.json                 | 27 --------
+ backend/package.json                      |  6 +-
+ backend/server.js                         | 56 ++++++++++++++---
+ backend/test/server.test.js               | 77 +++++++++++++++++++++++
+ lib/models/daily_entry.dart               |  4 ++
+ lib/models/patient_profile.dart           | 19 ++++++
+ lib/screens/consent_screen.dart           | 18 ++++--
+ lib/screens/daily_symptom_screen.dart     | 15 +++--
+ lib/screens/symptom_selection_screen.dart |  1 +
+ lib/screens/wellness_screen.dart          | 29 +++++++--
+ lib/services/csv_service.dart             | 21 +++++--
+ lib/services/storage_service.dart         | 32 +++++++++-
+ 15 files changed, 264 insertions(+), 60 deletions(-)
+ create mode 100644 backend/test/server.test.js
+
+diff --git a/.gitignore b/.gitignore
+index 7ce4f3c..2d5a1ee 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -46,5 +46,9 @@ app.*.map.json
+ 
+ # Secrets
+ backend/.env
++backend/data/*.csv
++backend/backend/data/*.csv
++backend/node_modules/
++backend/backend/node_modules/
+ *.jks
+ key.properties
+diff --git a/README.md b/README.md
+index a40d6a5..b25cd74 100644
+--- a/README.md
++++ b/README.md
+@@ -17,6 +17,9 @@ Minimal Flutter application for patients to record three symptoms per disorder a
+ - Offline-first local storage
+ - Automatic retry queue for failed uploads
+ - Visible synced/pending status
++- Required deliberate selection for every symptom and wellness score
++- Stable patient and submission identifiers
++- Idempotent retry handling to prevent duplicate clinical records
+ 
+ ## Run on the clinic network
+ 
+@@ -56,9 +59,14 @@ A signed iOS build still requires Apple-authorised signing and distribution. Clo
+ ```cmd
+ cd backend
+ npm install
++npm test
+ npm start
+ ```
+ 
++Set `API_KEY`, `ADMIN_PASSWORD`, and preferably `ADMIN_USER` in
++`backend/.env`. Production mode refuses to start with the placeholder
++credentials.
++
+ Portal:
+ 
+ ```text
+@@ -74,3 +82,7 @@ http://localhost:3000/admin/population
+ ## Privacy and deployment
+ 
+ This application handles identifiable health information. Do not release it to patients over public networks until the backend is protected by HTTPS, appropriate access controls, secure backups and clinic-approved privacy documentation.
++
++CSV files under `backend/data` are runtime clinical data and must not be
++committed to source control. Existing installations are migrated in place to
++retain legacy records while adding stable submission and patient identifiers.
+diff --git a/RELEASE_CHECKLIST.md b/RELEASE_CHECKLIST.md
+index 88afcd4..c8d679a 100644
+--- a/RELEASE_CHECKLIST.md
++++ b/RELEASE_CHECKLIST.md
+@@ -7,6 +7,8 @@
+ - [ ] `flutter analyze`
+ - [ ] Test first-run consent and profile setup
+ - [ ] Test one-disorder and two-disorder profiles
++- [ ] Confirm Next remains disabled until every symptom has been rated
++- [ ] Confirm Submit remains disabled until wellness has been selected
+ - [ ] Verify notification permission and reminder delivery
+ - [ ] Submit while backend is available: status becomes Synced
+ - [ ] Submit while backend is stopped: status becomes Pending
+@@ -20,6 +22,7 @@
+ - [ ] Replace default API key and admin password
+ - [ ] Back up `backend/data/symptom_entries.csv`
+ - [ ] Confirm `/health`
++- [ ] Run `npm test`
+ - [ ] Confirm patient portal graphs
+ - [ ] Confirm population graphs
+ - [ ] Confirm PDF report generation
+diff --git a/backend/package-lock.json b/backend/package-lock.json
+index c68b137..1ff51c3 100644
+--- a/backend/package-lock.json
++++ b/backend/package-lock.json
+@@ -9,7 +9,6 @@
+       "version": "0.4.0",
+       "dependencies": {
+         "basic-auth": "^2.0.1",
+-        "cors": "^2.8.5",
+         "dotenv": "^16.4.7",
+         "express": "^4.21.2",
+         "pdfkit": "^0.15.0"
+@@ -269,23 +268,6 @@
+       "integrity": "sha512-NXdYc3dLr47pBkpUCHtKSwIOQXLVn8dZEuywboCOJY/osA0wFSLlSawr3KN8qXJEyX66FcONTH8EIlVuK0yyFA==",
+       "license": "MIT"
+     },
+-    "node_modules/cors": {
+-      "version": "2.8.6",
+-      "resolved": "https://registry.npmjs.org/cors/-/cors-2.8.6.tgz",
+-      "integrity": "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "object-assign": "^4",
+-        "vary": "^1"
+-      },
+-      "engines": {
+-        "node": ">= 0.10"
+-      },
+-      "funding": {
+-        "type": "opencollective",
+-        "url": "https://opencollective.com/express"
+-      }
+-    },
+     "node_modules/crypto-js": {
+       "version": "4.2.0",
+       "resolved": "https://registry.npmjs.org/crypto-js/-/crypto-js-4.2.0.tgz",
+@@ -1165,15 +1147,6 @@
+         "node": ">= 0.6"
+       }
+     },
+-    "node_modules/object-assign": {
+-      "version": "4.1.1",
+-      "resolved": "https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz",
+-      "integrity": "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==",
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=0.10.0"
+-      }
+-    },
+     "node_modules/object-inspect": {
+       "version": "1.13.4",
+       "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
+diff --git a/backend/package.json b/backend/package.json
+index c2c2134..557c24f 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -4,13 +4,13 @@
+   "description": "Minimal NeuroTracker backend using CSV storage, charting, outlier detection, and PDF reports.",
+   "main": "server.js",
+   "scripts": {
+-    "start": "node server.js"
++    "start": "node server.js",
++    "test": "node --test test/*.test.js"
+   },
+   "dependencies": {
+     "basic-auth": "^2.0.1",
+-    "cors": "^2.8.5",
+     "dotenv": "^16.4.7",
+     "express": "^4.21.2",
+     "pdfkit": "^0.15.0"
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/backend/server.js b/backend/server.js
+index 6b3c397..0dd029e 100644
+--- a/backend/server.js
++++ b/backend/server.js
+@@ -1,7 +1,6 @@
+ require('dotenv').config();
+ 
+ const express = require('express');
+-const cors = require('cors');
+ const fs = require('fs');
+ const path = require('path');
+ const basicAuth = require('basic-auth');
+@@ -12,10 +11,15 @@ const port = Number(process.env.PORT || 3000);
+ const apiKey = process.env.API_KEY || 'change-this-mobile-upload-key';
+ const adminUser = process.env.ADMIN_USER || process.env.ADMIN_USERNAME || 'admin';
+ const adminPassword = process.env.ADMIN_PASSWORD || 'change-this-admin-password';
+-const dataDir = path.join(__dirname, 'data');
++const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+ const csvPath = path.join(dataDir, 'symptom_entries.csv');
+ 
+-const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent'];
++const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId'];
++
++if (process.env.NODE_ENV === 'production' &&
++    (apiKey.startsWith('change-this') || adminPassword.startsWith('change-this'))) {
++  throw new Error('API_KEY and ADMIN_PASSWORD must be configured for production.');
++}
+ 
+ function ensureCsvFile() {
+   fs.mkdirSync(dataDir, { recursive: true });
+@@ -64,7 +68,7 @@ function validWellness(value) {
+   return Number.isFinite(n) && n >= 0 && n <= 100;
+ }
+ 
+-function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness) {
++function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '') {
+   if (!looksLikeDate(date) || !patient || !disorder || !symptom || !validScore(score)) return null;
+   return {
+     ReceivedAt: receivedAt || `${date}T${time || '00:00'}:00`,
+@@ -76,6 +80,8 @@ function normalisedRecord(receivedAt, date, time, patient, track, disorder, symp
+     Symptom: symptom,
+     Score: String(Number(score)),
+     WellnessPercent: validWellness(wellness) ? String(Number(wellness)) : '',
++    SubmissionId: String(submissionId || ''),
++    PatientId: String(patientId || ''),
+   };
+ }
+ 
+@@ -118,7 +124,14 @@ function normaliseCsvRows(parsed) {
+   for (const values of dataRows) {
+     if (!values.some(v => String(v || '').trim())) continue;
+ 
+-    // Current server schema: ReceivedAt,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent
++    // Current schema with stable submission and patient identifiers.
++    if (values.length === 11 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
++      const record = normalisedRecord(...values.slice(0, 11));
++      if (record) normalised.push(record);
++      continue;
++    }
++
++    // Previous server schema without identifiers.
+     if (values.length === 9 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
+       const record = normalisedRecord(...values.slice(0, 9));
+       if (record) normalised.push(record);
+@@ -148,6 +161,7 @@ function normaliseCsvRows(parsed) {
+       const record = normalisedRecord(
+         get('ReceivedAt'), get('Date'), get('Time'), get('Patient'), get('Track'),
+         get('Disorder'), get('Symptom'), get('Score'), get('WellnessPercent'),
++        get('SubmissionId'), get('PatientId'),
+       );
+       if (record) normalised.push(record);
+       continue;
+@@ -362,22 +376,42 @@ function pageShell(title, body) {
+ }
+ 
+ repairCsvIfNeeded();
+-app.use(cors());
+ app.use(express.json({limit:'256kb'}));
+ app.use('/static', express.static(path.join(__dirname,'public')));
+ 
+ app.get('/health',(req,res)=>res.json({ok:true,storage:'csv'}));
+ app.post('/api/symptom-entry',requireApiKey,(req,res)=>{
+   const b=req.body||{}, wellness=b.wellnessPercent??b.wellness_score??b.wellness??'';
++  const submissionId=String(b.submissionId||'').trim();
++  const patientId=String(b.patientId||'').trim();
++  const patientName=String(b.patientName||b.fullName||'').trim();
++  if (!submissionId || !patientId || !patientName || !looksLikeDate(b.date) || !validWellness(wellness) || Number(wellness) < 10) {
++    return res.status(400).json({error:'Invalid or incomplete submission.'});
++  }
+   const records=Array.isArray(b.records)&&b.records.length?b.records:[
+     {track:'Primary',disorder:b.disorder,symptom:b.symptom1,score:b.score1},
+     {track:'Primary',disorder:b.disorder,symptom:b.symptom2,score:b.score2},
+     {track:'Primary',disorder:b.disorder,symptom:b.symptom3,score:b.score3}
+   ];
++  if (![3,6].includes(records.length) || records.some(r =>
++    !r || !r.track || !r.disorder || !r.symptom || !validScore(r.score)
++  )) {
++    return res.status(400).json({error:'Exactly three valid symptom scores per disorder are required.'});
++  }
++  const disorderCounts=records.reduce((counts,r)=>{
++    const key=`${r.track}|${r.disorder}`;
++    counts[key]=(counts[key]||0)+1;
++    return counts;
++  },{});
++  if (Object.values(disorderCounts).some(count=>count!==3) || Object.keys(disorderCounts).length!==records.length/3) {
++    return res.status(400).json({error:'Each tracked disorder must contain exactly three symptom scores.'});
++  }
++  const duplicate=readRows().some(row=>row.SubmissionId===submissionId);
++  if (duplicate) return res.status(200).json({ok:true,duplicate:true,submissionId});
+   const receivedAt=new Date().toISOString();
+-  const lines=records.filter(r=>r&&r.symptom).map(r=>[receivedAt,b.date,b.time,b.patientName||b.fullName,r.track||'Primary',r.disorder,r.symptom,r.score,wellness].map(escapeCsv).join(',')+'\n');
++  const lines=records.map(r=>[receivedAt,b.date,b.time,patientName,r.track,r.disorder,r.symptom,r.score,wellness,submissionId,patientId].map(escapeCsv).join(',')+'\n');
+   fs.appendFileSync(csvPath,lines.join(''),'utf8');
+-  res.status(201).json({ok:true,rows:lines.length});
++  res.status(201).json({ok:true,duplicate:false,submissionId,rows:lines.length});
+ });
+ 
+ app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurotracker_symptom_entries.csv'));
+@@ -440,4 +474,8 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
+   res.send(pageShell('Population analytics',body));
+ });
+ 
+-app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
++if (require.main === module) {
++  app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
++}
++
++module.exports = { app, csvPath };
+diff --git a/backend/test/server.test.js b/backend/test/server.test.js
+new file mode 100644
+index 0000000..70b4d2f
+--- /dev/null
++++ b/backend/test/server.test.js
+@@ -0,0 +1,77 @@
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const os = require('node:os');
++const path = require('node:path');
++const test = require('node:test');
++
++const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurotracker-'));
++process.env.DATA_DIR = testDataDir;
++process.env.API_KEY = 'test-api-key';
++process.env.ADMIN_PASSWORD = 'test-admin-password';
++
++const { app } = require('../server');
++let server;
++let baseUrl;
++
++test.before(async () => {
++  await new Promise(resolve => {
++    server = app.listen(0, '127.0.0.1', () => {
++      baseUrl = `http://127.0.0.1:${server.address().port}`;
++      resolve();
++    });
++  });
++});
++
++test.after(async () => {
++  await new Promise(resolve => server.close(resolve));
++  fs.rmSync(testDataDir, { recursive: true, force: true });
++});
++
++function validSubmission() {
++  return {
++    submissionId: 'NT-test-001',
++    patientId: 'pt-test-001',
++    patientName: 'Synthetic Patient',
++    date: '2026-07-17',
++    time: '19:00',
++    wellnessPercent: 70,
++    records: [
++      { track: 'Primary', disorder: 'Migraine', symptom: 'Headache', score: 4 },
++      { track: 'Primary', disorder: 'Migraine', symptom: 'Nausea', score: 2 },
++      { track: 'Primary', disorder: 'Migraine', symptom: 'Fatigue', score: 5 },
++    ],
++  };
++}
++
++async function post(body, apiKey = 'test-api-key') {
++  return fetch(`${baseUrl}/api/symptom-entry`, {
++    method: 'POST',
++    headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
++    body: JSON.stringify(body),
++  });
++}
++
++test('rejects unauthenticated uploads', async () => {
++  const response = await post(validSubmission(), 'wrong-key');
++  assert.equal(response.status, 401);
++});
++
++test('rejects missing symptom scores', async () => {
++  const body = validSubmission();
++  body.records.pop();
++  const response = await post(body);
++  assert.equal(response.status, 400);
++});
++
++test('stores a submission only once', async () => {
++  const first = await post(validSubmission());
++  assert.equal(first.status, 201);
++  assert.equal((await first.json()).duplicate, false);
++
++  const retry = await post(validSubmission());
++  assert.equal(retry.status, 200);
++  assert.equal((await retry.json()).duplicate, true);
++
++  const csv = fs.readFileSync(path.join(testDataDir, 'symptom_entries.csv'), 'utf8');
++  assert.equal(csv.split('\n').filter(line => line.includes('NT-test-001')).length, 3);
++});
+diff --git a/lib/models/daily_entry.dart b/lib/models/daily_entry.dart
+index 56b923c..6b3f9db 100644
+--- a/lib/models/daily_entry.dart
++++ b/lib/models/daily_entry.dart
+@@ -33,6 +33,7 @@ class DailyEntry {
+   final String date;
+   final String time;
+   final String patientName;
++  final String patientId;
+   final List<SymptomScoreRecord> records;
+   final int wellnessPercent;
+ 
+@@ -41,6 +42,7 @@ class DailyEntry {
+     required this.date,
+     required this.time,
+     required this.patientName,
++    required this.patientId,
+     required this.records,
+     required this.wellnessPercent,
+   });
+@@ -50,6 +52,7 @@ class DailyEntry {
+         'date': date,
+         'time': time,
+         'patientName': patientName,
++        'patientId': patientId,
+         'wellnessPercent': wellnessPercent,
+         'records': records.map((record) => record.toJson()).toList(),
+       };
+@@ -65,6 +68,7 @@ class DailyEntry {
+       date: json['date'] as String? ?? '',
+       time: json['time'] as String? ?? '',
+       patientName: json['patientName'] as String? ?? '',
++      patientId: json['patientId'] as String? ?? '',
+       wellnessPercent: (json['wellnessPercent'] as num?)?.toInt() ?? 0,
+       records: ((json['records'] as List?) ?? const [])
+           .map((record) => SymptomScoreRecord.fromJson(
+diff --git a/lib/models/patient_profile.dart b/lib/models/patient_profile.dart
+index 6d34d8e..95d6537 100644
+--- a/lib/models/patient_profile.dart
++++ b/lib/models/patient_profile.dart
+@@ -1,6 +1,9 @@
++import 'dart:math';
++
+ import 'package:flutter/material.dart';
+ 
+ class PatientProfile {
++  final String patientId;
+   final String fullName;
+   final String primaryDisorder;
+   final List<String> primarySymptoms;
+@@ -9,6 +12,7 @@ class PatientProfile {
+   final TimeOfDay reminderTime;
+ 
+   const PatientProfile({
++    required this.patientId,
+     required this.fullName,
+     required this.primaryDisorder,
+     required this.primarySymptoms,
+@@ -24,6 +28,7 @@ class PatientProfile {
+ 
+   PatientProfile copyWith({TimeOfDay? reminderTime}) {
+     return PatientProfile(
++      patientId: patientId,
+       fullName: fullName,
+       primaryDisorder: primaryDisorder,
+       primarySymptoms: primarySymptoms,
+@@ -34,6 +39,7 @@ class PatientProfile {
+   }
+ 
+   Map<String, dynamic> toJson() => {
++        'patientId': patientId,
+         'fullName': fullName,
+         'primaryDisorder': primaryDisorder,
+         'primarySymptoms': primarySymptoms,
+@@ -48,6 +54,9 @@ class PatientProfile {
+     final oldSymptoms = json['symptoms'];
+ 
+     return PatientProfile(
++      patientId: (json['patientId'] as String?)?.trim().isNotEmpty == true
++          ? json['patientId'] as String
++          : generatePatientId(),
+       fullName: json['fullName'] as String? ?? '',
+       primaryDisorder:
+           (json['primaryDisorder'] as String?) ?? oldDisorder ?? 'Migraine',
+@@ -63,4 +72,14 @@ class PatientProfile {
+       ),
+     );
+   }
++
++  static String generatePatientId() {
++    final random = Random.secure();
++    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
++    final suffix = List.generate(
++      16,
++      (_) => random.nextInt(36).toRadixString(36),
++    ).join();
++    return 'pt-$timestamp-$suffix';
++  }
+ }
+diff --git a/lib/screens/consent_screen.dart b/lib/screens/consent_screen.dart
+index 7853cc9..b574ec1 100644
+--- a/lib/screens/consent_screen.dart
++++ b/lib/screens/consent_screen.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ 
++import '../services/storage_service.dart';
+ import 'profile_screen.dart';
+ 
+ class ConsentScreen extends StatefulWidget {
+@@ -10,8 +11,18 @@ class ConsentScreen extends StatefulWidget {
+ }
+ 
+ class _ConsentScreenState extends State<ConsentScreen> {
++  static const String policyVersion = '2026-07-17';
+   bool consented = false;
+ 
++  Future<void> _continue() async {
++    await StorageService.recordConsent(policyVersion: policyVersion);
++    if (!mounted) return;
++    Navigator.push(
++      context,
++      MaterialPageRoute(builder: (_) => const ProfileScreen()),
++    );
++  }
++
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+@@ -44,12 +55,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
+               child: SizedBox(
+                 width: double.infinity,
+                 child: FilledButton(
+-                  onPressed: consented
+-                      ? () => Navigator.push(
+-                            context,
+-                            MaterialPageRoute(builder: (_) => const ProfileScreen()),
+-                          )
+-                      : null,
++                  onPressed: consented ? _continue : null,
+                   child: const Text('Continue'),
+                 ),
+               ),
+diff --git a/lib/screens/daily_symptom_screen.dart b/lib/screens/daily_symptom_screen.dart
+index 7d6167b..09ea1d9 100644
+--- a/lib/screens/daily_symptom_screen.dart
++++ b/lib/screens/daily_symptom_screen.dart
+@@ -18,7 +18,7 @@ class DailySymptomScreen extends StatefulWidget {
+ }
+ 
+ class _DailySymptomScreenState extends State<DailySymptomScreen> {
+-  late Map<String, int> scores;
++  late Map<String, int?> scores;
+   int pendingUploads = 0;
+ 
+   Future<void> _refreshSyncStatus() async {
+@@ -35,15 +35,18 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
+     _refreshSyncStatus();
+     scores = {};
+     for (final symptom in widget.profile.primarySymptoms) {
+-      scores[_key('Primary', widget.profile.primaryDisorder, symptom)] = 0;
++      scores[_key('Primary', widget.profile.primaryDisorder, symptom)] = null;
+     }
+     if (widget.profile.hasSecondaryDisorder) {
+       for (final symptom in widget.profile.secondarySymptoms) {
+-        scores[_key('Second', widget.profile.secondaryDisorder!, symptom)] = 0;
++        scores[_key('Second', widget.profile.secondaryDisorder!, symptom)] = null;
+       }
+     }
+   }
+ 
++  bool get _allSymptomsRated =>
++      scores.isNotEmpty && scores.values.every((score) => score != null);
++
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+@@ -124,12 +127,12 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
+               child: SizedBox(
+                 width: double.infinity,
+                 child: FilledButton(
+-                  onPressed: () => Navigator.push(
++                  onPressed: _allSymptomsRated ? () => Navigator.push(
+                     context,
+                     MaterialPageRoute(
+                       builder: (_) => WellnessScreen(profile: widget.profile, symptomScores: scores),
+                     ),
+-                  ),
++                  ) : null,
+                   child: const Text('Next'),
+                 ),
+               ),
+@@ -146,7 +149,7 @@ class _DisorderScoreSection extends StatelessWidget {
+   final String track;
+   final String disorder;
+   final List<String> symptoms;
+-  final Map<String, int> scores;
++  final Map<String, int?> scores;
+   final String Function(String track, String disorder, String symptom) keyBuilder;
+   final void Function(String key, int value) onScoreChanged;
+ 
+diff --git a/lib/screens/symptom_selection_screen.dart b/lib/screens/symptom_selection_screen.dart
+index 4d54f21..3dcbe9e 100644
+--- a/lib/screens/symptom_selection_screen.dart
++++ b/lib/screens/symptom_selection_screen.dart
+@@ -45,6 +45,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
+ 
+     try {
+       final profile = PatientProfile(
++        patientId: PatientProfile.generatePatientId(),
+         fullName: widget.fullName,
+         primaryDisorder: widget.primaryDisorder,
+         primarySymptoms: List<String>.from(primarySymptoms),
+diff --git a/lib/screens/wellness_screen.dart b/lib/screens/wellness_screen.dart
+index af01b3e..01454a4 100644
+--- a/lib/screens/wellness_screen.dart
++++ b/lib/screens/wellness_screen.dart
+@@ -10,7 +10,7 @@ import 'daily_symptom_screen.dart';
+ 
+ class WellnessScreen extends StatefulWidget {
+   final PatientProfile profile;
+-  final Map<String, int> symptomScores;
++  final Map<String, int?> symptomScores;
+ 
+   const WellnessScreen({
+     super.key,
+@@ -23,7 +23,7 @@ class WellnessScreen extends StatefulWidget {
+ }
+ 
+ class _WellnessScreenState extends State<WellnessScreen> {
+-  int wellnessPercent = 50;
++  int? wellnessPercent;
+   bool submitting = false;
+ 
+   Future<void> _submit() async {
+@@ -33,11 +33,32 @@ class _WellnessScreenState extends State<WellnessScreen> {
+     final entry = CsvService.generateDailyEntry(
+       profile: widget.profile,
+       symptomScores: widget.symptomScores,
+-      wellnessPercent: wellnessPercent,
++      wellnessPercent: wellnessPercent!,
+     );
++    if (await StorageService.hasSubmittedOn(entry.date)) {
++      if (!mounted) return;
++      setState(() => submitting = false);
++      await showDialog<void>(
++        context: context,
++        builder: (_) => AlertDialog(
++          title: const Text('Already recorded today'),
++          content: const Text(
++            'A check-in has already been saved for today. Contact the clinic if it needs to be corrected.',
++          ),
++          actions: [
++            TextButton(
++              onPressed: () => Navigator.pop(context),
++              child: const Text('OK'),
++            ),
++          ],
++        ),
++      );
++      return;
++    }
+     final rows = CsvService.rowsFromEntry(entry);
+ 
+     await StorageService.saveEntryRows(rows);
++    await StorageService.recordSubmissionDate(entry.date);
+     await StorageService.addPendingEntry(entry);
+     final uploaded = await UploadService.uploadDailyEntry(entry);
+     if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
+@@ -114,7 +135,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
+               child: SizedBox(
+                 width: double.infinity,
+                 child: FilledButton(
+-                  onPressed: submitting ? null : _submit,
++                  onPressed: submitting || wellnessPercent == null ? null : _submit,
+                   child: Text(submitting ? 'Saving…' : 'Submit'),
+                 ),
+               ),
+diff --git a/lib/services/csv_service.dart b/lib/services/csv_service.dart
+index 68187d8..1ef5d4f 100644
+--- a/lib/services/csv_service.dart
++++ b/lib/services/csv_service.dart
+@@ -7,7 +7,7 @@ class CsvService {
+ 
+   static DailyEntry generateDailyEntry({
+     required PatientProfile profile,
+-    required Map<String, int> symptomScores,
++    required Map<String, int?> symptomScores,
+     required int wellnessPercent,
+   }) {
+     final now = DateTime.now();
+@@ -16,7 +16,7 @@ class CsvService {
+     final time =
+         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+     final submissionId =
+-        'NT-${now.millisecondsSinceEpoch}-${profile.fullName.hashCode.abs()}';
++        'NT-${now.microsecondsSinceEpoch}-${profile.patientId.substring(0, 8)}';
+ 
+     final records = <SymptomScoreRecord>[];
+ 
+@@ -26,7 +26,7 @@ class CsvService {
+         track: 'Primary',
+         disorder: profile.primaryDisorder,
+         symptom: symptom,
+-        score: symptomScores[key] ?? 0,
++        score: _requiredScore(symptomScores, key, symptom),
+       ));
+     }
+ 
+@@ -37,7 +37,7 @@ class CsvService {
+           track: 'Second',
+           disorder: profile.secondaryDisorder!,
+           symptom: symptom,
+-          score: symptomScores[key] ?? 0,
++          score: _requiredScore(symptomScores, key, symptom),
+         ));
+       }
+     }
+@@ -47,6 +47,7 @@ class CsvService {
+       date: date,
+       time: time,
+       patientName: profile.fullName,
++      patientId: profile.patientId,
+       records: records,
+       wellnessPercent: wellnessPercent,
+     );
+@@ -70,6 +71,18 @@ class CsvService {
+ 
+   static String buildCsv(List<String> rows) => [header, ...rows].join('\n');
+ 
++  static int _requiredScore(
++    Map<String, int?> scores,
++    String key,
++    String symptom,
++  ) {
++    final score = scores[key];
++    if (score == null) {
++      throw StateError('A score is required for $symptom.');
++    }
++    return score;
++  }
++
+   static String _escape(String value) {
+     if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+       return '"${value.replaceAll('"', '""')}"';
+diff --git a/lib/services/storage_service.dart b/lib/services/storage_service.dart
+index 3195320..51a56de 100644
+--- a/lib/services/storage_service.dart
++++ b/lib/services/storage_service.dart
+@@ -10,6 +10,8 @@ class StorageService {
+   static const String _entriesKey = 'daily_entries';
+   static const String _pendingKey = 'pending_uploads';
+   static const String _lastSyncKey = 'last_successful_sync';
++  static const String _lastSubmissionDateKey = 'last_submission_date';
++  static const String _consentKey = 'consent_acceptance';
+ 
+   static Future<void> saveProfile(PatientProfile profile) async {
+     final prefs = await SharedPreferences.getInstance();
+@@ -20,7 +22,12 @@ class StorageService {
+     final prefs = await SharedPreferences.getInstance();
+     final raw = prefs.getString(_profileKey);
+     if (raw == null) return null;
+-    return PatientProfile.fromJson(jsonDecode(raw) as Map<String, dynamic>);
++    final json = jsonDecode(raw) as Map<String, dynamic>;
++    final profile = PatientProfile.fromJson(json);
++    if ((json['patientId'] as String?)?.trim().isNotEmpty != true) {
++      await prefs.setString(_profileKey, jsonEncode(profile.toJson()));
++    }
++    return profile;
+   }
+ 
+   static Future<void> saveEntryRows(List<String> csvRows) async {
+@@ -88,6 +95,27 @@ class StorageService {
+     await prefs.setString(_lastSyncKey, DateTime.now().toIso8601String());
+   }
+ 
++  static Future<void> recordSubmissionDate(String date) async {
++    final prefs = await SharedPreferences.getInstance();
++    await prefs.setString(_lastSubmissionDateKey, date);
++  }
++
++  static Future<bool> hasSubmittedOn(String date) async {
++    final prefs = await SharedPreferences.getInstance();
++    return prefs.getString(_lastSubmissionDateKey) == date;
++  }
++
++  static Future<void> recordConsent({required String policyVersion}) async {
++    final prefs = await SharedPreferences.getInstance();
++    await prefs.setString(
++      _consentKey,
++      jsonEncode({
++        'policyVersion': policyVersion,
++        'acceptedAt': DateTime.now().toUtc().toIso8601String(),
++      }),
++    );
++  }
++
+   static Future<DateTime?> lastSuccessfulSync() async {
+     final prefs = await SharedPreferences.getInstance();
+     final value = prefs.getString(_lastSyncKey);
+@@ -100,5 +128,7 @@ class StorageService {
+     await prefs.remove(_entriesKey);
+     await prefs.remove(_pendingKey);
+     await prefs.remove(_lastSyncKey);
++    await prefs.remove(_lastSubmissionDateKey);
++    await prefs.remove(_consentKey);
+   }
+ }
+-- 
+2.51.1
+

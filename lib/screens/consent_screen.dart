@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/storage_service.dart';
 import 'profile_screen.dart';
 
 class ConsentScreen extends StatefulWidget {
@@ -10,7 +11,17 @@ class ConsentScreen extends StatefulWidget {
 }
 
 class _ConsentScreenState extends State<ConsentScreen> {
+  static const String policyVersion = '2026-07-17';
   bool consented = false;
+
+  Future<void> _continue() async {
+    await StorageService.recordConsent(policyVersion: policyVersion);
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ProfileScreen()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,12 +55,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: consented
-                      ? () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                          )
-                      : null,
+                  onPressed: consented ? _continue : null,
                   child: const Text('Continue'),
                 ),
               ),

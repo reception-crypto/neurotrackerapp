@@ -33,6 +33,7 @@ class DailyEntry {
   final String date;
   final String time;
   final String patientName;
+  final String patientId;
   final List<SymptomScoreRecord> records;
   final int wellnessPercent;
 
@@ -41,6 +42,7 @@ class DailyEntry {
     required this.date,
     required this.time,
     required this.patientName,
+    required this.patientId,
     required this.records,
     required this.wellnessPercent,
   });
@@ -50,6 +52,7 @@ class DailyEntry {
         'date': date,
         'time': time,
         'patientName': patientName,
+        'patientId': patientId,
         'wellnessPercent': wellnessPercent,
         'records': records.map((record) => record.toJson()).toList(),
       };
@@ -65,6 +68,7 @@ class DailyEntry {
       date: json['date'] as String? ?? '',
       time: json['time'] as String? ?? '',
       patientName: json['patientName'] as String? ?? '',
+      patientId: json['patientId'] as String? ?? '',
       wellnessPercent: (json['wellnessPercent'] as num?)?.toInt() ?? 0,
       records: ((json['records'] as List?) ?? const [])
           .map((record) => SymptomScoreRecord.fromJson(

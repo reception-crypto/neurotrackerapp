@@ -48,3 +48,8 @@ app.*.map.json
 backend/.env
 *.jks
 key.properties
+
+backend/data/*.csv
+backend/backend/data/*.csv
+backend/node_modules/
+backend/backend/node_modules/

@@ -1,6 +1,9 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 class PatientProfile {
+  final String patientId;
   final String fullName;
   final String primaryDisorder;
   final List<String> primarySymptoms;
@@ -9,6 +12,7 @@ class PatientProfile {
   final TimeOfDay reminderTime;
 
   const PatientProfile({
+    required this.patientId,
     required this.fullName,
     required this.primaryDisorder,
     required this.primarySymptoms,
@@ -24,6 +28,7 @@ class PatientProfile {
 
   PatientProfile copyWith({TimeOfDay? reminderTime}) {
     return PatientProfile(
+      patientId: patientId,
       fullName: fullName,
       primaryDisorder: primaryDisorder,
       primarySymptoms: primarySymptoms,
@@ -34,6 +39,7 @@ class PatientProfile {
   }
 
   Map<String, dynamic> toJson() => {
+        'patientId': patientId,
         'fullName': fullName,
         'primaryDisorder': primaryDisorder,
         'primarySymptoms': primarySymptoms,
@@ -48,6 +54,9 @@ class PatientProfile {
     final oldSymptoms = json['symptoms'];
 
     return PatientProfile(
+      patientId: (json['patientId'] as String?)?.trim().isNotEmpty == true
+          ? json['patientId'] as String
+          : generatePatientId(),
       fullName: json['fullName'] as String? ?? '',
       primaryDisorder:
           (json['primaryDisorder'] as String?) ?? oldDisorder ?? 'Migraine',
@@ -62,5 +71,15 @@ class PatientProfile {
         minute: (json['reminderMinute'] as num?)?.toInt() ?? 0,
       ),
     );
+  }
+
+  static String generatePatientId() {
+    final random = Random.secure();
+    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    final suffix = List.generate(
+      16,
+      (_) => random.nextInt(36).toRadixString(36),
+    ).join();
+    return 'pt-$timestamp-$suffix';
   }
 }

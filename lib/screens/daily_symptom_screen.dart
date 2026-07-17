@@ -18,7 +18,7 @@ class DailySymptomScreen extends StatefulWidget {
 }
 
 class _DailySymptomScreenState extends State<DailySymptomScreen> {
-  late Map<String, int> scores;
+  late Map<String, int?> scores;
   int pendingUploads = 0;
 
   Future<void> _refreshSyncStatus() async {
@@ -35,14 +35,17 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
     _refreshSyncStatus();
     scores = {};
     for (final symptom in widget.profile.primarySymptoms) {
-      scores[_key('Primary', widget.profile.primaryDisorder, symptom)] = 0;
+      scores[_key('Primary', widget.profile.primaryDisorder, symptom)] = null;
     }
     if (widget.profile.hasSecondaryDisorder) {
       for (final symptom in widget.profile.secondarySymptoms) {
-        scores[_key('Second', widget.profile.secondaryDisorder!, symptom)] = 0;
+        scores[_key('Second', widget.profile.secondaryDisorder!, symptom)] = null;
       }
     }
   }
+
+  bool get _allSymptomsRated =>
+      scores.isNotEmpty && scores.values.every((score) => score != null);
 
   @override
   Widget build(BuildContext context) {
@@ -124,12 +127,12 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: () => Navigator.push(
+                  onPressed: _allSymptomsRated ? () => Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => WellnessScreen(profile: widget.profile, symptomScores: scores),
                     ),
-                  ),
+                  ) : null,
                   child: const Text('Next'),
                 ),
               ),
@@ -146,7 +149,7 @@ class _DisorderScoreSection extends StatelessWidget {
   final String track;
   final String disorder;
   final List<String> symptoms;
-  final Map<String, int> scores;
+  final Map<String, int?> scores;
   final String Function(String track, String disorder, String symptom) keyBuilder;
   final void Function(String key, int value) onScoreChanged;
 

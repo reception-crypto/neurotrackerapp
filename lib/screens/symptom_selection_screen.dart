@@ -45,6 +45,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
 
     try {
       final profile = PatientProfile(
+        patientId: PatientProfile.generatePatientId(),
         fullName: widget.fullName,
         primaryDisorder: widget.primaryDisorder,
         primarySymptoms: List<String>.from(primarySymptoms),

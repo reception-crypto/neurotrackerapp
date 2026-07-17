@@ -7,7 +7,7 @@ class CsvService {
 
   static DailyEntry generateDailyEntry({
     required PatientProfile profile,
-    required Map<String, int> symptomScores,
+    required Map<String, int?> symptomScores,
     required int wellnessPercent,
   }) {
     final now = DateTime.now();
@@ -16,7 +16,7 @@ class CsvService {
     final time =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     final submissionId =
-        'NT-${now.millisecondsSinceEpoch}-${profile.fullName.hashCode.abs()}';
+        'NT-${now.microsecondsSinceEpoch}-${profile.patientId.substring(0, 8)}';
 
     final records = <SymptomScoreRecord>[];
 
@@ -26,7 +26,7 @@ class CsvService {
         track: 'Primary',
         disorder: profile.primaryDisorder,
         symptom: symptom,
-        score: symptomScores[key] ?? 0,
+        score: _requiredScore(symptomScores, key, symptom),
       ));
     }
 
@@ -37,7 +37,7 @@ class CsvService {
           track: 'Second',
           disorder: profile.secondaryDisorder!,
           symptom: symptom,
-          score: symptomScores[key] ?? 0,
+          score: _requiredScore(symptomScores, key, symptom),
         ));
       }
     }
@@ -47,6 +47,7 @@ class CsvService {
       date: date,
       time: time,
       patientName: profile.fullName,
+      patientId: profile.patientId,
       records: records,
       wellnessPercent: wellnessPercent,
     );
@@ -69,6 +70,18 @@ class CsvService {
   }
 
   static String buildCsv(List<String> rows) => [header, ...rows].join('\n');
+
+  static int _requiredScore(
+    Map<String, int?> scores,
+    String key,
+    String symptom,
+  ) {
+    final score = scores[key];
+    if (score == null) {
+      throw StateError('A score is required for $symptom.');
+    }
+    return score;
+  }
 
   static String _escape(String value) {
     if (value.contains(',') || value.contains('"') || value.contains('\n')) {
