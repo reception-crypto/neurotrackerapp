@@ -90,6 +90,11 @@ Set `API_KEY`, `ADMIN_PASSWORD`, and preferably `ADMIN_USER` in
 `backend/.env`. Production mode refuses to start with the placeholder
 credentials.
 
+For the clinic's off-site Windows server and Caddy HTTPS configuration, follow
+`deploy/WINDOWS_HTTPS_DEPLOYMENT.md`. Production binds Node to `127.0.0.1` by
+default so it can be reached through the HTTPS reverse proxy without exposing
+port 3000 publicly.
+
 Portal:
 
 ```text

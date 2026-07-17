@@ -8,6 +8,8 @@ const PDFDocument = require('pdfkit');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST ||
+  (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
 const apiKey = process.env.API_KEY || 'change-this-mobile-upload-key';
 const adminUser = process.env.ADMIN_USER || process.env.ADMIN_USERNAME || 'admin';
 const adminPassword = process.env.ADMIN_PASSWORD || 'change-this-admin-password';
@@ -475,7 +477,7 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
 });
 
 if (require.main === module) {
-  app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
+  app.listen(host,port,()=>console.log(`NeuroTracker backend running at http://${host}:${port}`));
 }
 
 module.exports = { app, csvPath };

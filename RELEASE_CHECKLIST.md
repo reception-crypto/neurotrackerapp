@@ -35,6 +35,9 @@
 - [ ] Confirm PDF report generation
 - [ ] Confirm CSV export
 - [ ] Configure HTTPS before off-site patient use
+- [ ] Confirm Node binds to `127.0.0.1`, not the public server interface
+- [ ] Confirm public port 3000 is closed
+- [ ] Confirm the tracker hostname has a valid, automatically renewing certificate
 - [ ] Confirm the release build cannot connect to a cleartext HTTP endpoint
 
 ## Patient beta release
