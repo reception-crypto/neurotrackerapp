@@ -49,12 +49,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _retry() async {
     setState(() => retrying = true);
-    final uploaded = await UploadService.retryPendingUploads();
+    final summary = await UploadService.retryPendingUploads();
     await _loadStatus();
     if (!mounted) return;
     setState(() => retrying = false);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$uploaded pending check-in(s) synced.')),
+      SnackBar(
+        content: Text(
+          summary.lastFailure == null
+              ? '${summary.uploaded} pending check-in(s) synced.'
+              : '${summary.uploaded} synced; ${summary.remaining} still pending. ${summary.lastFailure!.patientMessage}',
+        ),
+      ),
     );
   }
 

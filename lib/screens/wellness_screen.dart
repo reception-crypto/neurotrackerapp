@@ -61,7 +61,8 @@ class _WellnessScreenState extends State<WellnessScreen> {
     await StorageService.saveEntryToHistory(entry);
     await StorageService.recordSubmissionDate(entry.date);
     await StorageService.addPendingEntry(entry);
-    final uploaded = await UploadService.uploadDailyEntry(entry);
+    final uploadResult = await UploadService.uploadDailyEntry(entry);
+    final uploaded = uploadResult.succeeded;
     if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
     final pending = await StorageService.pendingCount();
 
@@ -74,7 +75,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
         content: Text(
           uploaded
               ? 'Today’s check-in has been securely sent to the clinic.'
-              : 'Today’s check-in is safely stored on this phone and will retry automatically when the clinic server is available.\n\nPending uploads: $pending',
+              : 'Today’s check-in is safely stored on this phone.\n\n${uploadResult.patientMessage}\n\nPending uploads: $pending',
         ),
         actions: [
           TextButton(

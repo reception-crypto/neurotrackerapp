@@ -6,8 +6,52 @@ import '../models/daily_entry.dart';
 import 'api_config.dart';
 import 'storage_service.dart';
 
+enum UploadResult {
+  success,
+  notConfigured,
+  networkUnavailable,
+  unauthorized,
+  rejected,
+  serverUnavailable,
+}
+
+extension UploadResultMessage on UploadResult {
+  bool get succeeded => this == UploadResult.success;
+
+  String get patientMessage => switch (this) {
+        UploadResult.success => 'Synced with the clinic.',
+        UploadResult.notConfigured =>
+          'The clinic connection has not been configured on this build.',
+        UploadResult.networkUnavailable =>
+          'No connection is currently available. The check-in will retry automatically.',
+        UploadResult.unauthorized =>
+          'The clinic connection could not be authorised. Please contact the clinic.',
+        UploadResult.rejected =>
+          'The clinic server rejected this check-in. Please contact the clinic.',
+        UploadResult.serverUnavailable =>
+          'The clinic server is temporarily unavailable. The check-in will retry automatically.',
+      };
+}
+
+class RetrySummary {
+  final int uploaded;
+  final int remaining;
+  final UploadResult? lastFailure;
+
+  const RetrySummary({
+    required this.uploaded,
+    required this.remaining,
+    this.lastFailure,
+  });
+}
+
 class UploadService {
-  static Future<bool> uploadDailyEntry(DailyEntry entry) async {
+  static Future<UploadResult> uploadDailyEntry(DailyEntry entry) async {
+    if (ApiConfig.baseUrl.trim().isEmpty ||
+        ApiConfig.apiKey.trim().isEmpty ||
+        ApiConfig.apiKey.startsWith('change-this')) {
+      return UploadResult.notConfigured;
+    }
     final base = ApiConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.parse('$base/api/symptom-entry');
 
@@ -23,23 +67,39 @@ class UploadService {
           )
           .timeout(const Duration(seconds: 10));
 
-      final succeeded = response.statusCode >= 200 && response.statusCode < 300;
-      if (succeeded) await StorageService.recordSuccessfulSync();
-      return succeeded;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await StorageService.recordSuccessfulSync();
+        return UploadResult.success;
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return UploadResult.unauthorized;
+      }
+      if (response.statusCode >= 400 && response.statusCode < 500) {
+        return UploadResult.rejected;
+      }
+      return UploadResult.serverUnavailable;
     } catch (_) {
-      return false;
+      return UploadResult.networkUnavailable;
     }
   }
 
-  static Future<int> retryPendingUploads() async {
+  static Future<RetrySummary> retryPendingUploads() async {
     final pending = await StorageService.loadPendingEntries();
     var uploaded = 0;
+    UploadResult? lastFailure;
     for (final entry in pending) {
-      if (await uploadDailyEntry(entry)) {
+      final result = await uploadDailyEntry(entry);
+      if (result.succeeded) {
         await StorageService.removePendingEntry(entry.submissionId);
         uploaded++;
+      } else {
+        lastFailure = result;
       }
     }
-    return uploaded;
+    return RetrySummary(
+      uploaded: uploaded,
+      remaining: await StorageService.pendingCount(),
+      lastFailure: lastFailure,
+    );
   }
 }

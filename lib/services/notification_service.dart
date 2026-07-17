@@ -18,6 +18,13 @@ class NotificationService {
   static const String _channelName = 'Daily reminders';
   static const String _channelDescription =
       'Daily NeuroTracker symptom check-in reminders';
+  static void Function(String? payload)? _notificationTapHandler;
+
+  static void setNotificationTapHandler(
+    void Function(String? payload) handler,
+  ) {
+    _notificationTapHandler = handler;
+  }
 
   static Future<void> initialise() async {
     tz.initializeTimeZones();
@@ -60,8 +67,7 @@ class NotificationService {
   static void _onNotificationTapped(
     NotificationResponse response,
   ) {
-    // Opening the notification launches the application.
-    // Direct navigation to the daily check-in can be added later.
+    _notificationTapHandler?.call(response.payload);
   }
 
   static Future<void> _createAndroidNotificationChannel() async {

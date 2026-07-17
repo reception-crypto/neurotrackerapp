@@ -14,9 +14,10 @@ Minimal Flutter application for patients to record three symptoms per disorder a
 - Daily symptom scores from 0–10 (`10 = worst`)
 - Wellness score from 10%–100% (`100% = best`)
 - Daily local reminder
+- Reminder taps open the daily check-in
 - Offline-first local storage
 - Automatic retry queue for failed uploads
-- Visible synced/pending status
+- Visible synced/pending status with actionable failure messages
 - Editable profile and tracked symptom selections
 - Local expandable check-in history
 - Required deliberate selection for every symptom and wellness score
@@ -45,6 +46,9 @@ build/app/outputs/flutter-apk/app-release.apk
 ```
 
 The current Android release build is configured with the debug signing key for internal testing. Configure a permanent release keystore before broader distribution.
+
+Android debug/profile builds permit cleartext HTTP for clinic-LAN testing.
+Release builds reject cleartext traffic and therefore require an HTTPS API URL.
 
 ## iOS cloud build
 

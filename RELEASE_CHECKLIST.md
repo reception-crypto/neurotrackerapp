@@ -12,9 +12,11 @@
 - [ ] Confirm Next remains disabled until every symptom has been rated
 - [ ] Confirm Submit remains disabled until wellness has been selected
 - [ ] Verify notification permission and reminder delivery
+- [ ] Tap a reminder while the app is open and backgrounded; confirm check-in opens
 - [ ] Submit while backend is available: status becomes Synced
 - [ ] Submit while backend is stopped: status becomes Pending
 - [ ] Restart backend and tap pending status/retry: entry uploads once
+- [ ] Verify network, authorization and server errors show distinct messages
 - [ ] Verify duplicate submission IDs are not duplicated in CSV
 - [ ] Confirm app icon and launch screen on Android
 - [ ] Confirm app icon and launch screen on iOS cloud build
@@ -30,6 +32,7 @@
 - [ ] Confirm PDF report generation
 - [ ] Confirm CSV export
 - [ ] Configure HTTPS before off-site patient use
+- [ ] Confirm the release build cannot connect to a cleartext HTTP endpoint
 
 ## Patient beta release
 
