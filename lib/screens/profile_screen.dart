@@ -41,7 +41,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   List<DropdownMenuItem<String>> get disorderItems => disorderSymptoms.keys
-      .map((disorder) => DropdownMenuItem(value: disorder, child: Text(disorder)))
+      .map(
+        (disorder) => DropdownMenuItem(value: disorder, child: Text(disorder)),
+      )
       .toList();
 
   bool get canContinue =>
@@ -69,16 +71,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
               const SizedBox(height: 20),
               DropdownButtonFormField<String>(
                 initialValue: primaryDisorder,
-                decoration: const InputDecoration(labelText: 'Primary disorder'),
+                decoration: const InputDecoration(
+                  labelText: 'Primary disorder',
+                ),
                 dropdownColor: const Color(0xFF2A2A2A),
                 items: disorderItems,
-                onChanged: (value) => setState(() => primaryDisorder = value ?? 'Migraine'),
+                onChanged: (value) =>
+                    setState(() => primaryDisorder = value ?? 'Migraine'),
               ),
               const SizedBox(height: 12),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 value: useSecondDisorder,
-                onChanged: (value) => setState(() => useSecondDisorder = value ?? false),
+                onChanged: (value) =>
+                    setState(() => useSecondDisorder = value ?? false),
                 title: const Text('Track a second disorder'),
                 subtitle: const Text(
                   'Optional. Patients still select three symptoms for each disorder.',
@@ -90,7 +96,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 DropdownButtonFormField<String>(
                   key: ValueKey(secondaryDisorder),
                   initialValue: secondaryDisorder,
-                  decoration: const InputDecoration(labelText: 'Second disorder'),
+                  decoration: const InputDecoration(
+                    labelText: 'Second disorder',
+                  ),
                   dropdownColor: const Color(0xFF2A2A2A),
                   items: disorderItems,
                   onChanged: (value) => setState(
@@ -127,28 +135,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onPressed: !canContinue
                       ? null
                       : () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => SymptomSelectionScreen(
-                                patientId: widget.initialProfile?.patientId,
-                                fullName: nameController.text.trim(),
-                                primaryDisorder: primaryDisorder,
-                                secondaryDisorder:
-                                    useSecondDisorder ? secondaryDisorder : null,
-                                reminderTime: reminderTime,
-                                initialPrimarySymptoms:
-                                    widget.initialProfile?.primaryDisorder ==
-                                            primaryDisorder
-                                        ? widget.initialProfile!.primarySymptoms
-                                        : const [],
-                                initialSecondarySymptoms:
-                                    widget.initialProfile?.secondaryDisorder ==
-                                            (useSecondDisorder ? secondaryDisorder : null)
-                                        ? widget.initialProfile!.secondarySymptoms
-                                        : const [],
-                              ),
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SymptomSelectionScreen(
+                              patientId: widget.initialProfile?.patientId,
+                              fullName: nameController.text.trim(),
+                              primaryDisorder: primaryDisorder,
+                              secondaryDisorder: useSecondDisorder
+                                  ? secondaryDisorder
+                                  : null,
+                              reminderTime: reminderTime,
+                              initialPrimarySymptoms:
+                                  widget.initialProfile?.primaryDisorder ==
+                                      primaryDisorder
+                                  ? widget.initialProfile!.primarySymptoms
+                                  : const [],
+                              initialSecondarySymptoms:
+                                  widget.initialProfile != null &&
+                                      widget
+                                              .initialProfile!
+                                              .secondaryDisorder ==
+                                          (useSecondDisorder
+                                              ? secondaryDisorder
+                                              : null)
+                                  ? widget.initialProfile!.secondarySymptoms
+                                  : const [],
                             ),
                           ),
+                        ),
                   child: const Text('Continue'),
                 ),
               ),
