@@ -3,20 +3,27 @@ import '../models/patient_profile.dart';
 
 class CsvService {
   static const header =
-      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent';
+      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,PatientId';
 
   static DailyEntry generateDailyEntry({
     required PatientProfile profile,
     required Map<String, int?> symptomScores,
     required int wellnessPercent,
   }) {
+    if (profile.patientId.trim().isEmpty) {
+      throw StateError(
+        'Clinic enrolment is required before recording a check-in.',
+      );
+    }
     final now = DateTime.now();
     final date =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final time =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-    final submissionId =
-        'NT-${now.microsecondsSinceEpoch}-${profile.patientId.substring(0, 8)}';
+    final idFragment = profile.patientId.length <= 8
+        ? profile.patientId
+        : profile.patientId.substring(0, 8);
+    final submissionId = 'NS-${now.microsecondsSinceEpoch}-$idFragment';
 
     final records = <SymptomScoreRecord>[];
 
@@ -69,11 +76,18 @@ class CsvService {
         _escape(record.symptom),
         record.score,
         entry.wellnessPercent,
+        _escape(entry.patientId),
       ].join(',');
     }).toList();
   }
 
-  static String buildCsv(List<String> rows) => [header, ...rows].join('\n');
+  static String buildCsv(List<String> rows) {
+    final normalisedRows = rows.map((row) {
+      final columns = _columnCount(row);
+      return columns == 9 ? '$row,' : row;
+    });
+    return [header, ...normalisedRows].join('\n');
+  }
 
   static int _requiredScore(
     Map<String, int?> scores,
@@ -92,5 +106,23 @@ class CsvService {
       return '"${value.replaceAll('"', '""')}"';
     }
     return value;
+  }
+
+  static int _columnCount(String row) {
+    var columns = 1;
+    var quoted = false;
+    for (var index = 0; index < row.length; index++) {
+      final character = row[index];
+      if (character == '"') {
+        if (quoted && index + 1 < row.length && row[index + 1] == '"') {
+          index++;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (character == ',' && !quoted) {
+        columns++;
+      }
+    }
+    return columns;
   }
 }

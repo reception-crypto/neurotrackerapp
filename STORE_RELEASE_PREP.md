@@ -1,97 +1,72 @@
 # NeuroSol Symptom Diary store release preparation
 
-This document is a submission draft, not legal advice. The clinic should approve
-the final privacy wording and ensure it matches actual operational practices.
+This is an operational submission draft, not legal advice. The clinic should
+approve the final declarations and ensure they match the deployed service.
 
 ## Application identity
 
 - Store name: NeuroSol Symptom Diary
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
-- Release version: `1.0.0+5`
+- Release version: `1.0.0+6`
 - Category: Medical
 - Support email: `reception@pascoeneurology.com`
-- Public privacy policy URL:
+- Privacy policy:
   `https://www.melindapascoeneurology.com/our-privacy-policy`
-- Public support URL:
-  `https://www.melindapascoeneurology.com/neurosol-symptom-diary-support`
+- Clinical support:
+  `https://www.melindapascoeneurology.com/neurotracker-clinical-support`
 
-## Short description
+## Store description
 
-Record neurological symptoms and wellness for review by your treating clinic.
-
-## Full description
-
-NeuroSol Symptom Diary helps participating Pascoe Neurology patients complete a
-simple daily symptom and wellness check-in. Patients select the neurological
-condition and symptoms requested by their clinic, record symptom severity, and
-submit an overall wellness score.
-
-Entries are retained on the device and sent to the clinic for clinical
-monitoring. If the clinic connection is temporarily unavailable, a pending
-check-in remains on the device and can be retried later.
+NeuroSol Symptom Diary helps participating Pascoe Neurology patients complete
+a daily symptom and wellness check-in for review as part of their clinical
+care. A clinic-issued one-time code securely links the phone to the intended
+clinic record. Entries remain on the device and are sent to the clinic; failed
+transmissions remain pending and retry later.
 
 The app is not continuously monitored and must not be used for urgent or
-emergency assistance.
+emergency assistance. It is not a medical device, does not diagnose, treat,
+cure, or prevent a condition, and does not replace professional medical
+advice. In an emergency, call 000.
 
-NeuroSol Symptom Diary is not a medical device and does not diagnose, treat,
-cure, or prevent any medical condition. It does not replace professional
-medical advice. In an emergency, call 000.
+## Google Play declarations to verify
 
-## Draft Google Play Data safety answers
-
-These answers must be checked against the Play Console definitions at the time
-of submission.
-
-- Data collected: name; health information; app-generated patient and
-  submission identifiers; check-in date and time.
+- Data collected: name, health information, clinic-issued PatientId,
+  per-device security credential, submission ID, check-in date/time, and
+  app-selected condition/symptom settings.
 - Purpose: app functionality, clinical monitoring, care administration,
-  security, troubleshooting, and record-keeping.
-- Data sharing: no sale or advertising use. Confirm whether any infrastructure
-  or support provider qualifies as a third party under Google's definitions.
-- Processing: data is sent from the device to the clinic backend.
-- Encryption in transit: yes, using the clinic HTTPS endpoint.
-- Deletion requests: handled by contacting the clinic, subject to applicable
-  health-record retention obligations.
-- Account creation: none. A locally stored patient profile is not an online
-  account.
-- Health apps declaration: diseases and conditions management / healthcare
-  services and management, subject to the final Play Console wording.
-- Medical device status: not a medical device.
+  security, troubleshooting, duplicate prevention, and record-keeping.
+- Data sharing: no sale or advertising use. Confirm whether hosting, backup,
+  support, or other providers count as sharing under the current definitions.
+- Encryption in transit: HTTPS.
+- Deletion and access: patient contacts the clinic, subject to health-record
+  retention obligations. Reset affects local data only.
+- Access model: clinic-issued one-time enrolment; no public self-registration.
+  Confirm the current account-creation/deletion interpretation in Play Console.
+- Health apps declaration: select every applicable disease/condition
+  management and healthcare service/management category.
+- Medical-device status: not a medical device.
+- Ads and tracking: none.
 
-## Draft Apple App Privacy answers
+Because the app is enrolment-gated, Play App access instructions must include
+a dedicated synthetic reviewer record and a fresh one-time code. The code is
+consumed on first use; issue another if review access is requested again.
 
-These answers must be checked against App Store Connect definitions at the time
-of submission.
+## Apple App Privacy answers to verify
 
-- Contact Info: Name — linked to the user; used for app functionality.
-- Health & Fitness: Health — linked to the user; used for app functionality.
-- Identifiers: User ID or equivalent app-generated identifier — linked to the
-  user; used for app functionality and duplicate prevention.
-- Usage Data: check-in date and time — linked to the user; used for app
-  functionality.
+- Contact Info / Name: linked to the user; app functionality.
+- Health & Fitness / Health: linked to the user; app functionality.
+- Identifiers / User ID: clinic PatientId linked to the user; app
+  functionality, security, and duplicate prevention.
+- Device credential: linked security/authentication information.
+- Usage Data: check-in date/time linked to the user.
 - Tracking: no.
 - Third-party advertising: no.
 
-## Assets still required
+## Build and review gates
 
-- Replacement home, Settings, and Privacy screenshots captured from release
-  build `1.0.0+5`.
-- iPhone screenshots captured from the signed TestFlight build.
-- Final review and approval of all patient-facing wording.
-
-The Google Play icon and feature graphic are in
-`delivery/play-store-assets/`.
-
-## Build gates
-
-- Run `dart format lib test`.
-- Run `flutter analyze`.
-- Run `flutter test`.
-- Build the signed Android App Bundle with the production API URL and API key.
-- Confirm the App Bundle contains version code 5.
-- Build iOS on macOS after Apple Developer organisation enrolment.
-- Test notification scheduling and notification-tap navigation on a physical
-  Android device and physical iPhone.
-- Test an offline submission followed by a successful retry.
-- Confirm the production API endpoint and portal backup before public release.
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) as the authoritative Build 6
+gate. In particular, deploy and test the matching backend before uploading the
+AAB, provide only synthetic review access, and do not release to real patients
+until privacy, backup/restore, clinic enrolment, revocation, and incident
+procedures are approved.

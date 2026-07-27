@@ -1,4 +1,4 @@
-# NeuroTracker Windows HTTPS deployment
+# NeuroSol Windows HTTPS deployment
 
 Public address:
 
@@ -45,7 +45,16 @@ Do not stop an existing IIS, RD Gateway or other production listener merely to
 make room for Caddy. In that situation, configure the existing HTTPS service as
 the reverse proxy instead.
 
-## 3. Backend configuration
+## 3. Back up the existing service
+
+Before replacing backend source, take a timestamped backup of the current
+production `.env` and data directory. The Build 6 identity store and symptom
+CSV must subsequently be backed up and restored together.
+
+Do not copy production clinical data into the Git repository or a release
+bundle.
+
+## 4. Backend configuration
 
 Copy `backend/.env.example` to `backend/.env` and replace every placeholder.
 Production uses:
@@ -54,17 +63,49 @@ Production uses:
 HOST=127.0.0.1
 PORT=3000
 NODE_ENV=production
+APP_TIME_ZONE=Australia/Brisbane
+IDENTITY_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_CHARACTERS
+ADMIN_USER=admin
+ADMIN_PASSWORD=REPLACE_WITH_A_LONG_UNIQUE_PASSWORD
+DATA_DIR=C:\ProgramData\NeuroSol\data
 ```
+
+Generate a strong identity secret in PowerShell, save it in the clinic's
+password manager, and paste it into `.env`:
+
+```powershell
+$Bytes = New-Object byte[] 48
+$Rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$Rng.GetBytes($Bytes)
+[Convert]::ToBase64String($Bytes)
+$Rng.Dispose()
+```
+
+Do not reuse `ADMIN_PASSWORD`, a signing password, or the former mobile API
+key. Losing or changing `IDENTITY_SECRET` invalidates issued codes and enrolled
+device tokens.
 
 This makes Node reachable only from the server itself. Confirm it locally:
 
 ```powershell
+cd C:\Projects\neurotrackerapp\backend
+npm ci
+npm test
+npm start
 Invoke-RestMethod http://127.0.0.1:3000/health
 ```
 
 Port 3000 must not have a public inbound firewall rule.
 
-## 4. Caddy
+Open `http://127.0.0.1:3000/admin/enrolments`, create a code for a synthetic
+test identity, enrol the clinic test phone, submit one check-in, and confirm:
+
+- the second distinct check-in for that PatientId/date is rejected;
+- an exact network retry does not create duplicate rows;
+- the portal groups by support ID and displays the latest name;
+- revoking devices prevents further uploads.
+
+## 5. Caddy
 
 Download the Windows executable from the official Caddy download page and
 place it in a dedicated directory such as `C:\Caddy`. Copy the repository's
@@ -86,13 +127,13 @@ For an initial foreground test:
 Caddy obtains and renews the public certificate automatically once DNS points
 to the server and inbound TCP ports 80 and 443 reach Caddy.
 
-## 5. Firewall
+## 6. Firewall
 
 Allow inbound TCP 80 and 443 only. Keep port 3000 closed publicly. The hosting
 provider may have an additional network firewall outside Windows which must be
 updated separately.
 
-## 6. External verification
+## 7. External verification
 
 From a different internet connection:
 
@@ -114,3 +155,26 @@ http://117.20.4.91:3000/health
 
 Only after these checks pass should a patient APK be built against the HTTPS
 address.
+
+## 8. Build 5 migration and Build 6 rollout
+
+Deploy and verify the Build 6 backend before distributing the Build 6 app.
+Existing Build 5 phones cannot upload after the backend change until they are
+upgraded and enrolled.
+
+For an existing patient, find their current PatientId in the portal and issue
+**New device code** against that same identity. Do not create a new patient
+identity, or their historical and future data will be split.
+
+## 9. Backup and access control
+
+Apply Windows ACLs so only the backend service account and authorised
+administrators can read:
+
+- the production `.env`;
+- `symptom_entries.csv`;
+- `identity_store.json`;
+- automatic migration backups and operational backups.
+
+Back up `symptom_entries.csv` and `identity_store.json` as one recovery set,
+and perform a restore test before the clinic rollout.

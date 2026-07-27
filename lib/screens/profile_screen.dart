@@ -6,8 +6,15 @@ import 'symptom_selection_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final PatientProfile? initialProfile;
+  final String? enrolledPatientId;
+  final String initialFullName;
 
-  const ProfileScreen({super.key, this.initialProfile});
+  const ProfileScreen({
+    super.key,
+    this.initialProfile,
+    this.enrolledPatientId,
+    this.initialFullName = '',
+  });
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -30,6 +37,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       useSecondDisorder = initial.hasSecondaryDisorder;
       secondaryDisorder = initial.secondaryDisorder ?? 'Dysautonomia';
       reminderTime = initial.reminderTime;
+    } else {
+      nameController.text = widget.initialFullName;
     }
     nameController.addListener(() => setState(() {}));
   }
@@ -46,7 +55,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       )
       .toList();
 
+  String? get patientId =>
+      widget.initialProfile?.patientId ?? widget.enrolledPatientId;
+
   bool get canContinue =>
+      patientId?.trim().isNotEmpty == true &&
       nameController.text.trim().isNotEmpty &&
       (!useSecondDisorder || secondaryDisorder != primaryDisorder);
 
@@ -138,7 +151,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context,
                           MaterialPageRoute(
                             builder: (_) => SymptomSelectionScreen(
-                              patientId: widget.initialProfile?.patientId,
+                              patientId: patientId!,
                               fullName: nameController.text.trim(),
                               primaryDisorder: primaryDisorder,
                               secondaryDisorder: useSecondDisorder

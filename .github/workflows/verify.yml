@@ -2,7 +2,9 @@ name: Verify
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "codex/**"
   pull_request:
 
 jobs:
@@ -15,8 +17,15 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
+      - name: Reject legacy shared mobile credentials
+        run: |
+          if rg -n 'NEUROTRACKER_API_KEY|x-api-key' lib; then
+            echo "Legacy shared mobile credential reference found."
+            exit 1
+          fi
 
   backend:
     runs-on: ubuntu-latest
@@ -31,4 +40,13 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      - run: node --check server.js
+      - run: node --check identity_store.js
       - run: npm test
+      - name: Reject committed runtime clinical data
+        working-directory: .
+        run: |
+          if git ls-files 'backend/data/*' | grep -q .; then
+            echo "Runtime clinical data must not be tracked."
+            exit 1
+          fi

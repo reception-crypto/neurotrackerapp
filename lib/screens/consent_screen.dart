@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../models/patient_profile.dart';
+import '../services/identity_service.dart';
 import '../services/storage_service.dart';
+import 'enrolment_screen.dart';
+import 'home_screen.dart';
 import 'privacy_screen.dart';
-import 'profile_screen.dart';
 
 class ConsentScreen extends StatefulWidget {
-  const ConsentScreen({super.key});
+  final PatientProfile? existingProfile;
+
+  const ConsentScreen({super.key, this.existingProfile});
 
   @override
   State<ConsentScreen> createState() => _ConsentScreenState();
@@ -18,9 +23,22 @@ class _ConsentScreenState extends State<ConsentScreen> {
   Future<void> _continue() async {
     await StorageService.recordConsent(policyVersion: policyVersion);
     if (!mounted) return;
+    final existing = widget.existingProfile;
+    if (existing != null && await IdentityService.hasAccessToken()) {
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => HomeScreen(profile: existing)),
+        (_) => false,
+      );
+      return;
+    }
+    if (!mounted) return;
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ProfileScreen()),
+      MaterialPageRoute(
+        builder: (_) => EnrolmentScreen(existingProfile: existing),
+      ),
     );
   }
 

@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/daily_entry.dart';
 import '../models/patient_profile.dart';
+import 'identity_service.dart';
 
 class StorageService {
   static const String _profileKey = 'patient_profile';
@@ -176,6 +177,21 @@ class StorageService {
     );
   }
 
+  static Future<bool> hasAcceptedConsent({
+    required String policyVersion,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_consentKey);
+    if (raw == null) return false;
+    try {
+      final value = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      return value['policyVersion'] == policyVersion &&
+          DateTime.tryParse(value['acceptedAt'] as String? ?? '') != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<DateTime?> lastSuccessfulSync() async {
     final prefs = await SharedPreferences.getInstance();
     final value = prefs.getString(_lastSyncKey);
@@ -183,6 +199,7 @@ class StorageService {
   }
 
   static Future<void> resetAll() async {
+    await IdentityService.clearAccessToken();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_profileKey);
     await prefs.remove(_entriesKey);

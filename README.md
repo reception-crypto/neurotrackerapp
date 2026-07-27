@@ -1,116 +1,127 @@
-# NeuroTracker Clinical
+# NeuroSol Symptom Diary
 
-Minimal Flutter application for patients to record three symptoms per disorder and a daily wellness percentage. The project includes a CSV-backed clinician portal with individual and cohort analytics.
+Flutter symptom and wellness diary for participating Pascoe Neurology patients,
+with a CSV-backed clinician portal.
 
-## Version
+## Current release
 
-`1.0.0+1`
+- App version: `1.0.0+6`
+- Android application ID: `au.com.pascoeneurology.neurosol`
+- Apple bundle ID: `au.com.pascoeneurology.neurosol`
+- Production API: `https://tracker.melindapascoeneurology.com`
 
-## Mobile features
+## Build 6 safety and identity model
 
-- Migraine, dysautonomia, CIDP and myasthenia gravis
-- Optional second disorder
-- Three selected symptoms per disorder
-- Daily symptom scores from 0–10 (`10 = worst`)
-- Wellness score from 10%–100% (`100% = best`)
-- Daily local reminder
-- Reminder taps open the daily check-in
-- Offline-first local storage
-- Automatic retry queue for failed uploads
-- Visible synced/pending status with actionable failure messages
-- Editable profile and tracked symptom selections
-- Local expandable check-in history
-- Required deliberate selection for every symptom and wellness score
-- Stable patient and submission identifiers
-- Idempotent retry handling to prevent duplicate clinical records
+- The clinic creates a one-time enrolment code in the clinician portal.
+- Redeeming the code gives the app a server-issued PatientId and a unique
+  per-device access token.
+- The access token is stored in protected operating-system storage and is
+  never committed to source or compiled as a shared secret.
+- A recovery or new-device code is linked to the existing PatientId so identity
+  survives a reinstall or phone change.
+- Clinic staff can revoke all active devices for a PatientId.
+- The server verifies that every upload PatientId matches the enrolled device.
+- At most one submission is accepted for each PatientId and local calendar
+  date; exact retry requests remain idempotent.
+- The portal groups and filters by PatientId and uses only the latest submitted
+  name as its display label.
+- Settings shows a shortened support ID, and local CSV exports include the full
+  PatientId.
 
-## Run on the clinic network
+The app retains its once-per-day home-screen workflow, daily reminder,
+offline queue, local history, editable symptom profile, HTTPS-only release
+traffic, consent gate, and emergency/medical disclaimers.
+
+## Development checks
 
 ```cmd
 flutter pub get
-flutter run --dart-define=NEUROTRACKER_API_URL=http://YOUR-SERVER-IP:3000 --dart-define=NEUROTRACKER_API_KEY=YOUR_API_KEY
+dart format lib test
+flutter analyze
+flutter test
 ```
 
-## Android release build
-
-Patient release builds should use an HTTPS backend:
-
-```cmd
-flutter build apk --release --dart-define=NEUROTRACKER_API_URL=https://YOUR-SERVER --dart-define=NEUROTRACKER_API_KEY=YOUR_API_KEY
-```
-
-The APK is created at:
-
-```text
-build/app/outputs/flutter-apk/app-release.apk
-```
-
-Release builds require a permanent signing keystore. Create it once and keep
-both the keystore and passwords outside source control:
-
-```cmd
-keytool -genkeypair -v -keystore %USERPROFILE%\neurotracker-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias neurotracker
-```
-
-Create `android/key.properties` locally:
-
-```properties
-storePassword=YOUR_KEYSTORE_PASSWORD
-keyPassword=YOUR_KEY_PASSWORD
-keyAlias=neurotracker
-storeFile=C:\\Users\\YOUR_USER\\neurotracker-release.jks
-```
-
-Back up the keystore and passwords securely. Losing them can prevent future
-updates to an installed Android application.
-
-Android debug/profile builds permit cleartext HTTP for clinic-LAN testing.
-Release builds reject cleartext traffic and therefore require an HTTPS API URL.
-
-## iOS cloud build
-
-The iOS bundle identifier is:
-
-```text
-au.com.pascoeneurology.neurotracker
-```
-
-A signed iOS build still requires Apple-authorised signing and distribution. Cloud macOS services can compile the project, but they cannot bypass Apple signing requirements.
-
-## Backend
+Backend:
 
 ```cmd
 cd backend
-npm install
+npm ci
 npm test
 npm start
 ```
 
-Set `API_KEY`, `ADMIN_PASSWORD`, and preferably `ADMIN_USER` in
-`backend/.env`. Production mode refuses to start with the placeholder
-credentials.
+For a local debug run, pass only the API URL:
 
-For the clinic's off-site Windows server and Caddy HTTPS configuration, follow
-`deploy/WINDOWS_HTTPS_DEPLOYMENT.md`. Production binds Node to `127.0.0.1` by
-default so it can be reached through the HTTPS reverse proxy without exposing
-port 3000 publicly.
-
-Portal:
-
-```text
-http://localhost:3000/admin
+```cmd
+flutter run --dart-define=NEUROTRACKER_API_URL=http://YOUR-SERVER-IP:3000
 ```
 
-Population analytics:
+No mobile API key is used by Build 6.
 
-```text
-http://localhost:3000/admin/population
+## Android Build 6
+
+Release signing still uses the permanent `android/key.properties` and
+keystore already configured for this application ID. Keep both outside source
+control and maintain an offline backup.
+
+From the project root in PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delivery\build-neurosol-android-build6.ps1
 ```
 
-## Privacy and deployment
+The script restores packages, formats and verifies source, runs tests, builds
+the signed AAB and APK, copies them to `delivery\android-build6`, and prints
+SHA-256 hashes.
 
-This application handles identifiable health information. Do not release it to patients over public networks until the backend is protected by HTTPS, appropriate access controls, secure backups and clinic-approved privacy documentation.
+## Production backend
 
-CSV files under `backend/data` are runtime clinical data and must not be
-committed to source control. Existing installations are migrated in place to
-retain legacy records while adding stable submission and patient identifiers.
+Copy `backend/.env.example` to the production `.env`. The two essential
+secrets are:
+
+- `IDENTITY_SECRET`: at least 32 cryptographically random characters; it
+  protects enrolment-code and device-token hashes.
+- `ADMIN_PASSWORD`: a unique clinician portal password of at least 16
+  characters.
+
+Build 6 has no shared mobile API-key path. Older builds cannot upload after the
+Build 6 backend is deployed; they must be upgraded and enrolled.
+
+Runtime clinical files are:
+
+- `symptom_entries.csv`
+- `identity_store.json`
+- automatic CSV migration backups
+
+Store them in the configured `DATA_DIR`, outside the repository. Back up the
+CSV and identity store together. Keep the `.env`, especially
+`IDENTITY_SECRET`, in the clinic's secret-management backup; changing or losing
+that secret invalidates existing enrolment codes and device credentials.
+
+Use the deployment instructions in
+`deploy/WINDOWS_HTTPS_DEPLOYMENT.md`. Node binds to `127.0.0.1` and must be
+exposed only through the existing HTTPS reverse proxy.
+
+Portal pages:
+
+```text
+https://tracker.melindapascoeneurology.com/admin
+https://tracker.melindapascoeneurology.com/admin/population
+https://tracker.melindapascoeneurology.com/admin/enrolments
+```
+
+## Safe rollout order
+
+1. Back up the current production data and `.env`.
+2. Deploy the Build 6 backend and configure `IDENTITY_SECRET`.
+3. Run `npm test` and verify `/health`, the portal, code issuance, enrolment,
+   one check-in, CSV storage, and portal grouping.
+4. For each existing Build 5 patient, issue a new-device code against their
+   existing PatientId rather than creating a new identity.
+5. Install Build 6 on a clinic test phone and complete the release acceptance
+   tests.
+6. Upload the Build 6 AAB to Google Play testing only after those gates pass.
+
+This application handles identifiable health information. Never commit
+production `.env`, `symptom_entries.csv`, `identity_store.json`, signing
+material, or screenshots containing patient information.

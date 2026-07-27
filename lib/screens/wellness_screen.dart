@@ -79,7 +79,9 @@ class _WellnessScreenState extends State<WellnessScreen> {
     }
     final uploadResult = await UploadService.uploadDailyEntry(entry);
     final uploaded = uploadResult.succeeded;
-    if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
+    if (uploadResult.terminal) {
+      await StorageService.removePendingEntry(entry.submissionId);
+    }
     final pending = await StorageService.pendingCount();
 
     if (!mounted) return;
@@ -87,10 +89,18 @@ class _WellnessScreenState extends State<WellnessScreen> {
     await showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(uploaded ? 'Check-in synced' : 'Check-in saved'),
+        title: Text(
+          uploaded
+              ? 'Check-in synced'
+              : uploadResult == UploadResult.dailyAlreadyRecorded
+              ? 'Clinic entry already exists'
+              : 'Check-in saved',
+        ),
         content: Text(
           uploaded
               ? 'Today’s check-in has been securely sent to the clinic.'
+              : uploadResult == UploadResult.dailyAlreadyRecorded
+              ? 'The clinic already has a check-in for today. This later check-in remains in this phone’s local history but will not replace the clinic record. Contact the clinic if a correction is needed.'
               : 'Today’s check-in is safely stored on this phone.\n\n${uploadResult.patientMessage}\n\nPending uploads: $pending',
         ),
         actions: [

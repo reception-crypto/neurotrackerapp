@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/delivery/android-build*/
 
 # Symbolication related
 app.*.symbols
@@ -49,7 +50,7 @@ backend/.env
 *.jks
 key.properties
 
-backend/data/*.csv
-backend/backend/data/*.csv
+/backend/data/
+/backend/backend/data/
 backend/node_modules/
 backend/backend/node_modules/

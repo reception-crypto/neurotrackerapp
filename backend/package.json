@@ -1,7 +1,7 @@
 {
-  "name": "neurotracker-backend-csv",
-  "version": "0.4.0",
-  "description": "Minimal NeuroTracker backend using CSV storage, charting, outlier detection, and PDF reports.",
+  "name": "neurosol-symptom-diary-backend",
+  "version": "0.6.0",
+  "description": "NeuroSol clinic backend with secure device enrolment, CSV storage, analytics, and PDF reports.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

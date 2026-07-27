@@ -1,11 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neurotrackerapp/models/daily_entry.dart';
+import 'package:neurotrackerapp/services/identity_service.dart';
 import 'package:neurotrackerapp/services/storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    IdentityService.useInMemoryStorageForTesting = true;
+    IdentityService.accessTokenForTesting = 'test-device-token';
   });
 
   test('entry history is stored once and returned newest first', () async {
@@ -87,5 +90,14 @@ void main() {
 
     expect(await StorageService.hasSubmittedOn('2026-07-27'), isTrue);
     expect(await StorageService.hasSubmittedOn('2026-07-28'), isFalse);
+  });
+
+  test('reset removes the protected device credential and local data', () async {
+    await StorageService.recordSubmissionDate('2026-07-27');
+
+    await StorageService.resetAll();
+
+    expect(IdentityService.accessTokenForTesting, isNull);
+    expect(await StorageService.hasSubmittedOn('2026-07-27'), isFalse);
   });
 }

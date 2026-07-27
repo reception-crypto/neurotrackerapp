@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_identity.dart';
 import '../models/patient_profile.dart';
@@ -7,6 +8,7 @@ import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import 'consent_screen.dart';
+import 'enrolment_screen.dart';
 import 'history_screen.dart';
 import 'privacy_screen.dart';
 import 'profile_screen.dart';
@@ -58,7 +60,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          summary.lastFailure == null
+          summary.alreadyRecorded > 0 && summary.remaining == 0
+              ? '${summary.alreadyRecorded} queued check-in(s) were removed because the clinic already had an entry for those dates.'
+              : summary.lastFailure == null
               ? '${summary.uploaded} pending check-in(s) synced.'
               : '${summary.uploaded} synced; ${summary.remaining} still pending. ${summary.lastFailure!.patientMessage}',
         ),
@@ -92,7 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (_) => AlertDialog(
         title: const Text('Reset app?'),
         content: const Text(
-          'This removes the saved profile and local check-in history from this phone.',
+          'This removes the saved profile, clinic enrolment, and local check-in history from this phone. A new one-time clinic code will be required before the app can be used again.',
         ),
         actions: [
           TextButton(
@@ -122,6 +126,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return '${local.day}/${local.month}/${local.year} '
         '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _copySupportId() async {
+    final supportId = profile?.supportId;
+    if (supportId == null) return;
+    await Clipboard.setData(ClipboardData(text: supportId));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Support ID copied.')));
   }
 
   @override
@@ -205,6 +219,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
             ),
           ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.verified_user_outlined),
+              title: const Text('Clinic enrolment'),
+              subtitle: Text(
+                profile == null
+                    ? 'Not enrolled'
+                    : 'Support ID: ${profile!.supportId}\nTap to copy',
+              ),
+              trailing: PopupMenuButton<String>(
+                tooltip: 'Clinic enrolment options',
+                onSelected: (value) async {
+                  if (value == 'copy') {
+                    await _copySupportId();
+                  } else if (value == 'replace' && profile != null && mounted) {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            EnrolmentScreen(existingProfile: profile),
+                      ),
+                    );
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'copy', child: Text('Copy support ID')),
+                  PopupMenuItem(
+                    value: 'replace',
+                    child: Text('Enter a new enrolment code'),
+                  ),
+                ],
+              ),
+              onTap: _copySupportId,
+            ),
+          ),
           const SizedBox(height: 20),
           Text(
             'App information',
@@ -216,7 +266,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: Icon(Icons.info_outline),
               title: Text(appDisplayName),
               subtitle: Text(
-                'Version 1.0.0\nFor clinical monitoring; not for emergency use.',
+                'Version 1.0.0 (build 6)\nFor clinical monitoring; not for emergency use.',
               ),
             ),
           ),

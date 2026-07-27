@@ -26,10 +26,34 @@ class PatientProfile {
       secondaryDisorder!.isNotEmpty &&
       secondarySymptoms.isNotEmpty;
 
-  PatientProfile copyWith({TimeOfDay? reminderTime}) {
+  String get supportId {
+    final compact = patientId
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    if (compact.isEmpty) return 'NS-UNAVAILABLE';
+    final suffix = compact.length <= 12
+        ? compact
+        : compact.substring(compact.length - 12);
+    final groups = <String>[];
+    for (var index = 0; index < suffix.length; index += 4) {
+      groups.add(
+        suffix.substring(
+          index,
+          min(index + 4, suffix.length),
+        ),
+      );
+    }
+    return 'NS-${groups.join('-')}';
+  }
+
+  PatientProfile copyWith({
+    String? patientId,
+    String? fullName,
+    TimeOfDay? reminderTime,
+  }) {
     return PatientProfile(
-      patientId: patientId,
-      fullName: fullName,
+      patientId: patientId ?? this.patientId,
+      fullName: fullName ?? this.fullName,
       primaryDisorder: primaryDisorder,
       primarySymptoms: primarySymptoms,
       secondaryDisorder: secondaryDisorder,
@@ -56,7 +80,7 @@ class PatientProfile {
     return PatientProfile(
       patientId: (json['patientId'] as String?)?.trim().isNotEmpty == true
           ? json['patientId'] as String
-          : generatePatientId(),
+          : '',
       fullName: json['fullName'] as String? ?? '',
       primaryDisorder:
           (json['primaryDisorder'] as String?) ?? oldDisorder ?? 'Migraine',
@@ -72,15 +96,5 @@ class PatientProfile {
         minute: (json['reminderMinute'] as num?)?.toInt() ?? 0,
       ),
     );
-  }
-
-  static String generatePatientId() {
-    final random = Random.secure();
-    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-    final suffix = List.generate(
-      16,
-      (_) => random.nextInt(36).toRadixString(36),
-    ).join();
-    return 'pt-$timestamp-$suffix';
   }
 }

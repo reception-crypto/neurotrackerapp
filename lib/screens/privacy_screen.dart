@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class PrivacyScreen extends StatelessWidget {
   const PrivacyScreen({super.key});
 
-  static const String policyVersion = '2026-07-21';
+  static const String policyVersion = '2026-07-27';
 
   @override
   Widget build(BuildContext context) {
@@ -20,12 +20,12 @@ class PrivacyScreen extends StatelessWidget {
           _PolicySection(
             title: 'Information collected',
             body:
-                'The app records your name, selected neurological condition, chosen symptoms, symptom scores, wellness score, check-in date and time, and technical identifiers used to keep submissions associated with the correct profile and prevent duplicates.',
+                'The app records your name, selected neurological condition, chosen symptoms, symptom scores, wellness score, check-in date and time, a clinic-issued patient identifier, and a protected device credential used to associate submissions with the correct clinic record and prevent duplicates.',
           ),
           _PolicySection(
             title: 'Storage and transmission',
             body:
-                'Your profile and check-in history are stored on this device. Check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
+                'Your profile and check-in history are stored on this device. The device credential is kept in protected operating-system storage. Check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
           ),
           _PolicySection(
             title: 'How information is used',
@@ -35,7 +35,7 @@ class PrivacyScreen extends StatelessWidget {
           _PolicySection(
             title: 'Access, correction and deletion',
             body:
-                'Resetting the app removes its locally stored profile and check-in history, but does not delete information already received by the clinic. Contact the clinic to request access to, correction of, or deletion of clinic-held information, subject to applicable health-record retention obligations.',
+                'Resetting the app removes its locally stored profile, device enrolment, and check-in history, but does not delete information already received by the clinic. A new one-time code is required to enrol again. Contact the clinic to request access to, correction of, or deletion of clinic-held information, subject to applicable health-record retention obligations.',
           ),
           _PolicySection(
             title: 'Important medical information',

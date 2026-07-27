@@ -7,7 +7,7 @@ import '../services/storage_service.dart';
 import 'home_screen.dart';
 
 class SymptomSelectionScreen extends StatefulWidget {
-  final String? patientId;
+  final String patientId;
   final String fullName;
   final String primaryDisorder;
   final String? secondaryDisorder;
@@ -17,7 +17,7 @@ class SymptomSelectionScreen extends StatefulWidget {
 
   const SymptomSelectionScreen({
     super.key,
-    this.patientId,
+    required this.patientId,
     required this.fullName,
     required this.primaryDisorder,
     required this.secondaryDisorder,
@@ -56,7 +56,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
 
     try {
       final profile = PatientProfile(
-        patientId: widget.patientId ?? PatientProfile.generatePatientId(),
+        patientId: widget.patientId,
         fullName: widget.fullName,
         primaryDisorder: widget.primaryDisorder,
         primarySymptoms: List<String>.from(primarySymptoms),
