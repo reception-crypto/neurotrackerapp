@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 
+import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import 'consent_screen.dart';
 import 'daily_symptom_screen.dart';
+import 'home_screen.dart';
 
 class StartupScreen extends StatefulWidget {
-  const StartupScreen({super.key});
+  final bool openCheckIn;
+
+  const StartupScreen({super.key, this.openCheckIn = false});
 
   @override
   State<StartupScreen> createState() => _StartupScreenState();
@@ -23,11 +27,18 @@ class _StartupScreenState extends State<StartupScreen> {
 
   Future<void> _load() async {
     final PatientProfile? profile = await StorageService.loadProfile();
+    var completedToday = false;
     if (profile != null) {
-      await NotificationService.scheduleDailyReminder(
-  hour: profile.reminderTime.hour,
-  minute: profile.reminderTime.minute,
-);
+      completedToday = await StorageService.hasSubmittedToday();
+      try {
+        await NotificationService.scheduleDailyReminder(
+          hour: profile.reminderTime.hour,
+          minute: profile.reminderTime.minute,
+          skipToday: completedToday,
+        );
+      } catch (_) {
+        // A notification failure must not prevent access to the diary.
+      }
       await UploadService.retryPendingUploads();
     }
     if (!mounted) return;
@@ -37,7 +48,9 @@ class _StartupScreenState extends State<StartupScreen> {
       MaterialPageRoute(
         builder: (_) => profile == null
             ? const ConsentScreen()
-            : DailySymptomScreen(profile: profile),
+            : widget.openCheckIn && !completedToday
+            ? DailySymptomScreen(profile: profile)
+            : HomeScreen(profile: profile),
       ),
     );
   }
@@ -51,8 +64,10 @@ class _StartupScreenState extends State<StartupScreen> {
           children: [
             Image.asset('assets/icon/app_icon.png', width: 112, height: 112),
             const SizedBox(height: 18),
-            Text('NeuroTracker Clinical',
-                style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              appDisplayName,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 22),
             const CircularProgressIndicator(),
           ],

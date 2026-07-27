@@ -81,14 +81,18 @@ class StorageService {
     final entries = <DailyEntry>[];
     for (final raw in history) {
       try {
-        entries.add(DailyEntry.fromJson(
-          Map<String, dynamic>.from(jsonDecode(raw) as Map),
-        ));
+        entries.add(
+          DailyEntry.fromJson(
+            Map<String, dynamic>.from(jsonDecode(raw) as Map),
+          ),
+        );
       } catch (_) {
         // Ignore malformed legacy history entries.
       }
     }
-    entries.sort((a, b) => '${b.date} ${b.time}'.compareTo('${a.date} ${a.time}'));
+    entries.sort(
+      (a, b) => '${b.date} ${b.time}'.compareTo('${a.date} ${a.time}'),
+    );
     return entries;
   }
 
@@ -98,9 +102,11 @@ class StorageService {
     final entries = <DailyEntry>[];
     for (final raw in pending) {
       try {
-        entries.add(DailyEntry.fromJson(
-          Map<String, dynamic>.from(jsonDecode(raw) as Map),
-        ));
+        entries.add(
+          DailyEntry.fromJson(
+            Map<String, dynamic>.from(jsonDecode(raw) as Map),
+          ),
+        );
       } catch (_) {
         // Ignore malformed legacy queue entries.
       }
@@ -122,7 +128,8 @@ class StorageService {
     await prefs.setStringList(_pendingKey, pending);
   }
 
-  static Future<int> pendingCount() async => (await loadPendingEntries()).length;
+  static Future<int> pendingCount() async =>
+      (await loadPendingEntries()).length;
 
   static Future<void> recordSuccessfulSync() async {
     final prefs = await SharedPreferences.getInstance();
@@ -136,8 +143,27 @@ class StorageService {
 
   static Future<bool> hasSubmittedOn(String date) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_lastSubmissionDateKey) == date;
+    if (prefs.getString(_lastSubmissionDateKey) == date) return true;
+
+    final history = prefs.getStringList(_entryHistoryKey) ?? <String>[];
+    return history.any((raw) {
+      try {
+        return (jsonDecode(raw) as Map<String, dynamic>)['date'] == date;
+      } catch (_) {
+        return false;
+      }
+    });
   }
+
+  static String localDateKey([DateTime? value]) {
+    final date = value ?? DateTime.now();
+    return '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  static Future<bool> hasSubmittedToday({DateTime? now}) =>
+      hasSubmittedOn(localDateKey(now));
 
   static Future<void> recordConsent({required String policyVersion}) async {
     final prefs = await SharedPreferences.getInstance();

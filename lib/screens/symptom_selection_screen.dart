@@ -4,7 +4,7 @@ import '../models/patient_profile.dart';
 import '../models/symptom_data.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
-import 'daily_symptom_screen.dart';
+import 'home_screen.dart';
 
 class SymptomSelectionScreen extends StatefulWidget {
   final String? patientId;
@@ -27,8 +27,7 @@ class SymptomSelectionScreen extends StatefulWidget {
   });
 
   @override
-  State<SymptomSelectionScreen> createState() =>
-      _SymptomSelectionScreenState();
+  State<SymptomSelectionScreen> createState() => _SymptomSelectionScreenState();
 }
 
 class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
@@ -44,8 +43,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
   }
 
   bool get requiresSecondary =>
-      widget.secondaryDisorder != null &&
-      widget.secondaryDisorder!.isNotEmpty;
+      widget.secondaryDisorder != null && widget.secondaryDisorder!.isNotEmpty;
 
   bool get canFinish =>
       primarySymptoms.length == 3 &&
@@ -62,8 +60,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
         fullName: widget.fullName,
         primaryDisorder: widget.primaryDisorder,
         primarySymptoms: List<String>.from(primarySymptoms),
-        secondaryDisorder:
-            requiresSecondary ? widget.secondaryDisorder : null,
+        secondaryDisorder: requiresSecondary ? widget.secondaryDisorder : null,
         secondarySymptoms: requiresSecondary
             ? List<String>.from(secondarySymptoms)
             : const [],
@@ -72,8 +69,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
 
       await StorageService.saveProfile(profile);
 
-      final permissionGranted =
-          await NotificationService.requestPermission();
+      final permissionGranted = await NotificationService.requestPermission();
 
       if (permissionGranted) {
         await NotificationService.scheduleDailyReminder(
@@ -96,9 +92,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
 
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(
-          builder: (_) => DailySymptomScreen(profile: profile),
-        ),
+        MaterialPageRoute(builder: (_) => HomeScreen(profile: profile)),
         (_) => false,
       );
     } catch (error) {
@@ -107,9 +101,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
       setState(() => _saving = false);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Setup could not be completed: $error'),
-        ),
+        SnackBar(content: Text('Setup could not be completed: $error')),
       );
     }
   }
@@ -166,9 +158,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
                       ? const SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                          ),
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
                         )
                       : const Text('Finish Setup'),
                 ),

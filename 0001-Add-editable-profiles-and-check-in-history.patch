@@ -1,0 +1,461 @@
+From 0501fe50a5d8baa4ace0c65f949b2b15b8494235 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Thu, 16 Jul 2026 22:06:00 -0300
+Subject: [PATCH] Add editable profiles and check-in history
+
+---
+ README.md                                 |  2 +
+ RELEASE_CHECKLIST.md                      |  2 +
+ lib/screens/history_screen.dart           | 77 +++++++++++++++++++++++
+ lib/screens/profile_screen.dart           | 38 ++++++++++-
+ lib/screens/settings_screen.dart          | 36 +++++++++++
+ lib/screens/symptom_selection_screen.dart | 19 +++++-
+ lib/screens/wellness_screen.dart          |  1 +
+ lib/services/storage_service.dart         | 35 +++++++++++
+ test/storage_service_test.dart            | 52 +++++++++++++++
+ 9 files changed, 257 insertions(+), 5 deletions(-)
+ create mode 100644 lib/screens/history_screen.dart
+ create mode 100644 test/storage_service_test.dart
+
+diff --git a/README.md b/README.md
+index b25cd74..6d225f4 100644
+--- a/README.md
++++ b/README.md
+@@ -17,6 +17,8 @@ Minimal Flutter application for patients to record three symptoms per disorder a
+ - Offline-first local storage
+ - Automatic retry queue for failed uploads
+ - Visible synced/pending status
++- Editable profile and tracked symptom selections
++- Local expandable check-in history
+ - Required deliberate selection for every symptom and wellness score
+ - Stable patient and submission identifiers
+ - Idempotent retry handling to prevent duplicate clinical records
+diff --git a/RELEASE_CHECKLIST.md b/RELEASE_CHECKLIST.md
+index c8d679a..a53fc23 100644
+--- a/RELEASE_CHECKLIST.md
++++ b/RELEASE_CHECKLIST.md
+@@ -7,6 +7,8 @@
+ - [ ] `flutter analyze`
+ - [ ] Test first-run consent and profile setup
+ - [ ] Test one-disorder and two-disorder profiles
++- [ ] Edit an existing profile and confirm its patient ID is preserved
++- [ ] Confirm a newly saved check-in appears in local history
+ - [ ] Confirm Next remains disabled until every symptom has been rated
+ - [ ] Confirm Submit remains disabled until wellness has been selected
+ - [ ] Verify notification permission and reminder delivery
+diff --git a/lib/screens/history_screen.dart b/lib/screens/history_screen.dart
+new file mode 100644
+index 0000000..a6aede0
+--- /dev/null
++++ b/lib/screens/history_screen.dart
+@@ -0,0 +1,77 @@
++import 'package:flutter/material.dart';
++
++import '../models/daily_entry.dart';
++import '../services/storage_service.dart';
++
++class HistoryScreen extends StatelessWidget {
++  const HistoryScreen({super.key});
++
++  @override
++  Widget build(BuildContext context) {
++    return Scaffold(
++      appBar: AppBar(title: const Text('Check-in History')),
++      body: FutureBuilder<List<DailyEntry>>(
++        future: StorageService.loadEntryHistory(),
++        builder: (context, snapshot) {
++          if (snapshot.connectionState != ConnectionState.done) {
++            return const Center(child: CircularProgressIndicator());
++          }
++          final entries = snapshot.data ?? const <DailyEntry>[];
++          if (entries.isEmpty) {
++            return const Center(
++              child: Padding(
++                padding: EdgeInsets.all(24),
++                child: Text(
++                  'No check-ins have been recorded on this device yet.',
++                  textAlign: TextAlign.center,
++                ),
++              ),
++            );
++          }
++          return ListView.separated(
++            padding: const EdgeInsets.all(16),
++            itemCount: entries.length,
++            separatorBuilder: (_, __) => const SizedBox(height: 8),
++            itemBuilder: (context, index) => _HistoryCard(entry: entries[index]),
++          );
++        },
++      ),
++    );
++  }
++}
++
++class _HistoryCard extends StatelessWidget {
++  final DailyEntry entry;
++
++  const _HistoryCard({required this.entry});
++
++  @override
++  Widget build(BuildContext context) {
++    return Card(
++      child: ExpansionTile(
++        leading: const Icon(Icons.event_note),
++        title: Text(_displayDate(entry.date)),
++        subtitle: Text('Wellness ${entry.wellnessPercent}% · ${entry.time}'),
++        children: entry.records
++            .map(
++              (record) => ListTile(
++                dense: true,
++                title: Text(record.symptom),
++                subtitle: Text('${record.track}: ${record.disorder}'),
++                trailing: Text(
++                  '${record.score}/10',
++                  style: Theme.of(context).textTheme.titleMedium,
++                ),
++              ),
++            )
++            .toList(),
++      ),
++    );
++  }
++
++  String _displayDate(String value) {
++    final date = DateTime.tryParse(value);
++    if (date == null) return value;
++    return '${date.day}/${date.month}/${date.year}';
++  }
++}
+diff --git a/lib/screens/profile_screen.dart b/lib/screens/profile_screen.dart
+index bc000b5..5adffdd 100644
+--- a/lib/screens/profile_screen.dart
++++ b/lib/screens/profile_screen.dart
+@@ -1,10 +1,13 @@
+ import 'package:flutter/material.dart';
+ 
++import '../models/patient_profile.dart';
+ import '../models/symptom_data.dart';
+ import 'symptom_selection_screen.dart';
+ 
+ class ProfileScreen extends StatefulWidget {
+-  const ProfileScreen({super.key});
++  final PatientProfile? initialProfile;
++
++  const ProfileScreen({super.key, this.initialProfile});
+ 
+   @override
+   State<ProfileScreen> createState() => _ProfileScreenState();
+@@ -20,6 +23,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
+   @override
+   void initState() {
+     super.initState();
++    final initial = widget.initialProfile;
++    if (initial != null) {
++      nameController.text = initial.fullName;
++      primaryDisorder = initial.primaryDisorder;
++      useSecondDisorder = initial.hasSecondaryDisorder;
++      secondaryDisorder = initial.secondaryDisorder ?? 'Dysautonomia';
++      reminderTime = initial.reminderTime;
++    }
+     nameController.addListener(() => setState(() {}));
+   }
+ 
+@@ -33,6 +44,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
+       .map((disorder) => DropdownMenuItem(value: disorder, child: Text(disorder)))
+       .toList();
+ 
++  bool get canContinue =>
++      nameController.text.trim().isNotEmpty &&
++      (!useSecondDisorder || secondaryDisorder != primaryDisorder);
++
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+@@ -82,6 +97,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
+                     () => secondaryDisorder = value ?? 'Dysautonomia',
+                   ),
+                 ),
++                if (secondaryDisorder == primaryDisorder)
++                  const Padding(
++                    padding: EdgeInsets.only(top: 8),
++                    child: Text(
++                      'Choose a different second disorder.',
++                      style: TextStyle(color: Colors.orangeAccent),
++                    ),
++                  ),
+               ],
+               const SizedBox(height: 16),
+               ListTile(
+@@ -101,17 +124,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
+               SizedBox(
+                 width: double.infinity,
+                 child: FilledButton(
+-                  onPressed: nameController.text.trim().isEmpty
++                  onPressed: !canContinue
+                       ? null
+                       : () => Navigator.push(
+                             context,
+                             MaterialPageRoute(
+                               builder: (_) => SymptomSelectionScreen(
++                                patientId: widget.initialProfile?.patientId,
+                                 fullName: nameController.text.trim(),
+                                 primaryDisorder: primaryDisorder,
+                                 secondaryDisorder:
+                                     useSecondDisorder ? secondaryDisorder : null,
+                                 reminderTime: reminderTime,
++                                initialPrimarySymptoms:
++                                    widget.initialProfile?.primaryDisorder ==
++                                            primaryDisorder
++                                        ? widget.initialProfile!.primarySymptoms
++                                        : const [],
++                                initialSecondarySymptoms:
++                                    widget.initialProfile?.secondaryDisorder ==
++                                            (useSecondDisorder ? secondaryDisorder : null)
++                                        ? widget.initialProfile!.secondarySymptoms
++                                        : const [],
+                               ),
+                             ),
+                           ),
+diff --git a/lib/screens/settings_screen.dart b/lib/screens/settings_screen.dart
+index 9f09042..c6385ab 100644
+--- a/lib/screens/settings_screen.dart
++++ b/lib/screens/settings_screen.dart
+@@ -6,6 +6,8 @@ import '../services/notification_service.dart';
+ import '../services/storage_service.dart';
+ import '../services/upload_service.dart';
+ import 'consent_screen.dart';
++import 'history_screen.dart';
++import 'profile_screen.dart';
+ 
+ class SettingsScreen extends StatefulWidget {
+   const SettingsScreen({super.key});
+@@ -140,6 +142,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
+               onTap: _changeReminder,
+             ),
+           ),
++          const SizedBox(height: 12),
++          Card(
++            child: ListTile(
++              leading: const Icon(Icons.history),
++              title: const Text('Check-in history'),
++              subtitle: const Text('Review entries saved on this device'),
++              trailing: const Icon(Icons.chevron_right),
++              onTap: () => Navigator.push(
++                context,
++                MaterialPageRoute(builder: (_) => const HistoryScreen()),
++              ),
++            ),
++          ),
++          const SizedBox(height: 12),
++          Card(
++            child: ListTile(
++              leading: const Icon(Icons.manage_accounts),
++              title: const Text('Edit patient profile'),
++              subtitle: Text(
++                profile == null
++                    ? 'Profile unavailable'
++                    : '${profile!.primaryDisorder}${profile!.hasSecondaryDisorder ? ' and ${profile!.secondaryDisorder}' : ''}',
++              ),
++              trailing: const Icon(Icons.chevron_right),
++              onTap: profile == null
++                  ? null
++                  : () => Navigator.push(
++                        context,
++                        MaterialPageRoute(
++                          builder: (_) => ProfileScreen(initialProfile: profile),
++                        ),
++                      ),
++            ),
++          ),
+           const SizedBox(height: 20),
+           Text('App information', style: Theme.of(context).textTheme.headlineMedium),
+           const SizedBox(height: 12),
+diff --git a/lib/screens/symptom_selection_screen.dart b/lib/screens/symptom_selection_screen.dart
+index 3dcbe9e..e150a43 100644
+--- a/lib/screens/symptom_selection_screen.dart
++++ b/lib/screens/symptom_selection_screen.dart
+@@ -7,17 +7,23 @@ import '../services/storage_service.dart';
+ import 'daily_symptom_screen.dart';
+ 
+ class SymptomSelectionScreen extends StatefulWidget {
++  final String? patientId;
+   final String fullName;
+   final String primaryDisorder;
+   final String? secondaryDisorder;
+   final TimeOfDay reminderTime;
++  final List<String> initialPrimarySymptoms;
++  final List<String> initialSecondarySymptoms;
+ 
+   const SymptomSelectionScreen({
+     super.key,
++    this.patientId,
+     required this.fullName,
+     required this.primaryDisorder,
+     required this.secondaryDisorder,
+     required this.reminderTime,
++    this.initialPrimarySymptoms = const [],
++    this.initialSecondarySymptoms = const [],
+   });
+ 
+   @override
+@@ -26,10 +32,17 @@ class SymptomSelectionScreen extends StatefulWidget {
+ }
+ 
+ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
+-  final List<String> primarySymptoms = [];
+-  final List<String> secondarySymptoms = [];
++  late final List<String> primarySymptoms;
++  late final List<String> secondarySymptoms;
+   bool _saving = false;
+ 
++  @override
++  void initState() {
++    super.initState();
++    primarySymptoms = List<String>.from(widget.initialPrimarySymptoms);
++    secondarySymptoms = List<String>.from(widget.initialSecondarySymptoms);
++  }
++
+   bool get requiresSecondary =>
+       widget.secondaryDisorder != null &&
+       widget.secondaryDisorder!.isNotEmpty;
+@@ -45,7 +58,7 @@ class _SymptomSelectionScreenState extends State<SymptomSelectionScreen> {
+ 
+     try {
+       final profile = PatientProfile(
+-        patientId: PatientProfile.generatePatientId(),
++        patientId: widget.patientId ?? PatientProfile.generatePatientId(),
+         fullName: widget.fullName,
+         primaryDisorder: widget.primaryDisorder,
+         primarySymptoms: List<String>.from(primarySymptoms),
+diff --git a/lib/screens/wellness_screen.dart b/lib/screens/wellness_screen.dart
+index 01454a4..bb5bf82 100644
+--- a/lib/screens/wellness_screen.dart
++++ b/lib/screens/wellness_screen.dart
+@@ -58,6 +58,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
+     final rows = CsvService.rowsFromEntry(entry);
+ 
+     await StorageService.saveEntryRows(rows);
++    await StorageService.saveEntryToHistory(entry);
+     await StorageService.recordSubmissionDate(entry.date);
+     await StorageService.addPendingEntry(entry);
+     final uploaded = await UploadService.uploadDailyEntry(entry);
+diff --git a/lib/services/storage_service.dart b/lib/services/storage_service.dart
+index 51a56de..ba545e1 100644
+--- a/lib/services/storage_service.dart
++++ b/lib/services/storage_service.dart
+@@ -12,6 +12,7 @@ class StorageService {
+   static const String _lastSyncKey = 'last_successful_sync';
+   static const String _lastSubmissionDateKey = 'last_submission_date';
+   static const String _consentKey = 'consent_acceptance';
++  static const String _entryHistoryKey = 'daily_entry_history';
+ 
+   static Future<void> saveProfile(PatientProfile profile) async {
+     final prefs = await SharedPreferences.getInstance();
+@@ -58,6 +59,39 @@ class StorageService {
+     }
+   }
+ 
++  static Future<void> saveEntryToHistory(DailyEntry entry) async {
++    final prefs = await SharedPreferences.getInstance();
++    final history = prefs.getStringList(_entryHistoryKey) ?? <String>[];
++    if (!history.any((raw) {
++      try {
++        return (jsonDecode(raw) as Map<String, dynamic>)['submissionId'] ==
++            entry.submissionId;
++      } catch (_) {
++        return false;
++      }
++    })) {
++      history.add(jsonEncode(entry.toJson()));
++      await prefs.setStringList(_entryHistoryKey, history);
++    }
++  }
++
++  static Future<List<DailyEntry>> loadEntryHistory() async {
++    final prefs = await SharedPreferences.getInstance();
++    final history = prefs.getStringList(_entryHistoryKey) ?? <String>[];
++    final entries = <DailyEntry>[];
++    for (final raw in history) {
++      try {
++        entries.add(DailyEntry.fromJson(
++          Map<String, dynamic>.from(jsonDecode(raw) as Map),
++        ));
++      } catch (_) {
++        // Ignore malformed legacy history entries.
++      }
++    }
++    entries.sort((a, b) => '${b.date} ${b.time}'.compareTo('${a.date} ${a.time}'));
++    return entries;
++  }
++
+   static Future<List<DailyEntry>> loadPendingEntries() async {
+     final prefs = await SharedPreferences.getInstance();
+     final pending = prefs.getStringList(_pendingKey) ?? <String>[];
+@@ -130,5 +164,6 @@ class StorageService {
+     await prefs.remove(_lastSyncKey);
+     await prefs.remove(_lastSubmissionDateKey);
+     await prefs.remove(_consentKey);
++    await prefs.remove(_entryHistoryKey);
+   }
+ }
+diff --git a/test/storage_service_test.dart b/test/storage_service_test.dart
+new file mode 100644
+index 0000000..d1592d7
+--- /dev/null
++++ b/test/storage_service_test.dart
+@@ -0,0 +1,52 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:neurotrackerapp/models/daily_entry.dart';
++import 'package:neurotrackerapp/services/storage_service.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++
++void main() {
++  setUp(() {
++    SharedPreferences.setMockInitialValues({});
++  });
++
++  test('entry history is stored once and returned newest first', () async {
++    const older = DailyEntry(
++      submissionId: 'older',
++      patientId: 'patient-1',
++      date: '2026-07-16',
++      time: '19:00',
++      patientName: 'Synthetic Patient',
++      records: [
++        SymptomScoreRecord(
++          track: 'Primary',
++          disorder: 'Migraine',
++          symptom: 'Headache',
++          score: 3,
++        ),
++      ],
++      wellnessPercent: 70,
++    );
++    const newer = DailyEntry(
++      submissionId: 'newer',
++      patientId: 'patient-1',
++      date: '2026-07-17',
++      time: '19:00',
++      patientName: 'Synthetic Patient',
++      records: [
++        SymptomScoreRecord(
++          track: 'Primary',
++          disorder: 'Migraine',
++          symptom: 'Headache',
++          score: 2,
++        ),
++      ],
++      wellnessPercent: 80,
++    );
++
++    await StorageService.saveEntryToHistory(older);
++    await StorageService.saveEntryToHistory(newer);
++    await StorageService.saveEntryToHistory(newer);
++
++    final history = await StorageService.loadEntryHistory();
++    expect(history.map((entry) => entry.submissionId), ['newer', 'older']);
++  });
++}
+-- 
+2.51.1
+

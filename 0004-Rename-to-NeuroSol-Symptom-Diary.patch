@@ -1,0 +1,728 @@
+diff --git a/README.md b/README.md
+index df94069..d65be2a 100644
+--- a/README.md
++++ b/README.md
+@@ -1,10 +1,10 @@
+-# NeuroTracker Clinical
++# NeuroSol Symptom Diary
+ 
+ Minimal Flutter application for patients to record three symptoms per disorder and a daily wellness percentage. The project includes a CSV-backed clinician portal with individual and cohort analytics.
+ 
+ ## Version
+ 
+-`1.0.0+3`
++`1.0.0+4`
+ 
+ ## Mobile features
+ 
+@@ -72,7 +72,7 @@ Release builds reject cleartext traffic and therefore require an HTTPS API URL.
+ The iOS bundle identifier is:
+ 
+ ```text
+-au.com.pascoeneurology.neurotracker
++au.com.pascoeneurology.neurosol
+ ```
+ 
+ A signed iOS build still requires Apple-authorised signing and distribution. Cloud macOS services can compile the project, but they cannot bypass Apple signing requirements.
+diff --git a/RELEASE_CHECKLIST.md b/RELEASE_CHECKLIST.md
+index 62e5550..af05c0f 100644
+--- a/RELEASE_CHECKLIST.md
++++ b/RELEASE_CHECKLIST.md
+@@ -1,4 +1,4 @@
+-# NeuroTracker Clinical 1.0.0 release checklist
++# NeuroSol Symptom Diary 1.0.0 release checklist
+ 
+ ## Mobile verification
+ 
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index 3f029e6..31cc250 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -14,7 +14,7 @@ if (keystorePropertiesFile.exists()) {
+ }
+ 
+ android {
+-    namespace = "au.com.pascoeneurology.neurotracker"
++    namespace = "au.com.pascoeneurology.neurosol"
+     compileSdk = flutter.compileSdkVersion
+     ndkVersion = flutter.ndkVersion
+ 
+@@ -26,7 +26,7 @@ android {
+ 
+     defaultConfig {
+         multiDexEnabled = true
+-        applicationId = "au.com.pascoeneurology.neurotracker"
++        applicationId = "au.com.pascoeneurology.neurosol"
+         // You can update the following values to match your application needs.
+         // For more information, see: https://flutter.dev/to/review-gradle-config.
+         minSdk = flutter.minSdkVersion
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index cc80943..3e65431 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -3,7 +3,7 @@
+     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+     <application
+-        android:label="NeuroTracker Clinical"
++        android:label="NeuroSol"
+         android:usesCleartextTraffic="${usesCleartextTraffic}"
+         android:name="${applicationName}"
+         android:icon="@mipmap/ic_launcher">
+diff --git a/android/app/src/main/kotlin/au/com/pascoeneurology/neurotracker/MainActivity.kt b/android/app/src/main/kotlin/au/com/pascoeneurology/neurosol/MainActivity.kt
+similarity index 67%
+rename from android/app/src/main/kotlin/au/com/pascoeneurology/neurotracker/MainActivity.kt
+rename to android/app/src/main/kotlin/au/com/pascoeneurology/neurosol/MainActivity.kt
+index 5ab026a..c778284 100644
+--- a/android/app/src/main/kotlin/au/com/pascoeneurology/neurotracker/MainActivity.kt
++++ b/android/app/src/main/kotlin/au/com/pascoeneurology/neurosol/MainActivity.kt
+@@ -1,4 +1,4 @@
+-package au.com.pascoeneurology.neurotracker
++package au.com.pascoeneurology.neurosol
+ 
+ import io.flutter.embedding.android.FlutterActivity
+ 
+diff --git a/backend/NeuroTrackerApi/Program.cs b/backend/NeuroTrackerApi/Program.cs
+index 1dffa02..5992a71 100644
+--- a/backend/NeuroTrackerApi/Program.cs
++++ b/backend/NeuroTrackerApi/Program.cs
+@@ -17,7 +17,7 @@ if (!File.Exists(csvPath))
+         Encoding.UTF8);
+ }
+ 
+-app.MapGet("/", () => "NeuroTracker API is running.");
++app.MapGet("/", () => "NeuroSol API is running.");
+ 
+ app.MapPost("/api/symptom-entry", async (SymptomEntry entry) =>
+ {
+diff --git a/backend/README.md b/backend/README.md
+index 197568e..1eb7e04 100644
+--- a/backend/README.md
++++ b/backend/README.md
+@@ -1,4 +1,4 @@
+-# NeuroTracker backend — portal presentation update
++# NeuroSol backend — portal presentation update
+ 
+ ## Run
+ 
+diff --git a/backend/backend/NeuroTrackerApi/Program.cs b/backend/backend/NeuroTrackerApi/Program.cs
+index 1dffa02..5992a71 100644
+--- a/backend/backend/NeuroTrackerApi/Program.cs
++++ b/backend/backend/NeuroTrackerApi/Program.cs
+@@ -17,7 +17,7 @@ if (!File.Exists(csvPath))
+         Encoding.UTF8);
+ }
+ 
+-app.MapGet("/", () => "NeuroTracker API is running.");
++app.MapGet("/", () => "NeuroSol API is running.");
+ 
+ app.MapPost("/api/symptom-entry", async (SymptomEntry entry) =>
+ {
+diff --git a/backend/backend/README.md b/backend/backend/README.md
+index 197568e..1eb7e04 100644
+--- a/backend/backend/README.md
++++ b/backend/backend/README.md
+@@ -1,4 +1,4 @@
+-# NeuroTracker backend — portal presentation update
++# NeuroSol backend — portal presentation update
+ 
+ ## Run
+ 
+diff --git a/backend/backend/package.json b/backend/backend/package.json
+index 7c0eab5..412b7c1 100644
+--- a/backend/backend/package.json
++++ b/backend/backend/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "neurotracker-backend-csv",
+   "version": "0.4.0",
+-  "description": "Minimal NeuroTracker backend using CSV storage, charting, outlier detection, and PDF reports.",
++  "description": "NeuroSol Symptom Diary backend using CSV storage, charting, outlier detection, and PDF reports.",
+   "main": "server.js",
+   "scripts": {
+     "start": "node server.js"
+diff --git a/backend/backend/public/admin.html b/backend/backend/public/admin.html
+index 24dd86a..1466988 100644
+--- a/backend/backend/public/admin.html
++++ b/backend/backend/public/admin.html
+@@ -3,7 +3,7 @@
+ <head>
+   <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+-  <title>NeuroTracker Clinician Portal</title>
++  <title>NeuroSol Clinician Portal</title>
+   <style>
+     body { margin: 0; font-family: Arial, sans-serif; background: #1e1e1e; color: #f8fafc; }
+     header { padding: 22px 28px; border-bottom: 1px solid #3a3a3a; }
+@@ -21,7 +21,7 @@
+ </head>
+ <body>
+   <header>
+-    <h1>NeuroTracker Clinician Portal</h1>
++    <h1>NeuroSol Clinician Portal</h1>
+     <div class="muted">Recent symptom and wellness entries</div>
+   </header>
+   <main>
+diff --git a/backend/backend/server.js b/backend/backend/server.js
+index b8a03e0..46671a2 100644
+--- a/backend/backend/server.js
++++ b/backend/backend/server.js
+@@ -67,7 +67,7 @@ function requireApiKey(req, res, next) {
+ function requireAdmin(req, res, next) {
+   const user = basicAuth(req);
+   if (!user || user.name !== adminUser || user.pass !== adminPassword) {
+-    res.set('WWW-Authenticate', 'Basic realm="NeuroTracker Admin"');
++    res.set('WWW-Authenticate', 'Basic realm="NeuroSol Admin"');
+     return res.status(401).send('Authentication required.');
+   }
+   next();
+@@ -203,7 +203,7 @@ function pageShell(title, body) {
+   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${html(title)}</title><style>
+   :root{--bg:#f3f4f6;--panel:#fff;--ink:#111827;--muted:#6b7280;--blue:#2563eb;--line:#e5e7eb;--danger:#b91c1c;--good:#047857}
+   *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}header{background:#111827;color:#fff;padding:20px 30px;display:flex;justify-content:space-between;align-items:center}header h1{font-size:24px;margin:0}nav a{color:#bfdbfe;margin-left:18px;text-decoration:none;font-weight:600}main{max-width:1500px;margin:auto;padding:24px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}.field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}select,input,button,.button{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#111827;font-size:14px}button,.button{background:var(--blue);color:white;border:none;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;display:inline-block}.button.secondary{background:#374151}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}.stat .label{font-size:12px;text-transform:uppercase;color:var(--muted);font-weight:700}.stat .value{font-size:27px;font-weight:800;margin-top:5px}.chart{width:100%;min-height:420px}.axis{font-size:12px;fill:#4b5563}.axis-title{font-size:13px;fill:#374151;font-weight:700}.patient-faint{fill:none;stroke:#64748b;stroke-width:1;stroke-opacity:.16}.cohort{fill:none;stroke:#1d4ed8;stroke-width:4}.median{fill:none;stroke:#7c3aed;stroke-width:2;stroke-dasharray:7 5}.legend{display:flex;gap:20px;flex-wrap:wrap;color:var(--muted);font-size:13px}.swatch{display:inline-block;width:24px;height:4px;margin-right:7px;vertical-align:middle}.table-wrap{overflow:auto;max-height:480px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#f8fafc;color:#475569}.flag{color:var(--danger);font-weight:700}.good{color:var(--good);font-weight:700}.muted{color:var(--muted)}.empty{padding:70px;text-align:center;color:var(--muted)}.patient-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:210px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:9px}.patient-list label{font-size:13px}.patient-list input{width:auto;margin-right:7px}@media(max-width:700px){main{padding:12px}header{padding:16px}.chart{min-height:300px}}
+-  </style></head><body><header><h1>NeuroTracker Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
++  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
+ }
+ 
+ ensureCsvFile();
+@@ -225,13 +225,13 @@ app.post('/api/symptom-entry',requireApiKey,(req,res)=>{
+   res.status(201).json({ok:true,rows:lines.length});
+ });
+ 
+-app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurotracker_symptom_entries.csv'));
++app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
+ 
+ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
+   const rows=readRows().filter(r=>(!req.query.patient||r.Patient===req.query.patient)&&(!req.query.disorder||r.Disorder===req.query.disorder));
+   const doc=new PDFDocument({margin:48});
+-  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurotracker-report.pdf"');doc.pipe(res);
+-  doc.fontSize(20).text('NeuroTracker Clinical Report');doc.moveDown();
++  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurosol-report.pdf"');doc.pipe(res);
++  doc.fontSize(20).text('NeuroSol Symptom Diary Clinical Report');doc.moveDown();
+   doc.fontSize(11).text(`Patient: ${req.query.patient||'Cohort'}`);doc.text(`Disorder: ${req.query.disorder||'All'}`);doc.text(`Generated: ${new Date().toLocaleString('en-AU')}`);doc.moveDown();
+   const dates=unique(rows,'Date');doc.text(`Date range: ${dates[0]||'-'} to ${dates[dates.length-1]||'-'}`);doc.text(`Submission rows: ${rows.length}`);doc.moveDown();
+   unique(rows,'Symptom').forEach(sym=>{const vals=rows.filter(r=>r.Symptom===sym).map(r=>r.ScoreNumber);doc.text(`${sym}: mean ${round1(mean(vals))}/10, range ${Math.min(...vals)}–${Math.max(...vals)}`)});
+@@ -284,4 +284,4 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
+   res.send(pageShell('Population analytics',body));
+ });
+ 
+-app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
++app.listen(port,'0.0.0.0',()=>console.log(`NeuroSol backend running at http://localhost:${port}`));
+diff --git a/backend/package.json b/backend/package.json
+index 557c24f..3048edc 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "neurotracker-backend-csv",
+   "version": "0.4.0",
+-  "description": "Minimal NeuroTracker backend using CSV storage, charting, outlier detection, and PDF reports.",
++  "description": "NeuroSol Symptom Diary backend using CSV storage, charting, outlier detection, and PDF reports.",
+   "main": "server.js",
+   "scripts": {
+     "start": "node server.js",
+diff --git a/backend/public/admin.html b/backend/public/admin.html
+index 24dd86a..1466988 100644
+--- a/backend/public/admin.html
++++ b/backend/public/admin.html
+@@ -3,7 +3,7 @@
+ <head>
+   <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+-  <title>NeuroTracker Clinician Portal</title>
++  <title>NeuroSol Clinician Portal</title>
+   <style>
+     body { margin: 0; font-family: Arial, sans-serif; background: #1e1e1e; color: #f8fafc; }
+     header { padding: 22px 28px; border-bottom: 1px solid #3a3a3a; }
+@@ -21,7 +21,7 @@
+ </head>
+ <body>
+   <header>
+-    <h1>NeuroTracker Clinician Portal</h1>
++    <h1>NeuroSol Clinician Portal</h1>
+     <div class="muted">Recent symptom and wellness entries</div>
+   </header>
+   <main>
+diff --git a/backend/server.js b/backend/server.js
+index fad45a9..5565e68 100644
+--- a/backend/server.js
++++ b/backend/server.js
+@@ -202,7 +202,7 @@ function repairCsvIfNeeded() {
+   const backupPath = path.join(dataDir, `symptom_entries.backup-${stamp}.csv`);
+   fs.copyFileSync(csvPath, backupPath);
+   fs.writeFileSync(csvPath, repaired, 'utf8');
+-  console.log(`NeuroTracker CSV normalised: ${rows.length} rows. Backup: ${backupPath}`);
++  console.log(`NeuroSol CSV normalised: ${rows.length} rows. Backup: ${backupPath}`);
+ }
+ 
+ function readRows() {
+@@ -224,7 +224,7 @@ function requireApiKey(req, res, next) {
+ function requireAdmin(req, res, next) {
+   const user = basicAuth(req);
+   if (!user || user.name !== adminUser || user.pass !== adminPassword) {
+-    res.set('WWW-Authenticate', 'Basic realm="NeuroTracker Admin"');
++    res.set('WWW-Authenticate', 'Basic realm="NeuroSol Admin"');
+     return res.status(401).send('Authentication required.');
+   }
+   next();
+@@ -375,7 +375,7 @@ function pageShell(title, body) {
+     .toolbar{grid-template-columns:1fr}
+     .panel{padding:14px}
+   }
+-  </style></head><body><header><h1>NeuroTracker Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
++  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
+ }
+ 
+ repairCsvIfNeeded();
+@@ -417,13 +417,13 @@ app.post('/api/symptom-entry',requireApiKey,(req,res)=>{
+   res.status(201).json({ok:true,duplicate:false,submissionId,rows:lines.length});
+ });
+ 
+-app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurotracker_symptom_entries.csv'));
++app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
+ 
+ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
+   const rows=readRows().filter(r=>(!req.query.patient||r.Patient===req.query.patient)&&(!req.query.disorder||r.Disorder===req.query.disorder));
+   const doc=new PDFDocument({margin:48});
+-  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurotracker-report.pdf"');doc.pipe(res);
+-  doc.fontSize(20).text('NeuroTracker Clinical Report');doc.moveDown();
++  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurosol-report.pdf"');doc.pipe(res);
++  doc.fontSize(20).text('NeuroSol Symptom Diary Clinical Report');doc.moveDown();
+   doc.fontSize(11).text(`Patient: ${req.query.patient||'Cohort'}`);doc.text(`Disorder: ${req.query.disorder||'All'}`);doc.text(`Generated: ${new Date().toLocaleString('en-AU')}`);doc.moveDown();
+   const dates=unique(rows,'Date');doc.text(`Date range: ${dates[0]||'-'} to ${dates[dates.length-1]||'-'}`);doc.text(`Submission rows: ${rows.length}`);doc.moveDown();
+   unique(rows,'Symptom').forEach(sym=>{const vals=rows.filter(r=>r.Symptom===sym).map(r=>r.ScoreNumber);doc.text(`${sym}: mean ${round1(mean(vals))}/10, range ${Math.min(...vals)}–${Math.max(...vals)}`)});
+@@ -478,10 +478,10 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
+ });
+ 
+ if (require.main === module) {
+-  const server = app.listen(port,host,()=>console.log(`NeuroTracker listening on http://${host}:${port}`));
++  const server = app.listen(port,host,()=>console.log(`NeuroSol listening on http://${host}:${port}`));
+ 
+   const shutdown = signal => {
+-    console.log(`${signal} received. Shutting down NeuroTracker...`);
++    console.log(`${signal} received. Shutting down NeuroSol...`);
+     server.close(error => {
+       if (error) {
+         console.error('Error while shutting down:',error);
+diff --git a/deploy/WINDOWS_HTTPS_DEPLOYMENT.md b/deploy/WINDOWS_HTTPS_DEPLOYMENT.md
+index c5384f0..784de65 100644
+--- a/deploy/WINDOWS_HTTPS_DEPLOYMENT.md
++++ b/deploy/WINDOWS_HTTPS_DEPLOYMENT.md
+@@ -1,4 +1,4 @@
+-# NeuroTracker Windows HTTPS deployment
++# NeuroSol Symptom Diary Windows HTTPS deployment
+ 
+ Public address:
+ 
+diff --git a/ios/Runner.xcodeproj/project.pbxproj b/ios/Runner.xcodeproj/project.pbxproj
+index 9d24a1f..acd6d5d 100644
+--- a/ios/Runner.xcodeproj/project.pbxproj
++++ b/ios/Runner.xcodeproj/project.pbxproj
+@@ -382,7 +382,7 @@
+ 					"$(inherited)",
+ 					"@executable_path/Frameworks",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurotracker;
++				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurosol;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
+ 				SWIFT_VERSION = 5.0;
+@@ -398,7 +398,7 @@
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				MARKETING_VERSION = 1.0;
+-				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurotracker.RunnerTests;
++				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurosol.RunnerTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+ 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+@@ -415,7 +415,7 @@
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				MARKETING_VERSION = 1.0;
+-				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurotracker.RunnerTests;
++				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurosol.RunnerTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_VERSION = 5.0;
+ 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
+@@ -430,7 +430,7 @@
+ 				CURRENT_PROJECT_VERSION = 1;
+ 				GENERATE_INFOPLIST_FILE = YES;
+ 				MARKETING_VERSION = 1.0;
+-				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurotracker.RunnerTests;
++				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurosol.RunnerTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_VERSION = 5.0;
+ 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
+@@ -561,7 +561,7 @@
+ 					"$(inherited)",
+ 					"@executable_path/Frameworks",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurotracker;
++				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurosol;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
+ 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+@@ -583,7 +583,7 @@
+ 					"$(inherited)",
+ 					"@executable_path/Frameworks",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurotracker;
++				PRODUCT_BUNDLE_IDENTIFIER = au.com.pascoeneurology.neurosol;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
+ 				SWIFT_VERSION = 5.0;
+diff --git a/ios/Runner/Info.plist b/ios/Runner/Info.plist
+index 3ef9cfb..adb59c9 100644
+--- a/ios/Runner/Info.plist
++++ b/ios/Runner/Info.plist
+@@ -7,7 +7,7 @@
+ 	<key>CFBundleDevelopmentRegion</key>
+ 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+ 	<key>CFBundleDisplayName</key>
+-	<string>NeuroTracker Clinical</string>
++	<string>NeuroSol</string>
+ 	<key>CFBundleExecutable</key>
+ 	<string>$(EXECUTABLE_NAME)</string>
+ 	<key>CFBundleIdentifier</key>
+@@ -15,7 +15,7 @@
+ 	<key>CFBundleInfoDictionaryVersion</key>
+ 	<string>6.0</string>
+ 	<key>CFBundleName</key>
+-	<string>NeuroTracker Clinical</string>
++	<string>NeuroSol</string>
+ 	<key>CFBundlePackageType</key>
+ 	<string>APPL</string>
+ 	<key>CFBundleShortVersionString</key>
+diff --git a/lib/app_identity.dart b/lib/app_identity.dart
+new file mode 100644
+index 0000000..f5c7d42
+--- /dev/null
++++ b/lib/app_identity.dart
+@@ -0,0 +1,2 @@
++const String appDisplayName = 'NeuroSol Symptom Diary';
++const String appShortName = 'NeuroSol';
+diff --git a/lib/main.dart b/lib/main.dart
+index 3848026..5a64495 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ 
++import 'app_identity.dart';
+ import 'screens/startup_screen.dart';
+ import 'services/notification_service.dart';
+ import 'theme/app_theme.dart';
+@@ -16,17 +17,17 @@ Future<void> main() async {
+       (_) => false,
+     );
+   });
+-  runApp(const NeuroTrackerApp());
++  runApp(const NeuroSolApp());
+ }
+ 
+-class NeuroTrackerApp extends StatelessWidget {
+-  const NeuroTrackerApp({super.key});
++class NeuroSolApp extends StatelessWidget {
++  const NeuroSolApp({super.key});
+ 
+   @override
+   Widget build(BuildContext context) {
+     return MaterialApp(
+       navigatorKey: appNavigatorKey,
+-      title: 'NeuroTracker Clinical',
++      title: appDisplayName,
+       debugShowCheckedModeBanner: false,
+       theme: AppTheme.darkBlueTheme,
+       home: const StartupScreen(),
+diff --git a/lib/screens/consent_screen.dart b/lib/screens/consent_screen.dart
+index ec180fe..1e6a5d5 100644
+--- a/lib/screens/consent_screen.dart
++++ b/lib/screens/consent_screen.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ 
++import '../app_identity.dart';
+ import '../services/storage_service.dart';
+ import 'privacy_screen.dart';
+ import 'profile_screen.dart';
+@@ -27,7 +28,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
+   @override
+   Widget build(BuildContext context) {
+     return Scaffold(
+-      appBar: AppBar(title: const Text('NeuroTracker')),
++      appBar: AppBar(title: const Text(appShortName)),
+       body: SafeArea(
+         child: ListView(
+           padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+diff --git a/lib/screens/privacy_screen.dart b/lib/screens/privacy_screen.dart
+index 51b1f6d..e42aad2 100644
+--- a/lib/screens/privacy_screen.dart
++++ b/lib/screens/privacy_screen.dart
+@@ -1,9 +1,11 @@
+ import 'package:flutter/material.dart';
+ 
++import '../app_identity.dart';
++
+ class PrivacyScreen extends StatelessWidget {
+   const PrivacyScreen({super.key});
+ 
+-  static const String policyVersion = '2026-07-17';
++  static const String policyVersion = '2026-07-24';
+ 
+   @override
+   Widget build(BuildContext context) {
+@@ -15,7 +17,7 @@ class PrivacyScreen extends StatelessWidget {
+           _PolicySection(
+             title: 'Purpose of the app',
+             body:
+-                'NeuroTracker Clinical allows patients to record selected neurological symptoms and an overall wellness score for review by Pascoe Neurology as part of their clinical care.',
++                '$appDisplayName allows patients to record selected neurological symptoms and an overall wellness score for review by Pascoe Neurology as part of their clinical care.',
+           ),
+           _PolicySection(
+             title: 'Information collected',
+diff --git a/lib/screens/settings_screen.dart b/lib/screens/settings_screen.dart
+index e86289a..745b97a 100644
+--- a/lib/screens/settings_screen.dart
++++ b/lib/screens/settings_screen.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ 
++import '../app_identity.dart';
+ import '../models/patient_profile.dart';
+ import '../services/csv_service.dart';
+ import '../services/notification_service.dart';
+@@ -189,7 +190,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
+           const Card(
+             child: ListTile(
+               leading: Icon(Icons.info_outline),
+-              title: Text('NeuroTracker Clinical'),
++              title: Text(appDisplayName),
+               subtitle: Text('Version 1.0.0\nFor clinical monitoring; not for emergency use.'),
+             ),
+           ),
+diff --git a/lib/screens/startup_screen.dart b/lib/screens/startup_screen.dart
+index e800bbe..3d68c66 100644
+--- a/lib/screens/startup_screen.dart
++++ b/lib/screens/startup_screen.dart
+@@ -1,5 +1,6 @@
+ import 'package:flutter/material.dart';
+ 
++import '../app_identity.dart';
+ import '../models/patient_profile.dart';
+ import '../services/notification_service.dart';
+ import '../services/storage_service.dart';
+@@ -51,7 +52,7 @@ class _StartupScreenState extends State<StartupScreen> {
+           children: [
+             Image.asset('assets/icon/app_icon.png', width: 112, height: 112),
+             const SizedBox(height: 18),
+-            Text('NeuroTracker Clinical',
++            Text(appDisplayName,
+                 style: Theme.of(context).textTheme.headlineMedium),
+             const SizedBox(height: 22),
+             const CircularProgressIndicator(),
+diff --git a/lib/services/notification_service.dart b/lib/services/notification_service.dart
+index eefd622..9c7ab4b 100644
+--- a/lib/services/notification_service.dart
++++ b/lib/services/notification_service.dart
+@@ -5,6 +5,8 @@ import 'package:flutter_timezone/flutter_timezone.dart';
+ import 'package:timezone/data/latest_all.dart' as tz;
+ import 'package:timezone/timezone.dart' as tz;
+ 
++import '../app_identity.dart';
++
+ class NotificationService {
+   NotificationService._();
+ 
+@@ -17,7 +19,7 @@ class NotificationService {
+   static const String _channelId = 'daily_reminder';
+   static const String _channelName = 'Daily reminders';
+   static const String _channelDescription =
+-      'Daily NeuroTracker symptom check-in reminders';
++      'Daily $appShortName symptom check-in reminders';
+   static void Function(String? payload)? _notificationTapHandler;
+ 
+   static void setNotificationTapHandler(
+@@ -129,7 +131,7 @@ class NotificationService {
+ 
+     await _plugin.show(
+       id: _testNotificationId,
+-      title: 'NeuroTracker test',
++      title: '$appShortName test',
+       body: 'Notifications are working correctly.',
+       notificationDetails: notificationDetails,
+       payload: 'notification_test',
+@@ -176,7 +178,7 @@ class NotificationService {
+ 
+     await _plugin.zonedSchedule(
+       id: _dailyReminderId,
+-      title: 'NeuroTracker daily check-in',
++      title: '$appShortName daily check-in',
+       body: 'Please record today’s symptoms and wellness score.',
+       scheduledDate: scheduledDate,
+       notificationDetails: notificationDetails,
+diff --git a/linux/CMakeLists.txt b/linux/CMakeLists.txt
+index e492987..af2d500 100644
+--- a/linux/CMakeLists.txt
++++ b/linux/CMakeLists.txt
+@@ -7,7 +7,7 @@ project(runner LANGUAGES CXX)
+ set(BINARY_NAME "neurotrackerapp")
+ # The unique GTK application identifier for this application. See:
+ # https://wiki.gnome.org/HowDoI/ChooseApplicationID
+-set(APPLICATION_ID "com.example.neurotrackerapp")
++set(APPLICATION_ID "au.com.pascoeneurology.neurosol")
+ 
+ # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
+ # versions of CMake.
+diff --git a/linux/runner/my_application.cc b/linux/runner/my_application.cc
+index 0d9bb7f..6848f15 100644
+--- a/linux/runner/my_application.cc
++++ b/linux/runner/my_application.cc
+@@ -45,11 +45,11 @@ static void my_application_activate(GApplication* application) {
+   if (use_header_bar) {
+     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
+     gtk_widget_show(GTK_WIDGET(header_bar));
+-    gtk_header_bar_set_title(header_bar, "neurotrackerapp");
++    gtk_header_bar_set_title(header_bar, "NeuroSol Symptom Diary");
+     gtk_header_bar_set_show_close_button(header_bar, TRUE);
+     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+   } else {
+-    gtk_window_set_title(window, "neurotrackerapp");
++    gtk_window_set_title(window, "NeuroSol Symptom Diary");
+   }
+ 
+   gtk_window_set_default_size(window, 1280, 720);
+diff --git a/pubspec.yaml b/pubspec.yaml
+index b495d6a..f71fc3c 100644
+--- a/pubspec.yaml
++++ b/pubspec.yaml
+@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+ # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+ # In Windows, build-name is used as the major, minor, and patch parts
+ # of the product and file versions while build-number is used as the build suffix.
+-version: 1.0.0+3
++version: 1.0.0+4
+ 
+ environment:
+   sdk: ^3.12.2
+diff --git a/test/backend/NeuroTrackerApi/Program.cs b/test/backend/NeuroTrackerApi/Program.cs
+index 1dffa02..5992a71 100644
+--- a/test/backend/NeuroTrackerApi/Program.cs
++++ b/test/backend/NeuroTrackerApi/Program.cs
+@@ -17,7 +17,7 @@ if (!File.Exists(csvPath))
+         Encoding.UTF8);
+ }
+ 
+-app.MapGet("/", () => "NeuroTracker API is running.");
++app.MapGet("/", () => "NeuroSol API is running.");
+ 
+ app.MapPost("/api/symptom-entry", async (SymptomEntry entry) =>
+ {
+diff --git a/test/widget_test.dart b/test/widget_test.dart
+index 53f435f..ef86b8f 100644
+--- a/test/widget_test.dart
++++ b/test/widget_test.dart
+@@ -5,11 +5,11 @@ import 'package:neurotrackerapp/screens/profile_screen.dart';
+ import 'package:neurotrackerapp/screens/settings_screen.dart';
+ 
+ void main() {
+-  testWidgets('NeuroTracker app starts', (WidgetTester tester) async {
+-    await tester.pumpWidget(const NeuroTrackerApp());
++  testWidgets('NeuroSol app starts', (WidgetTester tester) async {
++    await tester.pumpWidget(const NeuroSolApp());
+     await tester.pump();
+ 
+-    expect(find.text('NeuroTracker Clinical'), findsWidgets);
++    expect(find.text('NeuroSol Symptom Diary'), findsWidgets);
+   });
+ 
+   testWidgets('new profile can continue with one disorder',
+@@ -49,7 +49,7 @@ void main() {
+ 
+     expect(find.text('Information collected'), findsOneWidget);
+     expect(
+-      find.textContaining('NeuroTracker Clinical allows'),
++      find.textContaining('NeuroSol Symptom Diary allows'),
+       findsOneWidget,
+     );
+     await tester.scrollUntilVisible(
+diff --git a/web/index.html b/web/index.html
+index f660543..15f3f6a 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -18,18 +18,18 @@
+ 
+   <meta charset="UTF-8">
+   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+-  <meta name="description" content="A new Flutter project.">
++  <meta name="description" content="Daily neurological symptom and wellness diary for participating clinic patients.">
+ 
+   <!-- iOS meta tags & icons -->
+   <meta name="mobile-web-app-capable" content="yes">
+   <meta name="apple-mobile-web-app-status-bar-style" content="black">
+-  <meta name="apple-mobile-web-app-title" content="neurotrackerapp">
++  <meta name="apple-mobile-web-app-title" content="NeuroSol">
+   <link rel="apple-touch-icon" href="icons/Icon-192.png">
+ 
+   <!-- Favicon -->
+   <link rel="icon" type="image/png" href="favicon.png"/>
+ 
+-  <title>neurotrackerapp</title>
++  <title>NeuroSol Symptom Diary</title>
+   <link rel="manifest" href="manifest.json">
+ </head>
+ <body>
+diff --git a/web/manifest.json b/web/manifest.json
+index 296d395..23ca626 100644
+--- a/web/manifest.json
++++ b/web/manifest.json
+@@ -1,11 +1,11 @@
+ {
+-    "name": "neurotrackerapp",
+-    "short_name": "neurotrackerapp",
++    "name": "NeuroSol Symptom Diary",
++    "short_name": "NeuroSol",
+     "start_url": ".",
+     "display": "standalone",
+     "background_color": "#0175C2",
+     "theme_color": "#0175C2",
+-    "description": "A new Flutter project.",
++    "description": "Daily neurological symptom and wellness diary for participating clinic patients.",
+     "orientation": "portrait-primary",
+     "prefer_related_applications": false,
+     "icons": [
+diff --git a/windows/runner/Runner.rc b/windows/runner/Runner.rc
+index 3989b95..51824db 100644
+--- a/windows/runner/Runner.rc
++++ b/windows/runner/Runner.rc
+@@ -89,13 +89,13 @@ BEGIN
+     BEGIN
+         BLOCK "040904e4"
+         BEGIN
+-            VALUE "CompanyName", "com.example" "\0"
+-            VALUE "FileDescription", "neurotrackerapp" "\0"
++            VALUE "CompanyName", "Pascoe Neurology" "\0"
++            VALUE "FileDescription", "NeuroSol Symptom Diary" "\0"
+             VALUE "FileVersion", VERSION_AS_STRING "\0"
+             VALUE "InternalName", "neurotrackerapp" "\0"
+-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
++            VALUE "LegalCopyright", "Copyright (C) 2026 Pascoe Neurology. All rights reserved." "\0"
+             VALUE "OriginalFilename", "neurotrackerapp.exe" "\0"
+-            VALUE "ProductName", "neurotrackerapp" "\0"
++            VALUE "ProductName", "NeuroSol Symptom Diary" "\0"
+             VALUE "ProductVersion", VERSION_AS_STRING "\0"
+         END
+     END
+diff --git a/windows/runner/main.cpp b/windows/runner/main.cpp
+index 942427a..5406920 100644
+--- a/windows/runner/main.cpp
++++ b/windows/runner/main.cpp
+@@ -27,7 +27,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
+   FlutterWindow window(project);
+   Win32Window::Point origin(10, 10);
+   Win32Window::Size size(1280, 720);
+-  if (!window.Create(L"neurotrackerapp", origin, size)) {
++  if (!window.Create(L"NeuroSol Symptom Diary", origin, size)) {
+     return EXIT_FAILURE;
+   }
+   window.SetQuitOnClose(true);

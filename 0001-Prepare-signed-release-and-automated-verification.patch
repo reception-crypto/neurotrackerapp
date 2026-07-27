@@ -1,0 +1,270 @@
+From 87fa1877e6d72fae3f01071043fa1eaf92e79fc5 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Thu, 16 Jul 2026 22:25:02 -0300
+Subject: [PATCH] Prepare signed release and automated verification
+
+---
+ .github/workflows/verify.yml                  | 34 ++++++++++++++++
+ README.md                                     | 19 ++++++++-
+ RELEASE_CHECKLIST.md                          |  4 ++
+ android/app/build.gradle.kts                  | 39 +++++++++++++++++--
+ .../example/neurotrackerapp/MainActivity.kt   |  5 ---
+ backend/.env.example                          |  7 +++-
+ lib/screens/consent_screen.dart               | 26 ++++++++-----
+ 7 files changed, 112 insertions(+), 22 deletions(-)
+ create mode 100644 .github/workflows/verify.yml
+ delete mode 100644 android/app/src/main/kotlin/com/example/neurotrackerapp/MainActivity.kt
+
+diff --git a/.github/workflows/verify.yml b/.github/workflows/verify.yml
+new file mode 100644
+index 0000000..8d5e5f8
+--- /dev/null
++++ b/.github/workflows/verify.yml
+@@ -0,0 +1,34 @@
++name: Verify
++
++on:
++  push:
++    branches: [main]
++  pull_request:
++
++jobs:
++  flutter:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: subosito/flutter-action@v2
++        with:
++          channel: stable
++          cache: true
++      - run: flutter pub get
++      - run: flutter analyze
++      - run: flutter test
++
++  backend:
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: backend
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 22
++          cache: npm
++          cache-dependency-path: backend/package-lock.json
++      - run: npm ci
++      - run: npm test
+diff --git a/README.md b/README.md
+index c7a1862..b2ddcdf 100644
+--- a/README.md
++++ b/README.md
+@@ -45,7 +45,24 @@ The APK is created at:
+ build/app/outputs/flutter-apk/app-release.apk
+ ```
+ 
+-The current Android release build is configured with the debug signing key for internal testing. Configure a permanent release keystore before broader distribution.
++Release builds require a permanent signing keystore. Create it once and keep
++both the keystore and passwords outside source control:
++
++```cmd
++keytool -genkeypair -v -keystore %USERPROFILE%\neurotracker-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias neurotracker
++```
++
++Create `android/key.properties` locally:
++
++```properties
++storePassword=YOUR_KEYSTORE_PASSWORD
++keyPassword=YOUR_KEY_PASSWORD
++keyAlias=neurotracker
++storeFile=C:\\Users\\YOUR_USER\\neurotracker-release.jks
++```
++
++Back up the keystore and passwords securely. Losing them can prevent future
++updates to an installed Android application.
+ 
+ Android debug/profile builds permit cleartext HTTP for clinic-LAN testing.
+ Release builds reject cleartext traffic and therefore require an HTTPS API URL.
+diff --git a/RELEASE_CHECKLIST.md b/RELEASE_CHECKLIST.md
+index d164ed3..4715cc8 100644
+--- a/RELEASE_CHECKLIST.md
++++ b/RELEASE_CHECKLIST.md
+@@ -20,6 +20,9 @@
+ - [ ] Verify duplicate submission IDs are not duplicated in CSV
+ - [ ] Confirm app icon and launch screen on Android
+ - [ ] Confirm app icon and launch screen on iOS cloud build
++- [ ] Create and securely back up the permanent Android release keystore
++- [ ] Build a signed release APK and record its SHA-256 checksum
++- [ ] Confirm GitHub Verify workflow passes
+ 
+ ## Backend verification
+ 
+@@ -38,6 +41,7 @@
+ 
+ - [ ] Use synthetic data only during final rehearsal
+ - [ ] Provide patient privacy notice and support contact
++- [ ] Have the clinic approve the in-app privacy and consent wording
+ - [ ] Explain the app is not for emergencies
+ - [ ] Enrol a small initial cohort
+ - [ ] Record device type and app version for troubleshooting
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index 4c84ca0..3f029e6 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -1,9 +1,18 @@
++import java.io.FileInputStream
++import java.util.Properties
++
+ plugins {
+     id("com.android.application")
+     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+     id("dev.flutter.flutter-gradle-plugin")
+ }
+ 
++val keystoreProperties = Properties()
++val keystorePropertiesFile = rootProject.file("key.properties")
++if (keystorePropertiesFile.exists()) {
++    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
++}
++
+ android {
+     namespace = "au.com.pascoeneurology.neurotracker"
+     compileSdk = flutter.compileSdkVersion
+@@ -17,7 +26,6 @@ android {
+ 
+     defaultConfig {
+         multiDexEnabled = true
+-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+         applicationId = "au.com.pascoeneurology.neurotracker"
+         // You can update the following values to match your application needs.
+         // For more information, see: https://flutter.dev/to/review-gradle-config.
+@@ -28,17 +36,40 @@ android {
+         manifestPlaceholders["usesCleartextTraffic"] = "true"
+     }
+ 
++    signingConfigs {
++        create("release") {
++            if (keystorePropertiesFile.exists()) {
++                keyAlias = keystoreProperties["keyAlias"] as String
++                keyPassword = keystoreProperties["keyPassword"] as String
++                storeFile = file(keystoreProperties["storeFile"] as String)
++                storePassword = keystoreProperties["storePassword"] as String
++            }
++        }
++    }
++
+     buildTypes {
+         debug {}
+         release {
+-            // TODO: Add your own signing config for the release build.
+-            // Signing with the debug keys for now, so `flutter run --release` works.
+-            signingConfig = signingConfigs.getByName("debug")
++            if (keystorePropertiesFile.exists()) {
++                signingConfig = signingConfigs.getByName("release")
++            }
+             manifestPlaceholders["usesCleartextTraffic"] = "false"
+         }
+     }
+ }
+ 
++gradle.taskGraph.whenReady {
++    val isReleaseBuild = allTasks.any {
++        it.name.contains("Release", ignoreCase = true)
++    }
++    if (isReleaseBuild && !keystorePropertiesFile.exists()) {
++        throw GradleException(
++            "android/key.properties is required for a release build. " +
++                "See README.md for signing setup."
++        )
++    }
++}
++
+ kotlin {
+     compilerOptions {
+         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+diff --git a/android/app/src/main/kotlin/com/example/neurotrackerapp/MainActivity.kt b/android/app/src/main/kotlin/com/example/neurotrackerapp/MainActivity.kt
+deleted file mode 100644
+index 745b27e..0000000
+--- a/android/app/src/main/kotlin/com/example/neurotrackerapp/MainActivity.kt
++++ /dev/null
+@@ -1,5 +0,0 @@
+-package com.example.neurotrackerapp
+-
+-import io.flutter.embedding.android.FlutterActivity
+-
+-class MainActivity : FlutterActivity()
+diff --git a/backend/.env.example b/backend/.env.example
+index 15553cf..5fc1b94 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -1,4 +1,7 @@
+ PORT=3000
+-API_KEY=change-this-mobile-upload-key
++NODE_ENV=production
++API_KEY=replace-with-a-long-random-mobile-upload-key
+ ADMIN_USER=admin
+-ADMIN_PASSWORD=change-this-admin-password
++ADMIN_PASSWORD=replace-with-a-long-unique-admin-password
++# Optional: store runtime clinical data outside the source directory.
++# DATA_DIR=C:\ProgramData\NeuroTracker\data
+diff --git a/lib/screens/consent_screen.dart b/lib/screens/consent_screen.dart
+index b574ec1..647875a 100644
+--- a/lib/screens/consent_screen.dart
++++ b/lib/screens/consent_screen.dart
+@@ -27,11 +27,13 @@ class _ConsentScreenState extends State<ConsentScreen> {
+   Widget build(BuildContext context) {
+     return Scaffold(
+       appBar: AppBar(title: const Text('NeuroTracker')),
+-      body: Padding(
+-        padding: const EdgeInsets.all(24),
+-        child: Column(
+-          crossAxisAlignment: CrossAxisAlignment.start,
++      body: SafeArea(
++        child: ListView(
++          padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+           children: [
++            Column(
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: [
+             Text('Privacy and Consent', style: Theme.of(context).textTheme.headlineMedium),
+             const SizedBox(height: 20),
+             Text(
+@@ -40,25 +42,29 @@ class _ConsentScreenState extends State<ConsentScreen> {
+             ),
+             const SizedBox(height: 20),
+             Text(
+-              'By continuing, you consent to this information being collected and stored for clinical monitoring purposes.',
++              'Your entries are stored on this device and sent to Pascoe Neurology for clinical monitoring. Authorised clinic staff may review them as part of your care. The app is not continuously monitored and must not be used for emergencies.',
+               style: Theme.of(context).textTheme.bodyLarge,
+             ),
+-            const Spacer(),
++            const SizedBox(height: 20),
++            Text(
++              'You may stop using the app at any time. Removing local data does not delete information already received by the clinic. Contact the clinic to ask about access, correction, retention or deletion of clinic-held information.',
++              style: Theme.of(context).textTheme.bodyLarge,
++            ),
++            const SizedBox(height: 32),
+             CheckboxListTile(
+               value: consented,
+               onChanged: (value) => setState(() => consented = value ?? false),
+               title: const Text('I consent'),
+               controlAffinity: ListTileControlAffinity.leading,
+             ),
+-            SafeArea(
+-              minimum: const EdgeInsets.only(bottom: 20),
+-              child: SizedBox(
++                SizedBox(
+                 width: double.infinity,
+                 child: FilledButton(
+                   onPressed: consented ? _continue : null,
+                   child: const Text('Continue'),
+                 ),
+-              ),
++                ),
++              ],
+             ),
+           ],
+         ),
+-- 
+2.51.1
+

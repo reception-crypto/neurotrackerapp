@@ -1,4 +1,4 @@
-# NeuroTracker Clinical 1.0.0 release checklist
+# NeuroSol Symptom Diary 1.0.0 release checklist
 
 ## Mobile verification
 
@@ -11,8 +11,13 @@
 - [ ] Confirm a newly saved check-in appears in local history
 - [ ] Confirm Next remains disabled until every symptom has been rated
 - [ ] Confirm Submit remains disabled until wellness has been selected
+- [ ] Confirm an ordinary app launch opens the home screen
+- [ ] Confirm the home-screen check-in button opens the form before completion
+- [ ] Confirm the check-in button is unavailable after today is completed
 - [ ] Verify notification permission and reminder delivery
 - [ ] Tap a reminder while the app is open and backgrounded; confirm check-in opens
+- [ ] Tap a reminder after completing today; confirm the home screen opens instead
+- [ ] Complete a manual check-in before reminder time; confirm no same-day reminder appears
 - [ ] Submit while backend is available: status becomes Synced
 - [ ] Submit while backend is stopped: status becomes Pending
 - [ ] Restart backend and tap pending status/retry: entry uploads once

@@ -1,0 +1,80 @@
+import 'package:flutter/material.dart';
+
+class PrivacyScreen extends StatelessWidget {
+  const PrivacyScreen({super.key});
+
+  static const String policyVersion = '2026-07-21';
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Privacy and App Information')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+        children: const [
+          _PolicySection(
+            title: 'Purpose of the app',
+            body:
+                'NeuroSol Symptom Diary allows patients to record selected neurological symptoms and an overall wellness score for review by Pascoe Neurology as part of their clinical care.',
+          ),
+          _PolicySection(
+            title: 'Information collected',
+            body:
+                'The app records your name, selected neurological condition, chosen symptoms, symptom scores, wellness score, check-in date and time, and technical identifiers used to keep submissions associated with the correct profile and prevent duplicates.',
+          ),
+          _PolicySection(
+            title: 'Storage and transmission',
+            body:
+                'Your profile and check-in history are stored on this device. Check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
+          ),
+          _PolicySection(
+            title: 'How information is used',
+            body:
+                'Information submitted through the app may be reviewed by authorised clinic staff for clinical monitoring, care administration, troubleshooting, security, and record-keeping. It is not sold or used for advertising.',
+          ),
+          _PolicySection(
+            title: 'Access, correction and deletion',
+            body:
+                'Resetting the app removes its locally stored profile and check-in history, but does not delete information already received by the clinic. Contact the clinic to request access to, correction of, or deletion of clinic-held information, subject to applicable health-record retention obligations.',
+          ),
+          _PolicySection(
+            title: 'Important medical information',
+            body:
+                'This app is not a medical device and does not diagnose, treat, cure, or prevent any medical condition. It does not replace professional medical advice and is not continuously monitored. Do not use it for urgent or emergency assistance. In an emergency, call 000.',
+          ),
+          _PolicySection(
+            title: 'Contact',
+            body:
+                'For privacy questions, support, or requests concerning clinic-held information, contact reception@pascoeneurology.com.',
+          ),
+          Text(
+            'Policy version: $policyVersion',
+            style: TextStyle(color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PolicySection extends StatelessWidget {
+  final String title;
+  final String body;
+
+  const _PolicySection({required this.title, required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(body, style: Theme.of(context).textTheme.bodyLarge),
+        ],
+      ),
+    );
+  }
+}

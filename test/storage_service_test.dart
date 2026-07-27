@@ -49,4 +49,43 @@ void main() {
     final history = await StorageService.loadEntryHistory();
     expect(history.map((entry) => entry.submissionId), ['newer', 'older']);
   });
+
+  test('daily completion uses the local calendar date', () async {
+    await StorageService.recordSubmissionDate('2026-07-27');
+
+    expect(
+      await StorageService.hasSubmittedToday(
+        now: DateTime(2026, 7, 27, 23, 59),
+      ),
+      isTrue,
+    );
+    expect(
+      await StorageService.hasSubmittedToday(now: DateTime(2026, 7, 28)),
+      isFalse,
+    );
+  });
+
+  test('daily completion falls back to saved history', () async {
+    const entry = DailyEntry(
+      submissionId: 'history-only',
+      patientId: 'patient-1',
+      date: '2026-07-27',
+      time: '19:00',
+      patientName: 'Synthetic Patient',
+      records: [
+        SymptomScoreRecord(
+          track: 'Primary',
+          disorder: 'Migraine',
+          symptom: 'Headache',
+          score: 3,
+        ),
+      ],
+      wellnessPercent: 70,
+    );
+
+    await StorageService.saveEntryToHistory(entry);
+
+    expect(await StorageService.hasSubmittedOn('2026-07-27'), isTrue);
+    expect(await StorageService.hasSubmittedOn('2026-07-28'), isFalse);
+  });
 }

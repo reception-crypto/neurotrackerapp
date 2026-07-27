@@ -1,0 +1,323 @@
+From 276e5b57dbc91433d9ecdfa00caafa9568c22074 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Thu, 16 Jul 2026 22:15:18 -0300
+Subject: [PATCH] Improve notification navigation and sync diagnostics
+
+---
+ README.md                                |  6 +-
+ RELEASE_CHECKLIST.md                     |  3 +
+ android/app/build.gradle.kts             |  3 +
+ android/app/src/main/AndroidManifest.xml |  2 +-
+ lib/main.dart                            | 10 ++++
+ lib/screens/settings_screen.dart         | 10 +++-
+ lib/screens/wellness_screen.dart         |  5 +-
+ lib/services/notification_service.dart   | 12 +++-
+ lib/services/upload_service.dart         | 76 +++++++++++++++++++++---
+ 9 files changed, 110 insertions(+), 17 deletions(-)
+
+diff --git a/README.md b/README.md
+index 6d225f4..c7a1862 100644
+--- a/README.md
++++ b/README.md
+@@ -14,9 +14,10 @@ Minimal Flutter application for patients to record three symptoms per disorder a
+ - Daily symptom scores from 0–10 (`10 = worst`)
+ - Wellness score from 10%–100% (`100% = best`)
+ - Daily local reminder
++- Reminder taps open the daily check-in
+ - Offline-first local storage
+ - Automatic retry queue for failed uploads
+-- Visible synced/pending status
++- Visible synced/pending status with actionable failure messages
+ - Editable profile and tracked symptom selections
+ - Local expandable check-in history
+ - Required deliberate selection for every symptom and wellness score
+@@ -46,6 +47,9 @@ build/app/outputs/flutter-apk/app-release.apk
+ 
+ The current Android release build is configured with the debug signing key for internal testing. Configure a permanent release keystore before broader distribution.
+ 
++Android debug/profile builds permit cleartext HTTP for clinic-LAN testing.
++Release builds reject cleartext traffic and therefore require an HTTPS API URL.
++
+ ## iOS cloud build
+ 
+ The iOS bundle identifier is:
+diff --git a/RELEASE_CHECKLIST.md b/RELEASE_CHECKLIST.md
+index a53fc23..d164ed3 100644
+--- a/RELEASE_CHECKLIST.md
++++ b/RELEASE_CHECKLIST.md
+@@ -12,9 +12,11 @@
+ - [ ] Confirm Next remains disabled until every symptom has been rated
+ - [ ] Confirm Submit remains disabled until wellness has been selected
+ - [ ] Verify notification permission and reminder delivery
++- [ ] Tap a reminder while the app is open and backgrounded; confirm check-in opens
+ - [ ] Submit while backend is available: status becomes Synced
+ - [ ] Submit while backend is stopped: status becomes Pending
+ - [ ] Restart backend and tap pending status/retry: entry uploads once
++- [ ] Verify network, authorization and server errors show distinct messages
+ - [ ] Verify duplicate submission IDs are not duplicated in CSV
+ - [ ] Confirm app icon and launch screen on Android
+ - [ ] Confirm app icon and launch screen on iOS cloud build
+@@ -30,6 +32,7 @@
+ - [ ] Confirm PDF report generation
+ - [ ] Confirm CSV export
+ - [ ] Configure HTTPS before off-site patient use
++- [ ] Confirm the release build cannot connect to a cleartext HTTP endpoint
+ 
+ ## Patient beta release
+ 
+diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts
+index bb819b4..4c84ca0 100644
+--- a/android/app/build.gradle.kts
++++ b/android/app/build.gradle.kts
+@@ -25,13 +25,16 @@ android {
+         targetSdk = flutter.targetSdkVersion
+         versionCode = flutter.versionCode
+         versionName = flutter.versionName
++        manifestPlaceholders["usesCleartextTraffic"] = "true"
+     }
+ 
+     buildTypes {
++        debug {}
+         release {
+             // TODO: Add your own signing config for the release build.
+             // Signing with the debug keys for now, so `flutter run --release` works.
+             signingConfig = signingConfigs.getByName("debug")
++            manifestPlaceholders["usesCleartextTraffic"] = "false"
+         }
+     }
+ }
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index 421a4fd..cc80943 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -4,7 +4,7 @@
+     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+     <application
+         android:label="NeuroTracker Clinical"
+-        android:usesCleartextTraffic="true"
++        android:usesCleartextTraffic="${usesCleartextTraffic}"
+         android:name="${applicationName}"
+         android:icon="@mipmap/ic_launcher">
+         <activity
+diff --git a/lib/main.dart b/lib/main.dart
+index 4d963aa..3848026 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -4,9 +4,18 @@ import 'screens/startup_screen.dart';
+ import 'services/notification_service.dart';
+ import 'theme/app_theme.dart';
+ 
++final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
++
+ Future<void> main() async {
+   WidgetsFlutterBinding.ensureInitialized();
+   await NotificationService.initialise();
++  NotificationService.setNotificationTapHandler((payload) {
++    if (payload != 'daily_check_in') return;
++    appNavigatorKey.currentState?.pushAndRemoveUntil(
++      MaterialPageRoute(builder: (_) => const StartupScreen()),
++      (_) => false,
++    );
++  });
+   runApp(const NeuroTrackerApp());
+ }
+ 
+@@ -16,6 +25,7 @@ class NeuroTrackerApp extends StatelessWidget {
+   @override
+   Widget build(BuildContext context) {
+     return MaterialApp(
++      navigatorKey: appNavigatorKey,
+       title: 'NeuroTracker Clinical',
+       debugShowCheckedModeBanner: false,
+       theme: AppTheme.darkBlueTheme,
+diff --git a/lib/screens/settings_screen.dart b/lib/screens/settings_screen.dart
+index c6385ab..49a065b 100644
+--- a/lib/screens/settings_screen.dart
++++ b/lib/screens/settings_screen.dart
+@@ -49,12 +49,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
+ 
+   Future<void> _retry() async {
+     setState(() => retrying = true);
+-    final uploaded = await UploadService.retryPendingUploads();
++    final summary = await UploadService.retryPendingUploads();
+     await _loadStatus();
+     if (!mounted) return;
+     setState(() => retrying = false);
+     ScaffoldMessenger.of(context).showSnackBar(
+-      SnackBar(content: Text('$uploaded pending check-in(s) synced.')),
++      SnackBar(
++        content: Text(
++          summary.lastFailure == null
++              ? '${summary.uploaded} pending check-in(s) synced.'
++              : '${summary.uploaded} synced; ${summary.remaining} still pending. ${summary.lastFailure!.patientMessage}',
++        ),
++      ),
+     );
+   }
+ 
+diff --git a/lib/screens/wellness_screen.dart b/lib/screens/wellness_screen.dart
+index bb5bf82..ac1fbe2 100644
+--- a/lib/screens/wellness_screen.dart
++++ b/lib/screens/wellness_screen.dart
+@@ -61,7 +61,8 @@ class _WellnessScreenState extends State<WellnessScreen> {
+     await StorageService.saveEntryToHistory(entry);
+     await StorageService.recordSubmissionDate(entry.date);
+     await StorageService.addPendingEntry(entry);
+-    final uploaded = await UploadService.uploadDailyEntry(entry);
++    final uploadResult = await UploadService.uploadDailyEntry(entry);
++    final uploaded = uploadResult.succeeded;
+     if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
+     final pending = await StorageService.pendingCount();
+ 
+@@ -74,7 +75,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
+         content: Text(
+           uploaded
+               ? 'Today’s check-in has been securely sent to the clinic.'
+-              : 'Today’s check-in is safely stored on this phone and will retry automatically when the clinic server is available.\n\nPending uploads: $pending',
++              : 'Today’s check-in is safely stored on this phone.\n\n${uploadResult.patientMessage}\n\nPending uploads: $pending',
+         ),
+         actions: [
+           TextButton(
+diff --git a/lib/services/notification_service.dart b/lib/services/notification_service.dart
+index 61c2b57..eefd622 100644
+--- a/lib/services/notification_service.dart
++++ b/lib/services/notification_service.dart
+@@ -18,6 +18,13 @@ class NotificationService {
+   static const String _channelName = 'Daily reminders';
+   static const String _channelDescription =
+       'Daily NeuroTracker symptom check-in reminders';
++  static void Function(String? payload)? _notificationTapHandler;
++
++  static void setNotificationTapHandler(
++    void Function(String? payload) handler,
++  ) {
++    _notificationTapHandler = handler;
++  }
+ 
+   static Future<void> initialise() async {
+     tz.initializeTimeZones();
+@@ -60,8 +67,7 @@ class NotificationService {
+   static void _onNotificationTapped(
+     NotificationResponse response,
+   ) {
+-    // Opening the notification launches the application.
+-    // Direct navigation to the daily check-in can be added later.
++    _notificationTapHandler?.call(response.payload);
+   }
+ 
+   static Future<void> _createAndroidNotificationChannel() async {
+@@ -190,4 +196,4 @@ class NotificationService {
+       pendingNotifications() async {
+     return _plugin.pendingNotificationRequests();
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/services/upload_service.dart b/lib/services/upload_service.dart
+index e4b90f6..d1c7fb9 100644
+--- a/lib/services/upload_service.dart
++++ b/lib/services/upload_service.dart
+@@ -6,8 +6,52 @@ import '../models/daily_entry.dart';
+ import 'api_config.dart';
+ import 'storage_service.dart';
+ 
++enum UploadResult {
++  success,
++  notConfigured,
++  networkUnavailable,
++  unauthorized,
++  rejected,
++  serverUnavailable,
++}
++
++extension UploadResultMessage on UploadResult {
++  bool get succeeded => this == UploadResult.success;
++
++  String get patientMessage => switch (this) {
++        UploadResult.success => 'Synced with the clinic.',
++        UploadResult.notConfigured =>
++          'The clinic connection has not been configured on this build.',
++        UploadResult.networkUnavailable =>
++          'No connection is currently available. The check-in will retry automatically.',
++        UploadResult.unauthorized =>
++          'The clinic connection could not be authorised. Please contact the clinic.',
++        UploadResult.rejected =>
++          'The clinic server rejected this check-in. Please contact the clinic.',
++        UploadResult.serverUnavailable =>
++          'The clinic server is temporarily unavailable. The check-in will retry automatically.',
++      };
++}
++
++class RetrySummary {
++  final int uploaded;
++  final int remaining;
++  final UploadResult? lastFailure;
++
++  const RetrySummary({
++    required this.uploaded,
++    required this.remaining,
++    this.lastFailure,
++  });
++}
++
+ class UploadService {
+-  static Future<bool> uploadDailyEntry(DailyEntry entry) async {
++  static Future<UploadResult> uploadDailyEntry(DailyEntry entry) async {
++    if (ApiConfig.baseUrl.trim().isEmpty ||
++        ApiConfig.apiKey.trim().isEmpty ||
++        ApiConfig.apiKey.startsWith('change-this')) {
++      return UploadResult.notConfigured;
++    }
+     final base = ApiConfig.baseUrl.replaceAll(RegExp(r'/+$'), '');
+     final uri = Uri.parse('$base/api/symptom-entry');
+ 
+@@ -23,23 +67,39 @@ class UploadService {
+           )
+           .timeout(const Duration(seconds: 10));
+ 
+-      final succeeded = response.statusCode >= 200 && response.statusCode < 300;
+-      if (succeeded) await StorageService.recordSuccessfulSync();
+-      return succeeded;
++      if (response.statusCode >= 200 && response.statusCode < 300) {
++        await StorageService.recordSuccessfulSync();
++        return UploadResult.success;
++      }
++      if (response.statusCode == 401 || response.statusCode == 403) {
++        return UploadResult.unauthorized;
++      }
++      if (response.statusCode >= 400 && response.statusCode < 500) {
++        return UploadResult.rejected;
++      }
++      return UploadResult.serverUnavailable;
+     } catch (_) {
+-      return false;
++      return UploadResult.networkUnavailable;
+     }
+   }
+ 
+-  static Future<int> retryPendingUploads() async {
++  static Future<RetrySummary> retryPendingUploads() async {
+     final pending = await StorageService.loadPendingEntries();
+     var uploaded = 0;
++    UploadResult? lastFailure;
+     for (final entry in pending) {
+-      if (await uploadDailyEntry(entry)) {
++      final result = await uploadDailyEntry(entry);
++      if (result.succeeded) {
+         await StorageService.removePendingEntry(entry.submissionId);
+         uploaded++;
++      } else {
++        lastFailure = result;
+       }
+     }
+-    return uploaded;
++    return RetrySummary(
++      uploaded: uploaded,
++      remaining: await StorageService.pendingCount(),
++      lastFailure: lastFailure,
++    );
+   }
+ }
+-- 
+2.51.1
+

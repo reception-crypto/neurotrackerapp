@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../models/patient_profile.dart';
 import '../services/csv_service.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/score_button.dart';
-import 'daily_symptom_screen.dart';
+import 'home_screen.dart';
 
 class WellnessScreen extends StatefulWidget {
   final PatientProfile profile;
@@ -53,6 +54,12 @@ class _WellnessScreenState extends State<WellnessScreen> {
           ],
         ),
       );
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => HomeScreen(profile: widget.profile)),
+        (_) => false,
+      );
       return;
     }
     final rows = CsvService.rowsFromEntry(entry);
@@ -61,6 +68,15 @@ class _WellnessScreenState extends State<WellnessScreen> {
     await StorageService.saveEntryToHistory(entry);
     await StorageService.recordSubmissionDate(entry.date);
     await StorageService.addPendingEntry(entry);
+    try {
+      await NotificationService.scheduleDailyReminder(
+        hour: widget.profile.reminderTime.hour,
+        minute: widget.profile.reminderTime.minute,
+        skipToday: true,
+      );
+    } catch (_) {
+      // The locally saved check-in remains valid if reminder scheduling fails.
+    }
     final uploadResult = await UploadService.uploadDailyEntry(entry);
     final uploaded = uploadResult.succeeded;
     if (uploaded) await StorageService.removePendingEntry(entry.submissionId);
@@ -89,9 +105,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(
-        builder: (_) => DailySymptomScreen(profile: widget.profile),
-      ),
+      MaterialPageRoute(builder: (_) => HomeScreen(profile: widget.profile)),
       (_) => false,
     );
   }
@@ -107,15 +121,16 @@ class _WellnessScreenState extends State<WellnessScreen> {
           children: [
             Text('Step 2 of 2', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
-            Text('Overall Wellness',
-                style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              'Overall Wellness',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 16),
             Text(
               'Thinking about your day as a whole, how well have you felt today?\n\n100% represents your best possible day.\n10% represents your worst possible day.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyLarge
-                  ?.copyWith(color: AppTheme.secondaryText),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyLarge?.copyWith(color: AppTheme.secondaryText),
             ),
             const SizedBox(height: 26),
             Wrap(
@@ -137,7 +152,9 @@ class _WellnessScreenState extends State<WellnessScreen> {
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: submitting || wellnessPercent == null ? null : _submit,
+                  onPressed: submitting || wellnessPercent == null
+                      ? null
+                      : _submit,
                   child: Text(submitting ? 'Saving…' : 'Submit'),
                 ),
               ),

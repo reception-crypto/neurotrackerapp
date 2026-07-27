@@ -1,0 +1,51 @@
+diff --git a/lib/screens/profile_screen.dart b/lib/screens/profile_screen.dart
+index 5adffdd..ee48f74 100644
+--- a/lib/screens/profile_screen.dart
++++ b/lib/screens/profile_screen.dart
+@@ -142,8 +142,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
+                                         ? widget.initialProfile!.primarySymptoms
+                                         : const [],
+                                 initialSecondarySymptoms:
+-                                    widget.initialProfile?.secondaryDisorder ==
+-                                            (useSecondDisorder ? secondaryDisorder : null)
++                                    widget.initialProfile != null &&
++                                            widget.initialProfile!
++                                                    .secondaryDisorder ==
++                                                (useSecondDisorder
++                                                    ? secondaryDisorder
++                                                    : null)
+                                         ? widget.initialProfile!.secondarySymptoms
+                                         : const [],
+                               ),
+diff --git a/test/widget_test.dart b/test/widget_test.dart
+index 03dc009..e4763f2 100644
+--- a/test/widget_test.dart
++++ b/test/widget_test.dart
+@@ -1,5 +1,7 @@
++import 'package:flutter/material.dart';
+ import 'package:flutter_test/flutter_test.dart';
+ import 'package:neurotrackerapp/main.dart';
++import 'package:neurotrackerapp/screens/profile_screen.dart';
+ 
+ void main() {
+   testWidgets('NeuroTracker app starts', (WidgetTester tester) async {
+@@ -8,4 +10,19 @@ void main() {
+ 
+     expect(find.text('NeuroTracker Clinical'), findsWidgets);
+   });
++
++  testWidgets('new profile can continue with one disorder',
++      (WidgetTester tester) async {
++    await tester.pumpWidget(
++      const MaterialApp(home: ProfileScreen()),
++    );
++
++    await tester.enterText(find.byType(EditableText).first, 'Synthetic Patient');
++    await tester.tap(find.text('Continue'));
++    await tester.pumpAndSettle();
++
++    expect(find.text('Choose Symptoms'), findsOneWidget);
++    expect(find.text('Primary: Migraine'), findsOneWidget);
++    expect(tester.takeException(), isNull);
++  });
+ }

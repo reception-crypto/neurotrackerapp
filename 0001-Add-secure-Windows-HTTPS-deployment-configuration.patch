@@ -1,0 +1,225 @@
+From 35d1ceb893ee441d39de9d003cd4ae67b5e6de67 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Thu, 16 Jul 2026 21:22:13 -0700
+Subject: [PATCH] Add secure Windows HTTPS deployment configuration
+
+---
+ README.md                          |   5 ++
+ RELEASE_CHECKLIST.md               |   3 +
+ backend/.env.example               |   1 +
+ backend/server.js                  |   4 +-
+ deploy/Caddyfile                   |  16 ++++
+ deploy/WINDOWS_HTTPS_DEPLOYMENT.md | 116 +++++++++++++++++++++++++++++
+ 6 files changed, 144 insertions(+), 1 deletion(-)
+ create mode 100644 deploy/Caddyfile
+ create mode 100644 deploy/WINDOWS_HTTPS_DEPLOYMENT.md
+
+diff --git a/README.md b/README.md
+index b2ddcdf..c25e6f3 100644
+--- a/README.md
++++ b/README.md
+@@ -90,6 +90,11 @@ Set `API_KEY`, `ADMIN_PASSWORD`, and preferably `ADMIN_USER` in
+ `backend/.env`. Production mode refuses to start with the placeholder
+ credentials.
+ 
++For the clinic's off-site Windows server and Caddy HTTPS configuration, follow
++`deploy/WINDOWS_HTTPS_DEPLOYMENT.md`. Production binds Node to `127.0.0.1` by
++default so it can be reached through the HTTPS reverse proxy without exposing
++port 3000 publicly.
++
+ Portal:
+ 
+ ```text
+diff --git a/RELEASE_CHECKLIST.md b/RELEASE_CHECKLIST.md
+index 4715cc8..62e5550 100644
+--- a/RELEASE_CHECKLIST.md
++++ b/RELEASE_CHECKLIST.md
+@@ -35,6 +35,9 @@
+ - [ ] Confirm PDF report generation
+ - [ ] Confirm CSV export
+ - [ ] Configure HTTPS before off-site patient use
++- [ ] Confirm Node binds to `127.0.0.1`, not the public server interface
++- [ ] Confirm public port 3000 is closed
++- [ ] Confirm the tracker hostname has a valid, automatically renewing certificate
+ - [ ] Confirm the release build cannot connect to a cleartext HTTP endpoint
+ 
+ ## Patient beta release
+diff --git a/backend/.env.example b/backend/.env.example
+index 5fc1b94..95d80ad 100644
+--- a/backend/.env.example
++++ b/backend/.env.example
+@@ -1,4 +1,5 @@
+ PORT=3000
++HOST=127.0.0.1
+ NODE_ENV=production
+ API_KEY=replace-with-a-long-random-mobile-upload-key
+ ADMIN_USER=admin
+diff --git a/backend/server.js b/backend/server.js
+index 0dd029e..e9ffe0a 100644
+--- a/backend/server.js
++++ b/backend/server.js
+@@ -8,6 +8,8 @@ const PDFDocument = require('pdfkit');
+ 
+ const app = express();
+ const port = Number(process.env.PORT || 3000);
++const host = process.env.HOST ||
++  (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
+ const apiKey = process.env.API_KEY || 'change-this-mobile-upload-key';
+ const adminUser = process.env.ADMIN_USER || process.env.ADMIN_USERNAME || 'admin';
+ const adminPassword = process.env.ADMIN_PASSWORD || 'change-this-admin-password';
+@@ -475,7 +477,7 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
+ });
+ 
+ if (require.main === module) {
+-  app.listen(port,'0.0.0.0',()=>console.log(`NeuroTracker backend running at http://localhost:${port}`));
++  app.listen(host,port,()=>console.log(`NeuroTracker backend running at http://${host}:${port}`));
+ }
+ 
+ module.exports = { app, csvPath };
+diff --git a/deploy/Caddyfile b/deploy/Caddyfile
+new file mode 100644
+index 0000000..1503090
+--- /dev/null
++++ b/deploy/Caddyfile
+@@ -0,0 +1,16 @@
++tracker.melindapascoeneurology.com {
++	encode zstd gzip
++
++	reverse_proxy 127.0.0.1:3000 {
++		health_uri /health
++		health_interval 30s
++		health_timeout 5s
++	}
++
++	header {
++		Strict-Transport-Security "max-age=31536000; includeSubDomains"
++		X-Content-Type-Options "nosniff"
++		Referrer-Policy "no-referrer"
++		-Server
++	}
++}
+diff --git a/deploy/WINDOWS_HTTPS_DEPLOYMENT.md b/deploy/WINDOWS_HTTPS_DEPLOYMENT.md
+new file mode 100644
+index 0000000..c5384f0
+--- /dev/null
++++ b/deploy/WINDOWS_HTTPS_DEPLOYMENT.md
+@@ -0,0 +1,116 @@
++# NeuroTracker Windows HTTPS deployment
++
++Public address:
++
++```text
++https://tracker.melindapascoeneurology.com
++```
++
++## 1. DNS
++
++In Wix DNS, add an `A` record:
++
++```text
++Host:  tracker
++Value: 117.20.4.91
++```
++
++Do not alter the root-domain or `www` records used by the Wix website.
++
++Verify from a computer outside the server:
++
++```powershell
++Resolve-DnsName tracker.melindapascoeneurology.com -Type A
++```
++
++Continue only when it returns `117.20.4.91`.
++
++## 2. Check ports before installing Caddy
++
++Run as an administrator on the terminal server:
++
++```powershell
++Get-NetTCPConnection -State Listen -LocalPort 80,443 -ErrorAction SilentlyContinue |
++  Select-Object LocalAddress, LocalPort, OwningProcess
++```
++
++If either port is already occupied, identify the process before changing
++anything:
++
++```powershell
++Get-Process -Id THE_PROCESS_ID
++```
++
++Do not stop an existing IIS, RD Gateway or other production listener merely to
++make room for Caddy. In that situation, configure the existing HTTPS service as
++the reverse proxy instead.
++
++## 3. Backend configuration
++
++Copy `backend/.env.example` to `backend/.env` and replace every placeholder.
++Production uses:
++
++```text
++HOST=127.0.0.1
++PORT=3000
++NODE_ENV=production
++```
++
++This makes Node reachable only from the server itself. Confirm it locally:
++
++```powershell
++Invoke-RestMethod http://127.0.0.1:3000/health
++```
++
++Port 3000 must not have a public inbound firewall rule.
++
++## 4. Caddy
++
++Download the Windows executable from the official Caddy download page and
++place it in a dedicated directory such as `C:\Caddy`. Copy the repository's
++`deploy\Caddyfile` beside it.
++
++Validate the configuration:
++
++```powershell
++cd C:\Caddy
++.\caddy.exe validate --config .\Caddyfile
++```
++
++For an initial foreground test:
++
++```powershell
++.\caddy.exe run --config .\Caddyfile
++```
++
++Caddy obtains and renews the public certificate automatically once DNS points
++to the server and inbound TCP ports 80 and 443 reach Caddy.
++
++## 5. Firewall
++
++Allow inbound TCP 80 and 443 only. Keep port 3000 closed publicly. The hosting
++provider may have an additional network firewall outside Windows which must be
++updated separately.
++
++## 6. External verification
++
++From a different internet connection:
++
++```powershell
++Invoke-RestMethod https://tracker.melindapascoeneurology.com/health
++```
++
++Expected response:
++
++```json
++{"ok":true,"storage":"csv"}
++```
++
++Also confirm that this fails externally:
++
++```text
++http://117.20.4.91:3000/health
++```
++
++Only after these checks pass should a patient APK be built against the HTTPS
++address.
+-- 
+2.51.1
+

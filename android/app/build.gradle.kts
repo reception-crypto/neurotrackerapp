@@ -14,7 +14,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "au.com.pascoeneurology.neurotracker"
+    namespace = "au.com.pascoeneurology.neurosol"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -26,7 +26,7 @@ android {
 
     defaultConfig {
         multiDexEnabled = true
-        applicationId = "au.com.pascoeneurology.neurotracker"
+        applicationId = "au.com.pascoeneurology.neurosol"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

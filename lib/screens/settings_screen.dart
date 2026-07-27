@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/csv_service.dart';
 import '../services/notification_service.dart';
@@ -7,6 +8,7 @@ import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import 'consent_screen.dart';
 import 'history_screen.dart';
+import 'privacy_screen.dart';
 import 'profile_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -65,15 +67,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _changeReminder() async {
-    final current = profile?.reminderTime ?? const TimeOfDay(hour: 19, minute: 0);
-    final selected = await showTimePicker(context: context, initialTime: current);
+    final current =
+        profile?.reminderTime ?? const TimeOfDay(hour: 19, minute: 0);
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: current,
+    );
     if (selected == null || profile == null) return;
     final updated = profile!.copyWith(reminderTime: selected);
     await StorageService.saveProfile(updated);
+    final completedToday = await StorageService.hasSubmittedToday();
     await NotificationService.scheduleDailyReminder(
-  hour: selected.hour,
-  minute: selected.minute,
-);
+      hour: selected.hour,
+      minute: selected.minute,
+      skipToday: completedToday,
+    );
     if (!mounted) return;
     setState(() => profile = updated);
   }
@@ -87,8 +95,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'This removes the saved profile and local check-in history from this phone.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Reset')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Reset'),
+          ),
         ],
       ),
     );
@@ -117,12 +131,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          Text('Sync status', style: Theme.of(context).textTheme.headlineMedium),
+          Text(
+            'Sync status',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
           const SizedBox(height: 12),
           Card(
             child: ListTile(
-              leading: Icon(pending == 0 ? Icons.cloud_done : Icons.cloud_upload),
-              title: Text(pending == 0 ? 'Synced' : '$pending upload(s) pending'),
+              leading: Icon(
+                pending == 0 ? Icons.cloud_done : Icons.cloud_upload,
+              ),
+              title: Text(
+                pending == 0 ? 'Synced' : '$pending upload(s) pending',
+              ),
               subtitle: Text('Last successful sync: ${_formatSync(lastSync)}'),
               trailing: pending > 0
                   ? IconButton(
@@ -142,9 +163,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: ListTile(
               leading: const Icon(Icons.notifications),
               title: const Text('Daily reminder'),
-              subtitle: Text(profile == null
-                  ? 'Not configured'
-                  : profile!.reminderTime.format(context)),
+              subtitle: Text(
+                profile == null
+                    ? 'Not configured'
+                    : profile!.reminderTime.format(context),
+              ),
               onTap: _changeReminder,
             ),
           ),
@@ -175,21 +198,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: profile == null
                   ? null
                   : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => ProfileScreen(initialProfile: profile),
-                        ),
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ProfileScreen(initialProfile: profile),
                       ),
+                    ),
             ),
           ),
           const SizedBox(height: 20),
-          Text('App information', style: Theme.of(context).textTheme.headlineMedium),
+          Text(
+            'App information',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
           const SizedBox(height: 12),
           const Card(
             child: ListTile(
               leading: Icon(Icons.info_outline),
-              title: Text('NeuroTracker Clinical'),
-              subtitle: Text('Version 1.0.0\nFor clinical monitoring; not for emergency use.'),
+              title: Text(appDisplayName),
+              subtitle: Text(
+                'Version 1.0.0\nFor clinical monitoring; not for emergency use.',
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('Privacy and app information'),
+              subtitle: const Text(
+                'How information is handled, support, and medical disclaimer',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PrivacyScreen()),
+              ),
             ),
           ),
           const SizedBox(height: 20),
@@ -197,17 +240,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Testing and local data'),
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 child: Column(
                   children: [
                     SizedBox(
                       width: double.infinity,
-                      child: FilledButton(onPressed: _loadCsv, child: const Text('Show local CSV')),
+                      child: FilledButton(
+                        onPressed: _loadCsv,
+                        child: const Text('Show local CSV'),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
-                      child: OutlinedButton(onPressed: _reset, child: const Text('Reset app')),
+                      child: OutlinedButton(
+                        onPressed: _reset,
+                        child: const Text('Reset app'),
+                      ),
                     ),
                     if (csv.isNotEmpty) ...[
                       const SizedBox(height: 16),

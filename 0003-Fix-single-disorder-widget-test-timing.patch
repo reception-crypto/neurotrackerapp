@@ -1,0 +1,17 @@
+diff --git a/test/widget_test.dart b/test/widget_test.dart
+--- a/test/widget_test.dart
++++ b/test/widget_test.dart
+@@ -20,6 +20,13 @@ void main() {
+     );
+ 
+     await tester.enterText(find.byType(EditableText).first, 'Synthetic Patient');
++    await tester.pump();
++
++    final continueButton = tester.widget<FilledButton>(
++      find.widgetWithText(FilledButton, 'Continue'),
++    );
++    expect(continueButton.onPressed, isNotNull);
++
+     await tester.tap(find.text('Continue'));
+     await tester.pumpAndSettle();
+ 

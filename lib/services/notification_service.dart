@@ -5,6 +5,8 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../app_identity.dart';
+
 class NotificationService {
   NotificationService._();
 
@@ -13,12 +15,14 @@ class NotificationService {
 
   static const int _dailyReminderId = 1001;
   static const int _testNotificationId = 999;
+  static const String dailyCheckInPayload = 'daily_check_in';
 
   static const String _channelId = 'daily_reminder';
   static const String _channelName = 'Daily reminders';
   static const String _channelDescription =
-      'Daily NeuroTracker symptom check-in reminders';
+      'Daily $appShortName symptom check-in reminders';
   static void Function(String? payload)? _notificationTapHandler;
+  static String? _launchPayload;
 
   static void setNotificationTapHandler(
     void Function(String? payload) handler,
@@ -32,13 +36,9 @@ class NotificationService {
     try {
       final timezoneInfo = await FlutterTimezone.getLocalTimezone();
 
-      tz.setLocalLocation(
-        tz.getLocation(timezoneInfo.identifier),
-      );
+      tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
     } catch (_) {
-      tz.setLocalLocation(
-        tz.getLocation('Australia/Brisbane'),
-      );
+      tz.setLocalLocation(tz.getLocation('Australia/Brisbane'));
     }
 
     const androidSettings = AndroidInitializationSettings(
@@ -61,12 +61,25 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
+    try {
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        _launchPayload = launchDetails?.notificationResponse?.payload;
+      }
+    } catch (_) {
+      _launchPayload = null;
+    }
+
     await _createAndroidNotificationChannel();
   }
 
-  static void _onNotificationTapped(
-    NotificationResponse response,
-  ) {
+  static String? takeLaunchPayload() {
+    final payload = _launchPayload;
+    _launchPayload = null;
+    return payload;
+  }
+
+  static void _onNotificationTapped(NotificationResponse response) {
     _notificationTapHandler?.call(response.payload);
   }
 
@@ -82,7 +95,8 @@ class NotificationService {
 
     await _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(channel);
   }
 
@@ -90,7 +104,8 @@ class NotificationService {
     if (Platform.isAndroid) {
       final androidPlugin = _plugin
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
+            AndroidFlutterLocalNotificationsPlugin
+          >();
 
       return await androidPlugin?.requestNotificationsPermission() ?? false;
     }
@@ -98,7 +113,8 @@ class NotificationService {
     if (Platform.isIOS) {
       final iosPlugin = _plugin
           .resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>();
+            IOSFlutterLocalNotificationsPlugin
+          >();
 
       return await iosPlugin?.requestPermissions(
             alert: true,
@@ -129,7 +145,7 @@ class NotificationService {
 
     await _plugin.show(
       id: _testNotificationId,
-      title: 'NeuroTracker test',
+      title: '$appShortName test',
       body: 'Notifications are working correctly.',
       notificationDetails: notificationDetails,
       payload: 'notification_test',
@@ -139,6 +155,7 @@ class NotificationService {
   static Future<void> scheduleDailyReminder({
     required int hour,
     required int minute,
+    bool skipToday = false,
   }) async {
     await cancelDailyReminder();
 
@@ -153,9 +170,15 @@ class NotificationService {
       minute,
     );
 
-    if (!scheduledDate.isAfter(now)) {
-      scheduledDate = scheduledDate.add(
-        const Duration(days: 1),
+    if (skipToday || !scheduledDate.isAfter(now)) {
+      final tomorrow = now.add(const Duration(days: 1));
+      scheduledDate = tz.TZDateTime(
+        tz.local,
+        tomorrow.year,
+        tomorrow.month,
+        tomorrow.day,
+        hour,
+        minute,
       );
     }
 
@@ -176,24 +199,21 @@ class NotificationService {
 
     await _plugin.zonedSchedule(
       id: _dailyReminderId,
-      title: 'NeuroTracker daily check-in',
+      title: '$appShortName daily check-in',
       body: 'Please record today’s symptoms and wellness score.',
       scheduledDate: scheduledDate,
       notificationDetails: notificationDetails,
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       matchDateTimeComponents: DateTimeComponents.time,
-      payload: 'daily_check_in',
+      payload: dailyCheckInPayload,
     );
   }
 
   static Future<void> cancelDailyReminder() async {
-    await _plugin.cancel(
-      id: _dailyReminderId,
-    );
+    await _plugin.cancel(id: _dailyReminderId);
   }
 
-  static Future<List<PendingNotificationRequest>>
-      pendingNotifications() async {
+  static Future<List<PendingNotificationRequest>> pendingNotifications() async {
     return _plugin.pendingNotificationRequests();
   }
 }
