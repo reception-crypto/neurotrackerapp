@@ -142,10 +142,7 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
             ),
             if (_error != null) ...[
               const SizedBox(height: 14),
-              Text(
-                _error!,
-                style: const TextStyle(color: Colors.orangeAccent),
-              ),
+              Text(_error!, style: const TextStyle(color: Colors.orangeAccent)),
             ],
             const SizedBox(height: 24),
             FilledButton(

@@ -21,8 +21,7 @@ enum UploadResult {
 extension UploadResultMessage on UploadResult {
   bool get succeeded => this == UploadResult.success;
   bool get terminal =>
-      this == UploadResult.success ||
-      this == UploadResult.dailyAlreadyRecorded;
+      this == UploadResult.success || this == UploadResult.dailyAlreadyRecorded;
 
   String get patientMessage => switch (this) {
     UploadResult.success => 'Synced with the clinic.',

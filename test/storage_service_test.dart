@@ -92,12 +92,15 @@ void main() {
     expect(await StorageService.hasSubmittedOn('2026-07-28'), isFalse);
   });
 
-  test('reset removes the protected device credential and local data', () async {
-    await StorageService.recordSubmissionDate('2026-07-27');
+  test(
+    'reset removes the protected device credential and local data',
+    () async {
+      await StorageService.recordSubmissionDate('2026-07-27');
 
-    await StorageService.resetAll();
+      await StorageService.resetAll();
 
-    expect(IdentityService.accessTokenForTesting, isNull);
-    expect(await StorageService.hasSubmittedOn('2026-07-27'), isFalse);
-  });
+      expect(IdentityService.accessTokenForTesting, isNull);
+      expect(await StorageService.hasSubmittedOn('2026-07-27'), isFalse);
+    },
+  );
 }

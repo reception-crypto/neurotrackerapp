@@ -27,21 +27,17 @@ class PatientProfile {
       secondarySymptoms.isNotEmpty;
 
   String get supportId {
-    final compact = patientId
-        .toUpperCase()
-        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final compact = patientId.toUpperCase().replaceAll(
+      RegExp(r'[^A-Z0-9]'),
+      '',
+    );
     if (compact.isEmpty) return 'NS-UNAVAILABLE';
     final suffix = compact.length <= 12
         ? compact
         : compact.substring(compact.length - 12);
     final groups = <String>[];
     for (var index = 0; index < suffix.length; index += 4) {
-      groups.add(
-        suffix.substring(
-          index,
-          min(index + 4, suffix.length),
-        ),
-      );
+      groups.add(suffix.substring(index, min(index + 4, suffix.length)));
     }
     return 'NS-${groups.join('-')}';
   }

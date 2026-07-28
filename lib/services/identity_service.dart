@@ -10,10 +10,7 @@ class EnrolmentResult {
   final String patientId;
   final String displayName;
 
-  const EnrolmentResult({
-    required this.patientId,
-    required this.displayName,
-  });
+  const EnrolmentResult({required this.patientId, required this.displayName});
 }
 
 class EnrolmentException implements Exception {
@@ -78,9 +75,10 @@ class IdentityService {
     String code, {
     String? expectedPatientId,
   }) async {
-    final normalisedCode = code
-        .toUpperCase()
-        .replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final normalisedCode = code.toUpperCase().replaceAll(
+      RegExp(r'[^A-Z0-9]'),
+      '',
+    );
     if (normalisedCode.length != 12) {
       throw const EnrolmentException(
         'Enter the 12-character enrolment code supplied by the clinic.',
@@ -137,10 +135,7 @@ class IdentityService {
           'The code was accepted, but this phone could not protect its clinic credential. Contact the clinic for a replacement code.',
         );
       }
-      return EnrolmentResult(
-        patientId: patientId,
-        displayName: displayName,
-      );
+      return EnrolmentResult(patientId: patientId, displayName: displayName);
     }
 
     if (response.statusCode == 400 ||
