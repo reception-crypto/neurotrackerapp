@@ -83,8 +83,8 @@ if ((Get-Content $gradlePath -Raw) -notmatch 'applicationId\s*=\s*"au\.com\.pasc
     throw 'The Android application ID is not au.com.pascoeneurology.neurosol.'
 }
 
-if ((Get-Content $gradlePath -Raw) -notmatch 'minSdk\s*=\s*23') {
-    throw 'Android minSdk must be 23 for protected credential storage.'
+if ((Get-Content $gradlePath -Raw) -notmatch 'minSdk\s*=\s*24') {
+    throw 'Android minSdk must be 24 for the Build 6 Android dependencies.'
 }
 
 if ((Get-Content $manifestPath -Raw) -notmatch 'android:allowBackup="false"') {
@@ -137,7 +137,7 @@ Invoke-Flutter -Arguments @('analyze')
 
 Write-Host ''
 Write-Host 'Running Flutter tests...'
-Invoke-Flutter -Arguments @('test')
+Invoke-Flutter -Arguments @('test', '--no-pub', '--reporter=expanded', '--concurrency=1', '--timeout=2m')
 
 Write-Host ''
 Write-Host 'Building signed Android App Bundle...'
@@ -194,3 +194,4 @@ Get-FileHash $releaseAab, $releaseApk -Algorithm SHA256 |
 Write-Host 'Install the APK with:'
 Write-Host '$Apk = (Resolve-Path ".\delivery\android-build6\NeuroSol-Symptom-Diary-1.0.0-build6.apk").Path'
 Write-Host 'adb install -r "$Apk"'
+
