@@ -177,6 +177,53 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     };
   }
 
+  function enrolReusableReviewDevice({
+    patientId = '',
+    displayName = '',
+  } = {}) {
+    const id = String(patientId || '').trim();
+    const name = String(displayName || '').trim();
+    if (!id.startsWith('pt-review-') || id.length > 120) {
+      throw new Error('Review PatientId must start with pt-review-.');
+    }
+    if (!name || name.length > 160) {
+      throw new Error('A review display name is required.');
+    }
+
+    const store = readStore();
+    const enrolledAt = now().toISOString();
+    const existing = store.patients[id];
+    store.patients[id] = {
+      patientId: id,
+      displayName: name,
+      createdAt: existing?.createdAt || enrolledAt,
+      updatedAt: enrolledAt,
+      reviewIdentity: true,
+    };
+
+    const accessToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = digest('device-token', accessToken);
+    const deviceId = crypto.randomUUID();
+    store.devices[tokenHash] = {
+      deviceId,
+      patientId: id,
+      createdAt: enrolledAt,
+      lastUsedAt: enrolledAt,
+      revokedAt: null,
+      reviewDevice: true,
+    };
+    writeStore(store);
+
+    return {
+      status: 'ok',
+      accessToken,
+      deviceId,
+      patientId: id,
+      displayName: name,
+      supportId: supportId(id),
+    };
+  }
+
   function authenticate(accessToken) {
     const token = String(accessToken || '').trim();
     if (!token) return null;
@@ -216,6 +263,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     const store = readStore();
     const existing = store.patients[id];
     store.patients[id] = {
+      ...existing,
       patientId: id,
       displayName: name,
       createdAt: existing?.createdAt || now().toISOString(),
@@ -232,6 +280,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     identityPath,
     issueEnrolmentCode,
     redeemEnrolmentCode,
+    enrolReusableReviewDevice,
     authenticate,
     revokePatientDevices,
     updatePatientDisplayName,

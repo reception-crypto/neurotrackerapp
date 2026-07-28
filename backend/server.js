@@ -6,7 +6,11 @@ const fs = require('fs');
 const path = require('path');
 const basicAuth = require('basic-auth');
 const PDFDocument = require('pdfkit');
-const { createIdentityStore, supportId } = require('./identity_store');
+const {
+  createIdentityStore,
+  normaliseCode,
+  supportId,
+} = require('./identity_store');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -17,11 +21,38 @@ const host = process.env.HOST ||
 const identitySecret = process.env.IDENTITY_SECRET || 'development-only-identity-secret-change-me';
 const adminUser = process.env.ADMIN_USER || process.env.ADMIN_USERNAME || 'admin';
 const adminPassword = process.env.ADMIN_PASSWORD || 'change-this-admin-password';
+const reviewEnrolmentCode = normaliseCode(
+  process.env.REVIEW_ENROLMENT_CODE || '',
+);
+const reviewPatientIdPrefix = String(
+  process.env.REVIEW_PATIENT_ID_PREFIX || '',
+).trim();
+const reviewDisplayName = String(
+  process.env.REVIEW_DISPLAY_NAME || '',
+).trim();
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
 const identityStore = createIdentityStore({ dataDir, secret: identitySecret });
 
 const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId'];
+
+const reviewConfigurationPresent = Boolean(
+  reviewEnrolmentCode || reviewPatientIdPrefix || reviewDisplayName,
+);
+const reviewConfigurationValid = !reviewConfigurationPresent || (
+  reviewEnrolmentCode.length === 12 &&
+  reviewPatientIdPrefix.startsWith('pt-review-') &&
+  reviewPatientIdPrefix.length <= 80 &&
+  reviewDisplayName.length > 0 &&
+  reviewDisplayName.length <= 160
+);
+
+if (!reviewConfigurationValid) {
+  throw new Error(
+    'Google Play review access requires a 12-character code, a ' +
+    'pt-review- PatientId prefix, and a display name.',
+  );
+}
 
 if (process.env.NODE_ENV === 'production' &&
     (identitySecret.startsWith('development-only') ||
@@ -257,6 +288,14 @@ function readRows() {
 function bearerToken(req) {
   const header = String(req.header('authorization') || '');
   return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+function matchesReviewEnrolmentCode(value) {
+  if (!reviewEnrolmentCode) return false;
+  const supplied = Buffer.from(normaliseCode(value), 'utf8');
+  const expected = Buffer.from(reviewEnrolmentCode, 'utf8');
+  return supplied.length === expected.length &&
+    crypto.timingSafeEqual(supplied, expected);
 }
 
 function requireDeviceIdentity(req, res, next) {
@@ -703,6 +742,33 @@ function recordFailedEnrolment(req) {
 
 app.post('/api/enrol',limitEnrolmentAttempts,(req,res)=>{
   res.set('Cache-Control', 'no-store');
+  if (matchesReviewEnrolmentCode(req.body?.code)) {
+    const expectedPatientId = String(
+      req.body?.expectedPatientId || '',
+    ).trim();
+    const expectedReviewPrefix = `${reviewPatientIdPrefix}-`;
+    if (
+      expectedPatientId &&
+      !expectedPatientId.startsWith(expectedReviewPrefix)
+    ) {
+      return res.status(409).json({
+        error: 'The enrolment code belongs to a different clinic record.',
+        code: 'enrolment_patient_mismatch',
+      });
+    }
+    const reviewerPatientId = expectedPatientId ||
+      `${reviewPatientIdPrefix}-${crypto.randomUUID()}`;
+    const reviewIdentity = identityStore.enrolReusableReviewDevice({
+      patientId: reviewerPatientId,
+      displayName: reviewDisplayName,
+    });
+    return res.status(200).json({
+      patientId: reviewIdentity.patientId,
+      displayName: reviewIdentity.displayName,
+      supportId: reviewIdentity.supportId,
+      accessToken: reviewIdentity.accessToken,
+    });
+  }
   const result = identityStore.redeemEnrolmentCode(req.body?.code, {
     expectedPatientId: req.body?.expectedPatientId,
   });

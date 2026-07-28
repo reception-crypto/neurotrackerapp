@@ -10,6 +10,9 @@ process.env.DATA_DIR = testDataDir;
 process.env.IDENTITY_SECRET = 'test-only-identity-secret-at-least-32-characters';
 process.env.ADMIN_USER = 'test-admin';
 process.env.ADMIN_PASSWORD = 'test-admin-password';
+process.env.REVIEW_ENROLMENT_CODE = 'R3VW4CC3SS99';
+process.env.REVIEW_PATIENT_ID_PREFIX = 'pt-review-google-play';
+process.env.REVIEW_DISPLAY_NAME = 'Google Play Review';
 
 const {
   app,
@@ -145,6 +148,78 @@ test('enrolment codes are one-time and return a stable PatientId', async () => {
     body: JSON.stringify({ code: issued.code }),
   });
   assert.equal(second.status, 410);
+});
+
+test('Google Play reviewer access is reusable and synthetic-only', async () => {
+  const enrolReviewer = () => fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: 'R3VW-4CC3-SS99' }),
+  });
+
+  const first = await enrolReviewer();
+  assert.equal(first.status, 200);
+  const firstIdentity = await first.json();
+  assert.match(
+    firstIdentity.patientId,
+    /^pt-review-google-play-[0-9a-f-]{36}$/,
+  );
+  assert.equal(firstIdentity.displayName, 'Google Play Review');
+
+  const second = await enrolReviewer();
+  assert.equal(second.status, 200);
+  const secondIdentity = await second.json();
+  assert.match(
+    secondIdentity.patientId,
+    /^pt-review-google-play-[0-9a-f-]{36}$/,
+  );
+  assert.notEqual(secondIdentity.patientId, firstIdentity.patientId);
+  assert.notEqual(secondIdentity.accessToken, firstIdentity.accessToken);
+
+  const reconnect = await fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      code: 'R3VW-4CC3-SS99',
+      expectedPatientId: firstIdentity.patientId,
+    }),
+  });
+  assert.equal(reconnect.status, 200);
+  assert.equal((await reconnect.json()).patientId, firstIdentity.patientId);
+
+  const storedIdentity = fs.readFileSync(
+    path.join(testDataDir, 'identity_store.json'),
+    'utf8',
+  );
+  assert.equal(storedIdentity.includes('R3VW4CC3SS99'), false);
+  assert.equal(
+    identityStore.snapshot().patients[firstIdentity.patientId].reviewIdentity,
+    true,
+  );
+  identityStore.updatePatientDisplayName(
+    firstIdentity.patientId,
+    'Google Play Review',
+  );
+  assert.equal(
+    identityStore.snapshot().patients[firstIdentity.patientId].reviewIdentity,
+    true,
+  );
+});
+
+test('reviewer access cannot replace another clinic identity', async () => {
+  const response = await fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      code: 'R3VW-4CC3-SS99',
+      expectedPatientId: 'pt-real-patient',
+    }),
+  });
+  assert.equal(response.status, 409);
+  assert.equal(
+    (await response.json()).code,
+    'enrolment_patient_mismatch',
+  );
 });
 
 test('a recovery code is not consumed for the wrong existing PatientId', async () => {

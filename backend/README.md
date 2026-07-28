@@ -58,3 +58,24 @@ separate secure backup. None of these files belong in Git.
 The server accepts an exact SubmissionId retry without adding rows, but rejects
 a second distinct submission for the same PatientId and date with HTTP `409`
 and code `daily_submission_exists`.
+
+## Google Play reviewer access
+
+Google requires reusable credentials when an app normally uses one-time
+authentication. For a review submission, production may temporarily enable a
+reusable credential that is restricted to one clearly synthetic identity:
+
+```env
+REVIEW_ENROLMENT_CODE=<random 12-character code>
+REVIEW_PATIENT_ID_PREFIX=pt-review-google-play
+REVIEW_DISPLAY_NAME=Google Play Review
+```
+
+The code is read only from the protected production environment, is never
+written to the identity store or logs, and can never enrol an existing
+non-review PatientId. Each clean installation receives a separate synthetic
+review PatientId and revocable device token, so repeated store-review runs do
+not collide with the one-check-in-per-day rule. Reconnecting an existing review
+installation preserves its synthetic PatientId. Do not use a real patient
+name, PatientId, or check-in. Rotate the code for each store submission and
+remove all three settings after review if ongoing access is not required.
