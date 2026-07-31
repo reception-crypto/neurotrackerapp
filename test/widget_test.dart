@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neurotrackerapp/main.dart';
 import 'package:neurotrackerapp/models/patient_profile.dart';
+import 'package:neurotrackerapp/models/symptom_data.dart';
 import 'package:neurotrackerapp/screens/home_screen.dart';
 import 'package:neurotrackerapp/screens/privacy_screen.dart';
-import 'package:neurotrackerapp/screens/profile_screen.dart';
 import 'package:neurotrackerapp/screens/settings_screen.dart';
 import 'package:neurotrackerapp/services/identity_service.dart';
 import 'package:neurotrackerapp/services/storage_service.dart';
@@ -16,6 +16,7 @@ const testProfile = PatientProfile(
   primaryDisorder: 'Migraine',
   primarySymptoms: ['Headache', 'Nausea', 'Vomiting'],
   reminderTime: TimeOfDay(hour: 19, minute: 0),
+  profileRevision: 1,
 );
 
 void main() {
@@ -25,6 +26,14 @@ void main() {
     IdentityService.accessTokenForTesting = 'test-device-token';
   });
 
+  test('Dysautonomia offers Pain and Weakness instead of retired symptoms', () {
+    final symptoms = disorderSymptoms['Dysautonomia']!;
+
+    expect(symptoms, containsAll(<String>['Pain', 'Weakness']));
+    expect(symptoms, isNot(contains('Shortness of breath')));
+    expect(symptoms, isNot(contains('Sweating changes')));
+  });
+
   testWidgets('NeuroSol app starts', (WidgetTester tester) async {
     await tester.pumpWidget(const NeuroSolApp());
     await tester.pump();
@@ -32,32 +41,19 @@ void main() {
     expect(find.text('NeuroSol Symptom Diary'), findsWidgets);
   });
 
-  testWidgets('new profile can continue with one disorder', (
+  testWidgets('settings exposes the clinic profile as read-only', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: ProfileScreen(enrolledPatientId: 'pt-profile-test'),
-      ),
-    );
-
-    await tester.enterText(
-      find.byType(EditableText).first,
-      'Synthetic Patient',
-    );
-    await tester.pump();
-
-    final continueButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Continue'),
-    );
-    expect(continueButton.onPressed, isNotNull);
-
-    await tester.tap(find.text('Continue'));
+    await StorageService.saveProfile(testProfile);
+    await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Choose Symptoms'), findsOneWidget);
-    expect(find.text('Primary: Migraine'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.text('Clinic-assigned profile'), findsOneWidget);
+    expect(find.text('Edit patient profile'), findsNothing);
+    expect(
+      find.textContaining('Contact the clinic to request changes'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('privacy information remains accessible from settings', (

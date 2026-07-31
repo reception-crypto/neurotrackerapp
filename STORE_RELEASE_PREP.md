@@ -8,7 +8,7 @@ approve the final declarations and ensure they match the deployed service.
 - Store name: NeuroSol Symptom Diary
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
-- Release version: `1.0.0+6`
+- Release version: `1.0.0+7`
 - Category: Medical
 - Support email: `reception@pascoeneurology.com`
 - Privacy policy:
@@ -20,9 +20,11 @@ approve the final declarations and ensure they match the deployed service.
 
 NeuroSol Symptom Diary helps participating Pascoe Neurology patients complete
 a daily symptom and wellness check-in for review as part of their clinical
-care. A clinic-issued one-time code securely links the phone to the intended
-clinic record. Entries remain on the device and are sent to the clinic; failed
-transmissions remain pending and retry later.
+care. Dr Pascoe or authorised clinic staff assign each patient’s disorders and
+symptoms before a one-time link or code securely connects the phone to the
+intended clinic record. Patients may change their reminder time, but not the
+clinic-assigned clinical profile. Entries remain on the device and are sent to
+the clinic; failed transmissions remain pending and retry later.
 
 The app is not continuously monitored and must not be used for urgent or
 emergency assistance. It is not a medical device, does not diagnose, treat,
@@ -31,9 +33,10 @@ advice. In an emergency, call 000.
 
 ## Google Play declarations to verify
 
-- Data collected: name, health information, clinic-issued PatientId,
+- Data collected: name, clinic-assigned health profile, symptom and wellness
+  scores, clinic-issued PatientId,
   per-device security credential, submission ID, check-in date/time, and
-  app-selected condition/symptom settings.
+  profile revision.
 - Purpose: app functionality, clinical monitoring, care administration,
   security, troubleshooting, duplicate prevention, and record-keeping.
 - Data sharing: no sale or advertising use. Confirm whether hosting, backup,
@@ -49,8 +52,9 @@ advice. In an emergency, call 000.
 - Ads and tracking: none.
 
 Because the app is enrolment-gated, Play App access instructions must include
-a dedicated synthetic reviewer record and a fresh one-time code. The code is
-consumed on first use; issue another if review access is requested again.
+the dedicated reusable synthetic reviewer credential configured for store
+review. Normal patient codes remain one-time. Never use a real patient record
+for review.
 
 ## Apple App Privacy answers to verify
 
@@ -65,7 +69,7 @@ consumed on first use; issue another if review access is requested again.
 
 ## Build and review gates
 
-Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) as the authoritative Build 6
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) as the authoritative Build 7
 gate. In particular, deploy and test the matching backend before uploading the
 AAB, provide only synthetic review access, and do not release to real patients
 until privacy, backup/restore, clinic enrolment, revocation, and incident

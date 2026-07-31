@@ -1,134 +1,148 @@
-# NeuroSol Symptom Diary Build 6 release checklist
+# NeuroSol Symptom Diary Build 7 release checklist
 
-Build 6 is the first clinic-release candidate using clinic-issued PatientId
-enrolment. Do not deploy the mobile app before the matching backend.
+Build 7 changes patient enrolment from patient-selected symptoms to a
+clinic-assigned, versioned profile. Complete every gate before open clinic use.
 
-## Source and automated verification
+## 1. Source and backups
 
-- [ ] Confirm the branch is `codex/build6-patient-identity` and based on the
-      protected Build 5 baseline.
-- [ ] Review `git status` and confirm no `.env`, CSV, identity store, keystore,
-      patient screenshot, token, or enrolment code is present.
-- [ ] Run `npm ci` and `npm test` in `backend`.
-- [ ] Run `flutter pub get` so `pubspec.lock` records
-      `flutter_secure_storage`.
-- [ ] Run `dart format lib test`.
-- [ ] Run `flutter analyze`.
-- [ ] Run `flutter test`.
-- [ ] Push the completed Build 6 source and confirm the GitHub Verify workflow
-      passes.
+- [ ] Confirm the branch contains the complete Build 6 checkpoint plus Build 7
+      changes.
+- [ ] Confirm `pubspec.yaml` is `1.0.0+7`, backend is `0.7.0`, and both app IDs
+      remain `au.com.pascoeneurology.neurosol`.
+- [ ] Confirm no `.env`, keystore, `key.properties`, clinical CSV, identity
+      store, real enrolment code, or patient screenshot is staged.
+- [ ] Push source to GitHub and record the commit SHA.
+- [ ] Back up production `.env`, `symptom_entries.csv`, and
+      `identity_store.json` together before deployment.
+- [ ] Record SHA-256 hashes for the two production data files and the backend
+      source package.
 
-## Backend deployment
+## 2. Verify source
 
-- [ ] Back up the current production `.env` and data directory.
-- [ ] Generate and securely record a random `IDENTITY_SECRET` of at least
-      32 characters.
-- [ ] Set a unique `ADMIN_PASSWORD` of at least 16 characters.
-- [ ] Confirm no legacy shared mobile API-key path is present or enabled.
-- [ ] Set `DATA_DIR` outside the repository.
-- [ ] Confirm only the Node service account and authorised administrators can
-      read `.env`, `symptom_entries.csv`, `identity_store.json`, and backups.
-- [ ] Deploy canonical `backend/server.js`, `backend/identity_store.js`,
-      `package.json`, and `package-lock.json`.
-- [ ] Confirm Node binds to `127.0.0.1`, public port 3000 is closed, and HTTPS
-      reverse proxying remains valid.
-- [ ] Confirm `/health`, `/admin`, `/admin/population`,
-      `/admin/enrolments`, CSV export, and PDF reports.
-- [ ] Back up and restore `symptom_entries.csv` and `identity_store.json`
-      together in a rehearsal.
+```powershell
+cd C:\Projects\neurotrackerapp
+flutter pub get
+dart format lib test
+flutter analyze
+flutter test
 
-## Enrolment and integrity acceptance
+Push-Location .\backend
+npm ci
+npm test
+Pop-Location
+```
 
-- [ ] Create a synthetic new-patient code and enrol a clean Android device.
-- [ ] Confirm the code works once and cannot be reused.
-- [ ] Confirm Settings support ID matches the portal support ID.
-- [ ] Submit one check-in and confirm PatientId is present in server CSV and
-      local CSV.
-- [ ] Retry the exact SubmissionId and confirm no duplicate rows are added.
-- [ ] Attempt a second distinct submission for the same PatientId/date and
-      confirm HTTP 409 / `daily_submission_exists`.
-- [ ] Confirm another PatientId can submit on that date.
-- [ ] Change the profile name, submit on a later date, and confirm the portal
-      remains one patient group with only the latest name as its label.
-- [ ] Issue a new-device code for the existing PatientId and enrol a second
-      device.
-- [ ] Try that recovery code on a phone holding a different PatientId; confirm
-      it is rejected without consuming the code, then use it successfully for
-      the intended PatientId.
-- [ ] Revoke that patient's devices and confirm further uploads are rejected.
-- [ ] Confirm an access token cannot upload another PatientId.
+- [ ] All Flutter analysis and tests pass.
+- [ ] All backend tests pass.
+- [ ] `git status --short` contains only intentional release files.
 
-## Mobile acceptance
+## 3. Deploy the compatible backend first
 
-- [ ] Test new privacy consent, enrolment, profile, and one-disorder setup.
-- [ ] Test two-disorder setup.
-- [ ] Confirm an ordinary launch opens Home, not the rating form.
-- [ ] Confirm manual check-in is available once per local day.
-- [ ] Confirm reminder taps open the form only when today's check-in is
-      incomplete.
-- [ ] Confirm the home screen and reminder stay locked after completion.
-- [ ] Confirm all symptom and wellness selections are required.
-- [ ] Test a successful upload and last-sync status.
-- [ ] Test offline save, pending status, later retry, and one server record.
-- [ ] Test invalid/revoked enrolment messaging and the replacement-code path.
-- [ ] Confirm Reset removes local history and the protected device credential
-      and requires a new code.
-- [ ] Confirm consent is requested again for policy version `2026-07-27`.
-- [ ] Test notification permission, reminder delivery, app foreground,
-      background, reboot, and timezone/date rollover on a physical Android
-      device.
-- [ ] Confirm no real patient data appears in screenshots or logs.
+For the Play review window:
 
-## Signed Android Build 6
+```env
+LATEST_MOBILE_BUILD=7
+MIN_SUPPORTED_MOBILE_BUILD=6
+PUBLIC_BASE_URL=https://tracker.melindapascoeneurology.com
+GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol
+```
 
-- [ ] Run:
+- [ ] Keep the existing production `IDENTITY_SECRET`, `ADMIN_USER`, and
+      `ADMIN_PASSWORD`; do not regenerate them.
+- [ ] Deploy backend `0.7.0`, install dependencies, restart the Windows service,
+      and verify `/health`.
+- [ ] Verify `/api/mobile-config` reports latest 7 and temporary minimum 6.
+- [ ] Verify existing Build 6 submissions still work during this controlled
+      window.
+- [ ] Verify a newly generated clinic-managed code returns update-required in
+      Build 6 and remains usable in Build 7.
 
-  ```powershell
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delivery\build-neurosol-android-build6.ps1
-  ```
+## 4. Configure every existing patient
 
-- [ ] Confirm AAB and APK are version `1.0.0` / code `6`.
-- [ ] Record the SHA-256 hashes.
-- [ ] Install the APK with `adb install -r` on the clinic test device.
-- [ ] Repeat the enrolment, online check-in, offline retry, history, Settings,
-      and notification smoke tests against production.
+- [ ] Open `/admin/enrolments`.
+- [ ] For every real PatientId with an active device, review the suggested
+      profile from the latest accepted entry.
+- [ ] Confirm the clinic display name, one or two disorders, and exactly three
+      symptoms for each; save the profile.
+- [ ] For Dysautonomia confirm the current catalogue includes **Pain** and
+      **Weakness**, not **Shortness of breath** or **Sweating changes**.
+- [ ] Do not create a second identity for an existing patient.
+- [ ] Issue a new-device code only when a patient is reinstalling or replacing
+      a phone.
 
-## Google Play open testing
+## 5. Signed Android Build 7
 
-- [ ] Upload only
-      `delivery\android-build6\NeuroSol-Symptom-Diary-1.0.0-build6.aab`.
-- [ ] Confirm Play App Signing and the organisation developer profile.
-- [ ] Complete the Health apps declaration for the applicable disease/condition
-      management and healthcare service categories.
-- [ ] Complete Data safety for name, health information, PatientId,
-      device/security credential, submission ID, and check-in timing.
-- [ ] Confirm encryption in transit, retention/deletion contact process, no
-      advertising, no sale, and actual infrastructure/provider disclosures.
-- [ ] Enter the public privacy and support URLs.
-- [ ] Complete App access instructions using a dedicated synthetic reviewer
-      identity and a fresh one-time enrolment code.
-- [ ] Complete content rating, target audience, ads declaration, country
-      availability, and store listing.
-- [ ] Upload current Build 6 screenshots and feature graphic.
-- [ ] Add only approved clinic testers or distribute the testing link according
-      to the clinic rollout plan.
-- [ ] Do not create real enrolment codes until backend backup, staff procedure,
-      privacy approval, and incident response are signed off.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delivery\build-neurosol-android-build7.ps1
+```
 
-## Existing Build 5 patients
-
-- [ ] Identify the patient's existing PatientId in the portal.
-- [ ] Issue **New device code** against that PatientId.
-- [ ] Do not use the new-patient form, which would split their history.
-- [ ] Resolve any pending Build 5 uploads before using a code for a different
+- [ ] Record AAB and APK SHA-256 hashes.
+- [ ] Confirm the AAB uses version code 7 and the existing Play signing
       identity.
-- [ ] Confirm historical and new records appear under one support ID.
+- [ ] Upgrade a clinic test phone from Build 6 with `adb install -r`; do not
+      uninstall first for the migration test.
+- [ ] Confirm consent, PatientId, protected token, reminder, history, and queued
+      entries survive the upgrade.
+- [ ] Confirm the app opens Home, not the symptom screen.
+- [ ] Confirm the profile shown in Settings is read-only and reminder time is
+      editable.
+- [ ] Confirm staff profile edits appear after app resume or refresh.
+- [ ] Confirm one manual or notification-started check-in per day.
+- [ ] Confirm exact assigned symptoms are submitted with `ProfileRevision`.
+- [ ] Confirm offline save/retry and a matching queued Build 6 entry.
+- [ ] Confirm invalid, used, expired, wrong-patient, and revoked enrolment
+      behavior.
 
-## iOS follow-up
+## 6. New patient acceptance test
 
-- [ ] Confirm Apple organisation enrolment.
-- [ ] Confirm Keychain Sharing entitlements and protected credential
-      read/write on a physical iPhone.
-- [ ] Build and test `1.0.0+6` on TestFlight.
-- [ ] Complete App Privacy and restricted-app access details consistently with
-      Google Play.
+Use synthetic data only:
+
+- [ ] Create the profile in `/admin/enrolments`.
+- [ ] Select exactly three symptoms per disorder.
+- [ ] Generate the link/code.
+- [ ] Open the HTTPS link and confirm it shows no name, disorder, or symptoms
+      and does not consume the code.
+- [ ] Enrol a clean Build 7 installation with the code.
+- [ ] Confirm the clinic name and assigned symptoms appear on the phone.
+- [ ] Confirm the same code cannot be used again.
+- [ ] Update the profile in the portal and confirm phone synchronisation.
+- [ ] Delete the synthetic patient in `/admin/patients` using the typed Support
+      ID and confirm timestamped backups exist.
+
+## 7. Google Play
+
+- [ ] Upload `delivery\android-build7\NeuroSol-Symptom-Diary-1.0.0-build7.aab`.
+- [ ] Keep reviewer access synthetic and include the reusable reviewer code.
+- [ ] Explain that clinic patients receive one-time codes and reviewer access is
+      a special synthetic credential.
+- [ ] Complete Data safety, account deletion URL, privacy URL, support URL,
+      screenshots, feature graphic, content rating, and organisation details.
+- [ ] Release to internal testing first, then the intended open/production
+      track after acceptance testing.
+- [ ] Notify all clinic users that Build 7 is required.
+
+## 8. Mandatory update switch
+
+Only after Build 7 is available to every intended patient:
+
+```env
+LATEST_MOBILE_BUILD=7
+MIN_SUPPORTED_MOBILE_BUILD=7
+```
+
+- [ ] Change only these values in the protected production `.env`.
+- [ ] Restart the backend service and verify it is Running.
+- [ ] Verify `/health` and `/api/mobile-config`.
+- [ ] Verify a request without `X-NeuroSol-Build: 7` receives HTTP 426.
+- [ ] Verify Build 7 enrolment, profile sync, and a synthetic submission.
+- [ ] Leave minimum build at 7. Any temporary rollback to 6 requires an
+      incident decision and a documented reason.
+
+## 9. Post-release
+
+- [ ] Monitor service health, HTTP 401/409/426/5xx rates, pending-upload support
+      reports, disk space, and backups.
+- [ ] Confirm no real patient remains in `profile_not_configured`.
+- [ ] Remove or rotate temporary Play reviewer access when review is complete.
+- [ ] Retain the signed artifacts, hashes, commit SHA, store release record, and
+      acceptance-test evidence in the clinic release record.

@@ -1,6 +1,11 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const {
+  normaliseClinicalProfile,
+  reviewClinicalProfile,
+  sameClinicalProfile,
+} = require('./clinical_profiles');
 
 const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -38,7 +43,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
 
   function emptyStore() {
     return {
-      version: 1,
+      version: 2,
       patients: {},
       enrolmentCodes: {},
       devices: {},
@@ -58,6 +63,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     return {
       ...emptyStore(),
       ...parsed,
+      version: Math.max(Number(parsed.version) || 1, 2),
       patients: parsed.patients || {},
       enrolmentCodes: parsed.enrolmentCodes || {},
       devices: parsed.devices || {},
@@ -85,18 +91,73 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     return `pt-${crypto.randomUUID()}`;
   }
 
-  function issueEnrolmentCode({
-    patientId = '',
-    displayName = '',
-    expiresInDays = 7,
-  }) {
-    const store = readStore();
+  function validatePatientIdentity(patientId, displayName) {
     const id = String(patientId || '').trim() || createPatientId();
     const name = String(displayName || '').trim();
     if (!name || name.length > 160) {
       throw new Error('A patient display name is required.');
     }
     if (id.length > 120) throw new Error('PatientId is invalid.');
+    return { id, name };
+  }
+
+  function saveClinicalProfile({
+    patientId = '',
+    displayName = '',
+    clinicalProfile = {},
+  }) {
+    const { id, name } = validatePatientIdentity(patientId, displayName);
+    const profile = normaliseClinicalProfile(clinicalProfile);
+    const store = readStore();
+    const savedAt = now().toISOString();
+    const existing = store.patients[id];
+    const previousProfile = existing?.clinicalProfile || null;
+    const changed = !previousProfile ||
+      !sameClinicalProfile(previousProfile, profile);
+    const revision = changed
+      ? Number(previousProfile?.revision || 0) + 1
+      : Number(previousProfile.revision);
+    const savedProfile = changed
+      ? {
+          ...profile,
+          revision,
+          updatedAt: savedAt,
+        }
+      : previousProfile;
+    const history = Array.isArray(existing?.clinicalProfileHistory)
+      ? [...existing.clinicalProfileHistory]
+      : previousProfile
+      ? [previousProfile]
+      : [];
+    if (changed) history.push(savedProfile);
+
+    store.patients[id] = {
+      ...existing,
+      patientId: id,
+      displayName: name,
+      createdAt: existing?.createdAt || savedAt,
+      updatedAt: savedAt,
+      clinicalProfile: savedProfile,
+      clinicalProfileHistory: history,
+    };
+    writeStore(store);
+
+    return {
+      patientId: id,
+      displayName: name,
+      supportId: supportId(id),
+      clinicalProfile: savedProfile,
+    };
+  }
+
+  function issueEnrolmentCode({
+    patientId = '',
+    displayName = '',
+    expiresInDays = 7,
+    requireClinicalProfile = false,
+  }) {
+    const store = readStore();
+    const { id, name } = validatePatientIdentity(patientId, displayName);
 
     const issuedAt = now();
     const expiresAt = new Date(
@@ -110,7 +171,13 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     } while (store.enrolmentCodes[codeHash]);
 
     const existing = store.patients[id];
+    if (requireClinicalProfile && !existing?.clinicalProfile) {
+      throw new Error(
+        'Configure the patient’s clinical profile before issuing a code.',
+      );
+    }
     store.patients[id] = {
+      ...existing,
       patientId: id,
       displayName: name,
       createdAt: existing?.createdAt || issuedAt.toISOString(),
@@ -121,6 +188,8 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
       createdAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
       usedAt: null,
+      clinicManaged: Boolean(existing?.clinicalProfile),
+      profileRevision: existing?.clinicalProfile?.revision || null,
     };
     writeStore(store);
 
@@ -130,10 +199,17 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
       code: formatCode(compactCode),
       expiresAt: expiresAt.toISOString(),
       supportId: supportId(id),
+      clinicalProfile: existing?.clinicalProfile || null,
     };
   }
 
-  function redeemEnrolmentCode(value, { expectedPatientId = '' } = {}) {
+  function redeemEnrolmentCode(
+    value,
+    {
+      expectedPatientId = '',
+      supportsClinicManagedProfile = false,
+    } = {},
+  ) {
     const compactCode = normaliseCode(value);
     if (compactCode.length !== 12) return { status: 'invalid' };
 
@@ -152,6 +228,9 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
 
     const patient = store.patients[record.patientId];
     if (!patient) return { status: 'invalid' };
+    if (patient.clinicalProfile && !supportsClinicManagedProfile) {
+      return { status: 'upgrade_required' };
+    }
 
     const accessToken = crypto.randomBytes(32).toString('base64url');
     const tokenHash = digest('device-token', accessToken);
@@ -174,6 +253,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
       patientId: record.patientId,
       displayName: patient.displayName,
       supportId: supportId(record.patientId),
+      clinicalProfile: patient.clinicalProfile || null,
     };
   }
 
@@ -193,12 +273,34 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     const store = readStore();
     const enrolledAt = now().toISOString();
     const existing = store.patients[id];
+    const normalisedReviewProfile = normaliseClinicalProfile(
+      reviewClinicalProfile,
+    );
+    const previousProfile = existing?.clinicalProfile;
+    const changed = !previousProfile ||
+      !sameClinicalProfile(previousProfile, normalisedReviewProfile);
+    const clinicalProfile = changed
+      ? {
+          ...normalisedReviewProfile,
+          revision: Number(previousProfile?.revision || 0) + 1,
+          updatedAt: enrolledAt,
+        }
+      : previousProfile;
+    const history = Array.isArray(existing?.clinicalProfileHistory)
+      ? [...existing.clinicalProfileHistory]
+      : previousProfile
+      ? [previousProfile]
+      : [];
+    if (changed) history.push(clinicalProfile);
     store.patients[id] = {
+      ...existing,
       patientId: id,
       displayName: name,
       createdAt: existing?.createdAt || enrolledAt,
       updatedAt: enrolledAt,
       reviewIdentity: true,
+      clinicalProfile,
+      clinicalProfileHistory: history,
     };
 
     const accessToken = crypto.randomBytes(32).toString('base64url');
@@ -221,6 +323,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
       patientId: id,
       displayName: name,
       supportId: supportId(id),
+      clinicalProfile,
     };
   }
 
@@ -272,16 +375,59 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     writeStore(store);
   }
 
+  function patientClinicalProfile(patientId, revision = null) {
+    const id = String(patientId || '').trim();
+    const patient = readStore().patients[id];
+    if (!patient) return null;
+    if (revision == null) return patient.clinicalProfile || null;
+    const history = Array.isArray(patient.clinicalProfileHistory)
+      ? patient.clinicalProfileHistory
+      : patient.clinicalProfile
+      ? [patient.clinicalProfile]
+      : [];
+    return history.find(
+      profile => Number(profile.revision) === Number(revision),
+    ) || null;
+  }
+
+  function deletePatient(patientId) {
+    const id = String(patientId || '').trim();
+    const store = readStore();
+    if (!id || !store.patients[id]) {
+      return { deleted: false, codes: 0, devices: 0 };
+    }
+    delete store.patients[id];
+    let codes = 0;
+    let devices = 0;
+    for (const [codeHash, record] of Object.entries(store.enrolmentCodes)) {
+      if (record.patientId === id) {
+        delete store.enrolmentCodes[codeHash];
+        codes++;
+      }
+    }
+    for (const [tokenHash, device] of Object.entries(store.devices)) {
+      if (device.patientId === id) {
+        delete store.devices[tokenHash];
+        devices++;
+      }
+    }
+    writeStore(store);
+    return { deleted: true, codes, devices };
+  }
+
   function snapshot() {
     return readStore();
   }
 
   return {
     identityPath,
+    deletePatient,
     issueEnrolmentCode,
+    saveClinicalProfile,
     redeemEnrolmentCode,
     enrolReusableReviewDevice,
     authenticate,
+    patientClinicalProfile,
     revokePatientDevices,
     updatePatientDisplayName,
     snapshot,

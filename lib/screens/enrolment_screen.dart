@@ -3,10 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../models/patient_profile.dart';
 import '../services/identity_service.dart';
+import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import 'home_screen.dart';
-import 'profile_screen.dart';
 
 class EnrolmentScreen extends StatefulWidget {
   final PatientProfile? existingProfile;
@@ -50,33 +50,41 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
             'This code belongs to a different clinic record while unsent check-ins remain on this phone. Contact the clinic before continuing.',
           );
         }
-
-        final updated = existing.copyWith(
-          patientId: result.patientId,
-          fullName: existing.fullName.trim().isEmpty
-              ? result.displayName
-              : existing.fullName,
-        );
-        await StorageService.saveProfile(updated);
-        await UploadService.retryPendingUploads();
-        if (!mounted) return;
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => HomeScreen(profile: updated)),
-          (_) => false,
-        );
-        return;
       }
 
+      final profile = result.profile.copyWith(
+        reminderTime:
+            existing?.reminderTime ?? const TimeOfDay(hour: 19, minute: 0),
+      );
+      await StorageService.saveProfile(profile);
+      var permissionGranted = false;
+      try {
+        permissionGranted = await NotificationService.requestPermission();
+        if (permissionGranted) {
+          await NotificationService.scheduleDailyReminder(
+            hour: profile.reminderTime.hour,
+            minute: profile.reminderTime.minute,
+            skipToday: await StorageService.hasSubmittedToday(),
+          );
+        }
+      } catch (_) {
+        // Enrolment and the clinic profile remain valid if notifications fail.
+      }
+      await UploadService.retryPendingUploads();
       if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ProfileScreen(
-            enrolledPatientId: result.patientId,
-            initialFullName: result.displayName,
+      if (!permissionGranted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Clinic profile saved. Notifications are disabled and can be enabled in phone settings.',
+            ),
           ),
-        ),
+        );
+      }
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => HomeScreen(profile: profile)),
+        (_) => false,
       );
     } on EnrolmentException catch (error) {
       if (!mounted) return;
@@ -111,7 +119,7 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
             Text(
               replacing
                   ? 'Ask Pascoe Neurology for a new one-time enrolment code for your existing clinic record.'
-                  : 'Pascoe Neurology will give you a one-time enrolment code. It securely links this diary to the correct clinic record.',
+                  : 'Dr Pascoe or clinic staff will create your profile and give you a one-time enrolment link or code. It securely links this diary to the correct clinic record.',
               style: Theme.of(context).textTheme.bodyLarge,
             ),
             if (replacing) ...[

@@ -3,7 +3,7 @@ import '../models/patient_profile.dart';
 
 class CsvService {
   static const header =
-      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,PatientId';
+      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,PatientId,ProfileRevision';
 
   static DailyEntry generateDailyEntry({
     required PatientProfile profile,
@@ -13,6 +13,11 @@ class CsvService {
     if (profile.patientId.trim().isEmpty) {
       throw StateError(
         'Clinic enrolment is required before recording a check-in.',
+      );
+    }
+    if (!profile.isClinicManaged) {
+      throw StateError(
+        'The clinic-assigned profile must be synchronised before recording a check-in.',
       );
     }
     final now = DateTime.now();
@@ -59,6 +64,7 @@ class CsvService {
       time: time,
       patientName: profile.fullName,
       patientId: profile.patientId,
+      profileRevision: profile.profileRevision,
       records: records,
       wellnessPercent: wellnessPercent,
     );
@@ -77,6 +83,7 @@ class CsvService {
         record.score,
         entry.wellnessPercent,
         _escape(entry.patientId),
+        entry.profileRevision,
       ].join(',');
     }).toList();
   }
@@ -84,7 +91,9 @@ class CsvService {
   static String buildCsv(List<String> rows) {
     final normalisedRows = rows.map((row) {
       final columns = _columnCount(row);
-      return columns == 9 ? '$row,' : row;
+      if (columns == 9) return '$row,,';
+      if (columns == 10) return '$row,';
+      return row;
     });
     return [header, ...normalisedRows].join('\n');
   }

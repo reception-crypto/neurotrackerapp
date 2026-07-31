@@ -17,10 +17,10 @@ const Map<String, List<String>> disorderSymptoms = {
     'Palpitations',
     'Fatigue',
     'Brain fog',
-    'Shortness of breath',
+    'Pain',
+    'Weakness',
     'Exercise intolerance',
     'Nausea',
-    'Sweating changes',
     'Temperature intolerance',
   ],
   'CIDP': [

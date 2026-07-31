@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class PrivacyScreen extends StatelessWidget {
   const PrivacyScreen({super.key});
 
-  static const String policyVersion = '2026-07-27';
+  static const String policyVersion = '2026-07-31';
 
   @override
   Widget build(BuildContext context) {
@@ -15,17 +15,17 @@ class PrivacyScreen extends StatelessWidget {
           _PolicySection(
             title: 'Purpose of the app',
             body:
-                'NeuroSol Symptom Diary allows patients to record selected neurological symptoms and an overall wellness score for review by Pascoe Neurology as part of their clinical care.',
+                'NeuroSol Symptom Diary allows patients to record clinic-assigned neurological symptoms and an overall wellness score for review by Pascoe Neurology as part of their clinical care.',
           ),
           _PolicySection(
             title: 'Information collected',
             body:
-                'The app records your name, selected neurological condition, chosen symptoms, symptom scores, wellness score, check-in date and time, a clinic-issued patient identifier, and a protected device credential used to associate submissions with the correct clinic record and prevent duplicates.',
+                'The app receives your name, neurological condition, and selected symptoms from the clinic. It records that assigned profile, symptom scores, wellness score, check-in date and time, a clinic-issued patient identifier, and a protected device credential used to associate submissions with the correct clinic record and prevent duplicates.',
           ),
           _PolicySection(
             title: 'Storage and transmission',
             body:
-                'Your profile and check-in history are stored on this device. The device credential is kept in protected operating-system storage. Check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
+                'Your clinic-assigned profile and check-in history are stored on this device. The device credential is kept in protected operating-system storage. Profile updates and check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
           ),
           _PolicySection(
             title: 'How information is used',

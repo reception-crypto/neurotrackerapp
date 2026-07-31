@@ -13,6 +13,8 @@ enum UploadResult {
   enrolmentRequired,
   networkUnavailable,
   unauthorized,
+  updateRequired,
+  profileRefreshRequired,
   dailyAlreadyRecorded,
   rejected,
   serverUnavailable,
@@ -33,6 +35,10 @@ extension UploadResultMessage on UploadResult {
       'No connection is currently available. The check-in will retry automatically.',
     UploadResult.unauthorized =>
       'This phone is no longer authorised. Contact the clinic for a new enrolment code.',
+    UploadResult.updateRequired =>
+      'Update NeuroSol Symptom Diary to the newest version before this check-in can be sent.',
+    UploadResult.profileRefreshRequired =>
+      'The clinic-assigned profile has changed. Return to the home screen while online to synchronise it.',
     UploadResult.dailyAlreadyRecorded =>
       'The clinic already has a check-in for this patient today. Contact the clinic if it needs to be corrected.',
     UploadResult.rejected =>
@@ -72,8 +78,10 @@ class UploadService {
           .post(
             uri,
             headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $accessToken',
+              ...IdentityService.mobileHeaders(
+                json: true,
+                accessToken: accessToken,
+              ),
             },
             body: jsonEncode(entry.toApiJson()),
           )
@@ -86,6 +94,9 @@ class UploadService {
       if (response.statusCode == 401 || response.statusCode == 403) {
         return UploadResult.unauthorized;
       }
+      if (response.statusCode == 426) {
+        return UploadResult.updateRequired;
+      }
       if (response.statusCode == 409) {
         try {
           final body = Map<String, dynamic>.from(
@@ -93,6 +104,12 @@ class UploadService {
           );
           if (body['code'] == 'daily_submission_exists') {
             return UploadResult.dailyAlreadyRecorded;
+          }
+          if (body['code'] == 'profile_revision_required' ||
+              body['code'] == 'profile_revision_unknown' ||
+              body['code'] == 'profile_not_configured' ||
+              body['code'] == 'assigned_profile_mismatch') {
+            return UploadResult.profileRefreshRequired;
           }
         } catch (_) {
           // Treat an unrecognised conflict as a general rejected submission.

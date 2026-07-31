@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../app_identity.dart';
 import '../models/patient_profile.dart';
+import '../services/clinic_profile_service.dart';
+import '../services/identity_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import '../theme/app_theme.dart';
 import 'daily_symptom_screen.dart';
+import 'enrolment_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
+import 'startup_blocked_screen.dart';
+import 'startup_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final PatientProfile profile;
@@ -47,8 +52,92 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadStatus() async {
-    final profile = await StorageService.loadProfile();
+  Future<void> _loadStatus({bool syncClinicProfile = true}) async {
+    var profile = await StorageService.loadProfile();
+    final storedProfile = profile;
+    if (syncClinicProfile &&
+        storedProfile != null &&
+        await IdentityService.hasAccessToken()) {
+      var activeProfile = storedProfile;
+      try {
+        final configuration =
+            await ClinicProfileService.fetchMobileConfiguration();
+        if (configuration.updateRequired) {
+          if (!mounted) return;
+          _replaceAll(
+            RequiredUpdateScreen(
+              googlePlayUrl: configuration.googlePlayUrl,
+              appStoreUrl: configuration.appStoreUrl,
+            ),
+          );
+          return;
+        }
+      } on ClinicProfileException catch (error) {
+        if (error.failure == ClinicProfileFailure.updateRequired) {
+          if (!mounted) return;
+          _replaceAll(
+            RequiredUpdateScreen(
+              googlePlayUrl: error.googlePlayUrl,
+              appStoreUrl: error.appStoreUrl,
+            ),
+          );
+          return;
+        }
+        // Continue with the last valid clinic profile while offline.
+      }
+      try {
+        activeProfile = await ClinicProfileService.fetchAssignedProfile(
+          activeProfile,
+        );
+        await StorageService.saveProfile(activeProfile);
+        profile = activeProfile;
+      } on ClinicProfileException catch (error) {
+        if (!mounted) return;
+        switch (error.failure) {
+          case ClinicProfileFailure.updateRequired:
+            _replaceAll(
+              RequiredUpdateScreen(
+                googlePlayUrl: error.googlePlayUrl,
+                appStoreUrl: error.appStoreUrl,
+              ),
+            );
+            return;
+          case ClinicProfileFailure.enrolmentRequired:
+            _replaceAll(EnrolmentScreen(existingProfile: activeProfile));
+            return;
+          case ClinicProfileFailure.profileNotConfigured:
+          case ClinicProfileFailure.invalidResponse:
+            _replaceAll(
+              ClinicSetupRequiredScreen(
+                profile: activeProfile,
+                message: error.patientMessage,
+                onRetry: (blockedContext) => Navigator.pushAndRemoveUntil(
+                  blockedContext,
+                  MaterialPageRoute(builder: (_) => const StartupScreen()),
+                  (_) => false,
+                ),
+              ),
+            );
+            return;
+          case ClinicProfileFailure.networkUnavailable:
+            if (!activeProfile.isClinicManaged) {
+              _replaceAll(
+                ClinicSetupRequiredScreen(
+                  profile: activeProfile,
+                  message:
+                      'Connect to the internet so this phone can receive the clinic-assigned profile.',
+                  onRetry: (blockedContext) => Navigator.pushAndRemoveUntil(
+                    blockedContext,
+                    MaterialPageRoute(builder: (_) => const StartupScreen()),
+                    (_) => false,
+                  ),
+                ),
+              );
+              return;
+            }
+        }
+      }
+    }
     final completedToday = await StorageService.hasSubmittedToday();
     final pendingUploads = await StorageService.pendingCount();
     final lastSync = await StorageService.lastSuccessfulSync();
@@ -64,8 +153,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _refresh() async {
-    await UploadService.retryPendingUploads();
     await _loadStatus();
+    await UploadService.retryPendingUploads();
+    await _loadStatus(syncClinicProfile: false);
+  }
+
+  void _replaceAll(Widget screen) {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => screen),
+      (_) => false,
+    );
   }
 
   Future<void> _startCheckIn() async {

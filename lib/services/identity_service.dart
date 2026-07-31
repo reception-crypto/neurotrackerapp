@@ -1,16 +1,20 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../app_identity.dart';
+import '../models/patient_profile.dart';
 import 'api_config.dart';
 
 class EnrolmentResult {
-  final String patientId;
-  final String displayName;
+  final PatientProfile profile;
 
-  const EnrolmentResult({required this.patientId, required this.displayName});
+  const EnrolmentResult({required this.profile});
+
+  String get patientId => profile.patientId;
+  String get displayName => profile.fullName;
 }
 
 class EnrolmentException implements Exception {
@@ -31,6 +35,19 @@ class IdentityService {
 
   @visibleForTesting
   static String? accessTokenForTesting;
+
+  static bool get usesInMemoryStorage => useInMemoryStorageForTesting;
+
+  static Map<String, String> mobileHeaders({
+    bool json = false,
+    String? accessToken,
+  }) => {
+    if (json) 'Content-Type': 'application/json',
+    'X-NeuroSol-Build': '$appBuildNumber',
+    'X-NeuroSol-Profile': clinicProfileProtocol,
+    if (accessToken?.trim().isNotEmpty == true)
+      'Authorization': 'Bearer ${accessToken!.trim()}',
+  };
 
   static Future<String?> readAccessToken() async {
     if (useInMemoryStorageForTesting) return accessTokenForTesting;
@@ -98,7 +115,7 @@ class IdentityService {
       response = await http
           .post(
             uri,
-            headers: const {'Content-Type': 'application/json'},
+            headers: mobileHeaders(json: true),
             body: jsonEncode({
               'code': normalisedCode,
               if (expectedPatientId?.trim().isNotEmpty == true)
@@ -122,10 +139,20 @@ class IdentityService {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       final patientId = (body['patientId'] as String?)?.trim() ?? '';
       final accessToken = (body['accessToken'] as String?)?.trim() ?? '';
-      final displayName = (body['displayName'] as String?)?.trim() ?? '';
       if (patientId.isEmpty || accessToken.isEmpty) {
         throw const EnrolmentException(
           'The clinic returned an incomplete enrolment response.',
+        );
+      }
+      late PatientProfile profile;
+      try {
+        profile = PatientProfile.fromClinicResponse(
+          body,
+          reminderTime: const TimeOfDay(hour: 19, minute: 0),
+        );
+      } catch (_) {
+        throw const EnrolmentException(
+          'The clinic returned an incomplete clinical profile. Ask the clinic to review your enrolment.',
         );
       }
       try {
@@ -135,9 +162,14 @@ class IdentityService {
           'The code was accepted, but this phone could not protect its clinic credential. Contact the clinic for a replacement code.',
         );
       }
-      return EnrolmentResult(patientId: patientId, displayName: displayName);
+      return EnrolmentResult(profile: profile);
     }
 
+    if (response.statusCode == 426 || body['code'] == 'app_update_required') {
+      throw const EnrolmentException(
+        'Update NeuroSol Symptom Diary to the newest version before enrolling this phone.',
+      );
+    }
     if (response.statusCode == 400 ||
         response.statusCode == 404 ||
         response.statusCode == 410) {

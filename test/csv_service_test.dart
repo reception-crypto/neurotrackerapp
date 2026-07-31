@@ -12,6 +12,7 @@ void main() {
       primaryDisorder: 'Migraine',
       primarySymptoms: ['Headache', 'Nausea', 'Vomiting'],
       reminderTime: TimeOfDay(hour: 19, minute: 0),
+      profileRevision: 4,
     );
 
     expect(profile.supportId, 'NS-5678-ABCD-90EF');
@@ -24,6 +25,7 @@ void main() {
       date: '2026-07-27',
       time: '19:00',
       patientName: 'Synthetic Patient',
+      profileRevision: 4,
       records: [
         SymptomScoreRecord(
           track: 'Primary',
@@ -37,8 +39,8 @@ void main() {
 
     final csv = CsvService.buildCsv(CsvService.rowsFromEntry(entry));
 
-    expect(csv.split('\n').first, endsWith(',PatientId'));
-    expect(csv.split('\n').last, endsWith(',pt-clinic-123'));
+    expect(csv.split('\n').first, endsWith(',PatientId,ProfileRevision'));
+    expect(csv.split('\n').last, endsWith(',pt-clinic-123,4'));
   });
 
   test('legacy Build 5 CSV rows remain aligned with a blank PatientId', () {
@@ -47,7 +49,7 @@ void main() {
 
     final csv = CsvService.buildCsv([legacyRow]);
 
-    expect(csv.split('\n').last, endsWith(',80,'));
+    expect(csv.split('\n').last, endsWith(',80,,'));
   });
 
   test('a check-in cannot be generated before clinic enrolment', () {
@@ -71,5 +73,48 @@ void main() {
       ),
       throwsStateError,
     );
+  });
+
+  test('a check-in requires a synchronised clinic profile revision', () {
+    const profile = PatientProfile(
+      patientId: 'pt-legacy-profile',
+      fullName: 'Synthetic Patient',
+      primaryDisorder: 'Migraine',
+      primarySymptoms: ['Headache', 'Nausea', 'Vomiting'],
+      reminderTime: TimeOfDay(hour: 19, minute: 0),
+    );
+
+    expect(
+      () => CsvService.generateDailyEntry(
+        profile: profile,
+        symptomScores: const {
+          'Primary|Migraine|Headache': 1,
+          'Primary|Migraine|Nausea': 2,
+          'Primary|Migraine|Vomiting': 3,
+        },
+        wellnessPercent: 70,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('clinic response becomes a versioned local profile', () {
+    final profile = PatientProfile.fromClinicResponse({
+      'patientId': 'pt-clinic-profile',
+      'displayName': 'Clinic Name',
+      'clinicalProfile': {
+        'primaryDisorder': 'Dysautonomia',
+        'primarySymptoms': ['Dizziness', 'Pain', 'Weakness'],
+        'secondaryDisorder': null,
+        'secondarySymptoms': <String>[],
+        'revision': 3,
+      },
+    }, reminderTime: const TimeOfDay(hour: 18, minute: 30));
+
+    expect(profile.fullName, 'Clinic Name');
+    expect(profile.primarySymptoms, ['Dizziness', 'Pain', 'Weakness']);
+    expect(profile.profileRevision, 3);
+    expect(profile.reminderTime, const TimeOfDay(hour: 18, minute: 30));
+    expect(profile.isClinicManaged, isTrue);
   });
 }

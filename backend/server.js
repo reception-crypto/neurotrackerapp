@@ -8,9 +8,16 @@ const basicAuth = require('basic-auth');
 const PDFDocument = require('pdfkit');
 const {
   createIdentityStore,
+  formatCode,
   normaliseCode,
   supportId,
 } = require('./identity_store');
+const {
+  normaliseClinicalProfile,
+  recordsMatchClinicalProfile,
+  symptomCatalog,
+  values,
+} = require('./clinical_profiles');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -30,11 +37,24 @@ const reviewPatientIdPrefix = String(
 const reviewDisplayName = String(
   process.env.REVIEW_DISPLAY_NAME || '',
 ).trim();
+const latestMobileBuild = Number(process.env.LATEST_MOBILE_BUILD || 7);
+const minimumMobileBuild = Number(
+  process.env.MIN_SUPPORTED_MOBILE_BUILD || latestMobileBuild,
+);
+const publicBaseUrl = String(
+  process.env.PUBLIC_BASE_URL ||
+    'https://tracker.melindapascoeneurology.com',
+).replace(/\/+$/, '');
+const googlePlayUrl = String(
+  process.env.GOOGLE_PLAY_URL ||
+    'https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol',
+).trim();
+const appStoreUrl = String(process.env.APP_STORE_URL || '').trim();
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
 const identityStore = createIdentityStore({ dataDir, secret: identitySecret });
 
-const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId'];
+const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision'];
 
 const reviewConfigurationPresent = Boolean(
   reviewEnrolmentCode || reviewPatientIdPrefix || reviewDisplayName,
@@ -51,6 +71,18 @@ if (!reviewConfigurationValid) {
   throw new Error(
     'Google Play review access requires a 12-character code, a ' +
     'pt-review- PatientId prefix, and a display name.',
+  );
+}
+
+if (
+  !Number.isInteger(latestMobileBuild) ||
+  !Number.isInteger(minimumMobileBuild) ||
+  latestMobileBuild < 7 ||
+  minimumMobileBuild < 6 ||
+  minimumMobileBuild > latestMobileBuild
+) {
+  throw new Error(
+    'LATEST_MOBILE_BUILD and MIN_SUPPORTED_MOBILE_BUILD are invalid.',
   );
 }
 
@@ -140,7 +172,7 @@ function validClinicalLabel(value, maximumLength = 160) {
     !/[\u0000-\u001f\u007f]/.test(text);
 }
 
-function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '') {
+function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '', profileRevision = '') {
   if (!looksLikeDate(date) || !patient || !disorder || !symptom || !validScore(score)) return null;
   return {
     ReceivedAt: receivedAt || `${date}T${time || '00:00'}:00`,
@@ -154,6 +186,7 @@ function normalisedRecord(receivedAt, date, time, patient, track, disorder, symp
     WellnessPercent: validWellness(wellness) ? String(Number(wellness)) : '',
     SubmissionId: String(submissionId || ''),
     PatientId: String(patientId || ''),
+    ProfileRevision: String(profileRevision || ''),
   };
 }
 
@@ -197,6 +230,13 @@ function normaliseCsvRows(parsed) {
     if (!values.some(v => String(v || '').trim())) continue;
 
     // Current schema with stable submission and patient identifiers.
+    if (values.length === 12 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
+      const record = normalisedRecord(...values.slice(0, 12));
+      if (record) normalised.push(record);
+      continue;
+    }
+
+    // Build 6 schema without a clinical profile revision.
     if (values.length === 11 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
       const record = normalisedRecord(...values.slice(0, 11));
       if (record) normalised.push(record);
@@ -233,7 +273,7 @@ function normaliseCsvRows(parsed) {
       const record = normalisedRecord(
         get('ReceivedAt'), get('Date'), get('Time'), get('Patient'), get('Track'),
         get('Disorder'), get('Symptom'), get('Score'), get('WellnessPercent'),
-        get('SubmissionId'), get('PatientId'),
+        get('SubmissionId'), get('PatientId'), get('ProfileRevision'),
       );
       if (record) normalised.push(record);
       continue;
@@ -253,6 +293,16 @@ function serialiseNormalisedRows(rows) {
     lines.push(csvColumns.map(column => escapeCsv(row[column] || '')).join(','));
   }
   return lines.join('\n') + '\n';
+}
+
+function writeCsvAtomically(rows) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const temporaryPath = `${csvPath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(temporaryPath, serialiseNormalisedRows(rows), {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  fs.renameSync(temporaryPath, csvPath);
 }
 
 function repairCsvIfNeeded() {
@@ -288,6 +338,35 @@ function readRows() {
 function bearerToken(req) {
   const header = String(req.header('authorization') || '');
   return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+function mobileBuild(req) {
+  const supplied = Number(req.header('x-neurosol-build'));
+  return Number.isInteger(supplied) && supplied > 0 ? supplied : 6;
+}
+
+function supportsClinicManagedProfile(req) {
+  return mobileBuild(req) >= 7 &&
+    req.header('x-neurosol-profile') === 'clinic-managed-v1';
+}
+
+function sendUpdateRequired(res, requiredBuild = minimumMobileBuild) {
+  res.set('Cache-Control', 'no-store');
+  return res.status(426).json({
+    error: 'This version of NeuroSol Symptom Diary is no longer supported.',
+    code: 'app_update_required',
+    minimumBuild: requiredBuild,
+    latestBuild: latestMobileBuild,
+    googlePlayUrl,
+    appStoreUrl: appStoreUrl || undefined,
+  });
+}
+
+function requireSupportedMobileBuild(req, res, next) {
+  if (mobileBuild(req) < minimumMobileBuild) {
+    return sendUpdateRequired(res);
+  }
+  next();
 }
 
 function matchesReviewEnrolmentCode(value) {
@@ -378,6 +457,18 @@ function patientDirectory(rows) {
         label: isLegacy ? `${displayName} (legacy record)` : `${displayName} (${shortId})`,
       });
     }
+  }
+  const patients = identityStore.snapshot().patients;
+  for (const [patientId, patient] of Object.entries(patients)) {
+    const current = directory.get(patientId);
+    if (!current || !patient.displayName) continue;
+    const shortId = supportId(patientId);
+    directory.set(patientId, {
+      ...current,
+      displayName: patient.displayName,
+      supportId: shortId,
+      label: `${patient.displayName} (${shortId})`,
+    });
   }
   return directory;
 }
@@ -705,7 +796,7 @@ function pageShell(title, body) {
     .calendar-date{top:4px;left:5px;font-size:9px}
     .calendar-dot{transform:scale(.75)}
   }
-  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
+  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
 }
 
 repairCsvIfNeeded();
@@ -713,6 +804,48 @@ app.use(express.json({limit:'256kb'}));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
 app.get('/health',(req,res)=>res.json({ok:true,storage:'csv'}));
+app.get('/api/mobile-config',(req,res)=>{
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    minimumBuild: minimumMobileBuild,
+    latestBuild: latestMobileBuild,
+    googlePlayUrl,
+    appStoreUrl: appStoreUrl || undefined,
+    clinicManagedProfiles: true,
+  });
+});
+
+app.get('/enrol',(req,res)=>{
+  res.set({
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  });
+  const storeButtons = [
+    googlePlayUrl
+      ? `<a class="button" href="${html(googlePlayUrl)}" rel="noreferrer">Get the Android app</a>`
+      : '',
+    appStoreUrl
+      ? `<a class="button secondary" href="${html(appStoreUrl)}" rel="noreferrer">Get the iPhone app</a>`
+      : '',
+  ].filter(Boolean).join('');
+  return res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NeuroSol enrolment</title><style>
+    :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f3f4f6;color:#111827;font-family:Inter,Segoe UI,Arial,sans-serif}.card{max-width:620px;margin:8vh auto;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(15,23,42,.08)}h1{margin-top:0}.code{font:800 clamp(22px,7vw,34px) Consolas,monospace;letter-spacing:.06em;padding:18px;background:#eff6ff;border:2px solid #2563eb;border-radius:12px;text-align:center}.actions{display:grid;gap:10px;margin-top:20px}.button,button{display:block;width:100%;padding:12px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-size:16px;font-weight:700;text-decoration:none;text-align:center;cursor:pointer}.secondary{background:#374151}.muted{color:#4b5563;font-size:14px}@media(max-width:680px){.card{margin:0;min-height:100vh;border:0;border-radius:0;padding:22px}}</style></head><body><main class="card">
+      <h1>NeuroSol Symptom Diary</h1>
+      <p>Your clinic has prepared your symptom diary. Install or update to the newest app, then enter this one-time code:</p>
+      <div class="code" id="code">Checking link…</div>
+      <div class="actions"><button type="button" id="copyButton">Copy enrolment code</button>${storeButtons}</div>
+      <p class="muted">For privacy, this page does not show your name or clinical profile. Opening this link does not use the code. The code is used only when you submit it inside the app.</p>
+    </main><script>
+      const compact = location.hash.slice(1).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const code = compact.length === 12 ? compact.match(/.{1,4}/g).join('-') : '';
+      document.getElementById('code').textContent = code || 'Invalid link — ask the clinic for a new code';
+      document.getElementById('copyButton').disabled = !code;
+      document.getElementById('copyButton').addEventListener('click', () => navigator.clipboard.writeText(code));
+    </script></body></html>`);
+});
 
 const enrolmentAttempts = new Map();
 function limitEnrolmentAttempts(req, res, next) {
@@ -740,7 +873,11 @@ function recordFailedEnrolment(req) {
   enrolmentAttempts.set(key, attempts);
 }
 
-app.post('/api/enrol',limitEnrolmentAttempts,(req,res)=>{
+app.post(
+  '/api/enrol',
+  limitEnrolmentAttempts,
+  requireSupportedMobileBuild,
+  (req,res)=>{
   res.set('Cache-Control', 'no-store');
   if (matchesReviewEnrolmentCode(req.body?.code)) {
     const expectedPatientId = String(
@@ -767,10 +904,12 @@ app.post('/api/enrol',limitEnrolmentAttempts,(req,res)=>{
       displayName: reviewIdentity.displayName,
       supportId: reviewIdentity.supportId,
       accessToken: reviewIdentity.accessToken,
+      clinicalProfile: reviewIdentity.clinicalProfile,
     });
   }
   const result = identityStore.redeemEnrolmentCode(req.body?.code, {
     expectedPatientId: req.body?.expectedPatientId,
+    supportsClinicManagedProfile: supportsClinicManagedProfile(req),
   });
   if (result.status === 'ok') {
     return res.status(200).json({
@@ -778,9 +917,13 @@ app.post('/api/enrol',limitEnrolmentAttempts,(req,res)=>{
       displayName: result.displayName,
       supportId: result.supportId,
       accessToken: result.accessToken,
+      clinicalProfile: result.clinicalProfile,
     });
   }
   recordFailedEnrolment(req);
+  if (result.status === 'upgrade_required') {
+    return sendUpdateRequired(res, 7);
+  }
   if (result.status === 'patient_mismatch') {
     return res.status(409).json({
       error: 'The enrolment code belongs to a different clinic record.',
@@ -799,12 +942,45 @@ app.post('/api/enrol',limitEnrolmentAttempts,(req,res)=>{
   });
 });
 
-app.post('/api/symptom-entry',requireDeviceIdentity,(req,res)=>{
+app.get(
+  '/api/profile',
+  requireDeviceIdentity,
+  requireSupportedMobileBuild,
+  (req,res)=>{
+    const patient = req.deviceIdentity.patient;
+    if (!patient?.clinicalProfile) {
+      return res.status(409).json({
+        error: 'The clinic has not configured this patient profile.',
+        code: 'profile_not_configured',
+        supportId: supportId(req.deviceIdentity.patientId),
+      });
+    }
+    return res.json({
+      patientId: req.deviceIdentity.patientId,
+      displayName: patient.displayName,
+      supportId: supportId(req.deviceIdentity.patientId),
+      clinicalProfile: patient.clinicalProfile,
+    });
+  },
+);
+
+app.post(
+  '/api/symptom-entry',
+  requireDeviceIdentity,
+  requireSupportedMobileBuild,
+  (req,res)=>{
   const b=req.body||{}, wellness=b.wellnessPercent??b.wellness_score??b.wellness??'';
   const submissionId=typeof b.submissionId==='string'?b.submissionId.trim():'';
   const patientId=typeof b.patientId==='string'?b.patientId.trim():'';
   const rawPatientName=b.patientName??b.fullName;
-  const patientName=typeof rawPatientName==='string'?rawPatientName.trim():'';
+  const submittedPatientName=typeof rawPatientName==='string'?rawPatientName.trim():'';
+  const hasClinicProfile=Boolean(
+    req.deviceIdentity.patient?.clinicalProfile,
+  );
+  const patientName=mobileBuild(req)>=7 || hasClinicProfile
+    ? String(req.deviceIdentity.patient?.displayName||'').trim()
+    : submittedPatientName;
+  let profileRevision=Number(b.profileRevision||0);
   if (!validClinicalLabel(submissionId,160) ||
       !validClinicalLabel(patientId,120) ||
       !validClinicalLabel(patientName) ||
@@ -860,6 +1036,32 @@ app.post('/api/symptom-entry',requireDeviceIdentity,(req,res)=>{
   if (duplicateSymptoms) {
     return res.status(400).json({error:'Each tracked symptom must be unique.'});
   }
+  if (mobileBuild(req)>=7 || hasClinicProfile) {
+    const assignedProfile=Number.isInteger(profileRevision) &&
+      profileRevision>=1
+      ? identityStore.patientClinicalProfile(patientId,profileRevision)
+      : identityStore.patientClinicalProfile(patientId);
+    if (!assignedProfile) {
+      return res.status(409).json({
+        error:'The clinic-assigned profile is unavailable or out of date.',
+        code:req.deviceIdentity.patient?.clinicalProfile
+          ? 'profile_revision_unknown'
+          : 'profile_not_configured',
+      });
+    }
+    if (!recordsMatchClinicalProfile(assignedProfile,records)) {
+      return res.status(409).json({
+        error:'Submitted symptoms do not match the clinic-assigned profile.',
+        code:'assigned_profile_mismatch',
+      });
+    }
+    // Build 6 entries queued before a required Build 7 update have no profile
+    // revision. They are accepted only when their records exactly match the
+    // current clinic-assigned profile, then stamped with that revision.
+    if (!Number.isInteger(profileRevision) || profileRevision<1) {
+      profileRevision=Number(assignedProfile.revision);
+    }
+  }
   const existingRows=readRows();
   const submissionRows=existingRows.filter(row=>row.SubmissionId===submissionId);
   if (submissionRows.length) {
@@ -886,9 +1088,27 @@ app.post('/api/symptom-entry',requireDeviceIdentity,(req,res)=>{
     });
   }
   const receivedAt=new Date().toISOString();
-  const lines=records.map(r=>[receivedAt,b.date,b.time,patientName,r.track,r.disorder,r.symptom,r.score,wellness,submissionId,patientId].map(escapeCsv).join(',')+'\n');
+  const lines=records.map(r=>[
+    receivedAt,
+    b.date,
+    b.time,
+    patientName,
+    r.track,
+    r.disorder,
+    r.symptom,
+    r.score,
+    wellness,
+    submissionId,
+    patientId,
+    profileRevision||'',
+  ].map(escapeCsv).join(',')+'\n');
   fs.appendFileSync(csvPath,lines.join(''),'utf8');
-  identityStore.updatePatientDisplayName(patientId, patientName);
+  if (
+    mobileBuild(req)<7 &&
+    !req.deviceIdentity.patient?.clinicalProfile
+  ) {
+    identityStore.updatePatientDisplayName(patientId, patientName);
+  }
   res.status(201).json({ok:true,duplicate:false,submissionId,rows:lines.length});
 });
 
@@ -902,39 +1122,176 @@ function enrolmentPatients(rows) {
   return [...patientIds].map(patientId => {
     const fromData = directory.get(patientId);
     const fromStore = store.patients[patientId];
+    if (fromStore?.reviewIdentity) return null;
     const activeDevices = Object.values(store.devices).filter(
       device => device.patientId === patientId && !device.revokedAt,
     ).length;
     return {
       patientId,
-      displayName: fromData?.displayName || fromStore?.displayName || 'Unnamed patient',
+      displayName: fromStore?.displayName || fromData?.displayName || 'Unnamed patient',
       supportId: supportId(patientId),
       activeDevices,
+      clinicalProfile: fromStore?.clinicalProfile || null,
+      suggestedProfile: fromStore?.clinicalProfile
+        ? null
+        : suggestedClinicalProfile(rows, patientId),
     };
-  }).sort((a,b)=>a.displayName.localeCompare(b.displayName));
+  }).filter(Boolean).sort((a,b)=>a.displayName.localeCompare(b.displayName));
 }
 
-function enrolmentPage({ issued = null, error = '' } = {}) {
+function suggestedClinicalProfile(rows, patientId) {
+  const patientRows = rows
+    .filter(row => patientKey(row) === patientId)
+    .sort((left, right) =>
+      String(right.ReceivedAt || '').localeCompare(String(left.ReceivedAt || ''))
+    );
+  if (!patientRows.length) return null;
+  const latest = patientRows[0];
+  const submissionRows = latest.SubmissionId
+    ? patientRows.filter(row => row.SubmissionId === latest.SubmissionId)
+    : patientRows.filter(row =>
+        row.Date === latest.Date && row.Time === latest.Time
+      );
+  const primaryRows = submissionRows.filter(row => row.Track === 'Primary');
+  const secondaryRows = submissionRows.filter(row => row.Track === 'Second');
+  try {
+    return normaliseClinicalProfile({
+      primaryDisorder: primaryRows[0]?.Disorder,
+      primarySymptoms: primaryRows.map(row => row.Symptom),
+      secondaryDisorder: secondaryRows[0]?.Disorder || '',
+      secondarySymptoms: secondaryRows.map(row => row.Symptom),
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
+function profileDescription(profile) {
+  if (!profile) return 'Not configured';
+  const tracks = [
+    `${profile.primaryDisorder}: ${profile.primarySymptoms.join(', ')}`,
+  ];
+  if (profile.secondaryDisorder) {
+    tracks.push(
+      `${profile.secondaryDisorder}: ${profile.secondarySymptoms.join(', ')}`,
+    );
+  }
+  return tracks.join(' · ');
+}
+
+function disorderOptions(selected = '', allowBlank = false) {
+  return [
+    allowBlank ? '<option value="">No second disorder</option>' : '',
+    ...Object.keys(symptomCatalog).map(disorder =>
+      `<option value="${html(disorder)}" ${disorder === selected ? 'selected' : ''}>${html(disorder)}</option>`
+    ),
+  ].join('');
+}
+
+function symptomSelectors(track, selectedSymptoms = []) {
+  const inputName = track === 'primary'
+    ? 'primarySymptoms'
+    : 'secondarySymptoms';
+  return Object.entries(symptomCatalog).map(([disorder, symptoms]) =>
+    `<div class="patient-list symptom-group" data-track="${track}" data-disorder="${html(disorder)}">
+      ${symptoms.map(symptom =>
+        `<label><input type="checkbox" name="${inputName}" value="${html(symptom)}" ${selectedSymptoms.includes(symptom) ? 'checked' : ''}>${html(symptom)}</label>`
+      ).join('')}
+    </div>`
+  ).join('');
+}
+
+function profileEditor(patient = null) {
+  const profile = patient?.clinicalProfile ||
+    patient?.suggestedProfile || {
+      primaryDisorder: 'Migraine',
+      primarySymptoms: [],
+      secondaryDisorder: null,
+      secondarySymptoms: [],
+    };
+  const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
+  return `<section class="panel"><h2>${patient ? 'Edit clinic-assigned profile' : 'Create patient profile'}</h2>
+    <p class="muted">Clinic staff control the patient name, disorders, and exactly three symptoms per disorder. Patients can change only their reminder time.</p>
+    ${suggested ? '<div class="notice"><strong>Suggested from the latest accepted check-in.</strong> Review all fields before saving.</div>' : ''}
+    <form method="post" action="/admin/enrolments/save-profile" autocomplete="off" id="profileForm">
+      <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
+      <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
+      <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient?.displayName || '')}"></div>
+      <h3>Primary disorder</h3>
+      <div class="field"><label>Disorder</label><select name="primaryDisorder" id="primaryDisorder" required>${disorderOptions(profile.primaryDisorder)}</select></div>
+      <p class="muted"><span id="primaryCount">0</span>/3 symptoms selected</p>
+      ${symptomSelectors('primary', profile.primarySymptoms)}
+      <h3>Optional second disorder</h3>
+      <div class="field"><label>Disorder</label><select name="secondaryDisorder" id="secondaryDisorder">${disorderOptions(profile.secondaryDisorder || '', true)}</select></div>
+      <p class="muted"><span id="secondaryCount">0</span>/3 symptoms selected</p>
+      ${symptomSelectors('secondary', profile.secondarySymptoms)}
+      <div class="toolbar" style="margin-top:18px">
+        <button type="submit" name="action" value="save">Save profile</button>
+        <button type="submit" name="action" value="save-and-issue">Save and create enrolment code</button>
+      </div>
+    </form>
+    <script>
+      function updateTrack(track) {
+        const select = document.getElementById(track + 'Disorder');
+        const selected = select.value;
+        const groups = [...document.querySelectorAll('[data-track="' + track + '"]')];
+        groups.forEach(group => {
+          const visible = group.dataset.disorder === selected;
+          group.style.display = visible ? 'grid' : 'none';
+          if (!visible) group.querySelectorAll('input').forEach(input => input.checked = false);
+        });
+        const active = groups.find(group => group.dataset.disorder === selected);
+        const checked = active ? [...active.querySelectorAll('input:checked')] : [];
+        document.getElementById(track + 'Count').textContent = checked.length;
+      }
+      ['primary', 'secondary'].forEach(track => {
+        document.getElementById(track + 'Disorder').addEventListener('change', () => updateTrack(track));
+        document.querySelectorAll('[data-track="' + track + '"] input').forEach(input => {
+          input.addEventListener('change', event => {
+            const group = event.target.closest('.symptom-group');
+            const checked = [...group.querySelectorAll('input:checked')];
+            if (checked.length > 3) event.target.checked = false;
+            updateTrack(track);
+          });
+        });
+        updateTrack(track);
+      });
+    </script>
+  </section>`;
+}
+
+function enrolmentPage({
+  issued = null,
+  error = '',
+  message = '',
+  editPatientId = '',
+} = {}) {
   const patients = enrolmentPatients(readRows());
   const csrfToken = adminCsrfToken();
+  const editPatient = patients.find(
+    patient => patient.patientId === editPatientId,
+  ) || null;
   const notice = issued ? `<div class="notice">
     <strong>One-time enrolment code for ${html(issued.displayName)}</strong>
     <div class="code">${html(issued.code)}</div>
     <div>Support ID: ${html(issued.supportId)} · Expires: ${html(new Date(issued.expiresAt).toLocaleString('en-AU'))}</div>
-    <p><strong>Copy this code now.</strong> It is not stored in readable form and cannot be shown again.</p>
+    <div><strong>Enrolment link:</strong> <a href="${html(`${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`)}">${html(`${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`)}</a></div>
+    <p><strong>Copy the link or code now.</strong> The code is not stored in readable form and cannot be shown again.</p>
   </div>` : '';
   const errorNotice = error ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>` : '';
+  const messageNotice = message ? `<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>${html(message)}</strong></div>` : '';
   const patientRows = patients.map(patient => `<tr>
     <td>${html(patient.displayName)}</td>
     <td>${html(patient.supportId)}</td>
+    <td>${html(profileDescription(patient.clinicalProfile))}</td>
     <td>${patient.activeDevices}</td>
     <td>
-      <form class="inline-form" method="post" action="/admin/enrolments/issue">
+      <a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}">Edit profile</a>
+      ${patient.clinicalProfile ? `<form class="inline-form" method="post" action="/admin/enrolments/issue">
         <input type="hidden" name="csrfToken" value="${csrfToken}">
         <input type="hidden" name="patientId" value="${html(patient.patientId)}">
-        <input type="hidden" name="displayName" value="${html(patient.displayName)}">
         <button type="submit">New device code</button>
-      </form>
+      </form>` : '<strong class="flag">Profile required</strong>'}
       <form class="inline-form" method="post" action="/admin/enrolments/revoke" onsubmit="return confirm('Revoke every enrolled device for this patient?')">
         <input type="hidden" name="csrfToken" value="${csrfToken}">
         <input type="hidden" name="patientId" value="${html(patient.patientId)}">
@@ -942,19 +1299,11 @@ function enrolmentPage({ issued = null, error = '' } = {}) {
       </form>
     </td>
   </tr>`).join('');
-  const body = `${notice}${errorNotice}
-  <section class="panel"><h2>Issue a code for a new patient</h2>
-    <p class="muted">Give the code only to the intended patient. Codes expire after seven days and work once.</p>
-    <form class="toolbar" method="post" action="/admin/enrolments/issue" autocomplete="off">
-      <input type="hidden" name="csrfToken" value="${csrfToken}">
-      <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160"></div>
-      <div class="field"><label>&nbsp;</label><button type="submit">Create enrolment code</button></div>
-    </form>
-  </section>
+  const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient)}
   <section class="panel"><h2>Existing clinic identities</h2>
-    <p class="muted">Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
-    <div class="table-wrap"><table><thead><tr><th>Latest name</th><th>Support ID</th><th>Active devices</th><th>Actions</th></tr></thead>
-    <tbody>${patientRows || '<tr><td colspan="4">No patient identities yet.</td></tr>'}</tbody></table></div>
+    <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
+    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Assigned profile</th><th>Active devices</th><th>Actions</th></tr></thead>
+    <tbody>${patientRows || '<tr><td colspan="5">No patient identities yet.</td></tr>'}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
@@ -962,16 +1311,57 @@ function enrolmentPage({ issued = null, error = '' } = {}) {
 app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
 
 app.get('/admin/enrolments',requireAdmin,(req,res)=>{
-  res.send(enrolmentPage());
+  res.send(enrolmentPage({
+    editPatientId: String(req.query.editPatientId || '').trim(),
+  }));
+});
+
+app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    const saved = identityStore.saveClinicalProfile({
+      patientId: String(req.body.patientId || '').trim(),
+      displayName: String(req.body.displayName || '').trim(),
+      clinicalProfile: normaliseClinicalProfile({
+        primaryDisorder: req.body.primaryDisorder,
+        primarySymptoms: values(req.body.primarySymptoms),
+        secondaryDisorder: req.body.secondaryDisorder,
+        secondarySymptoms: values(req.body.secondarySymptoms),
+      }),
+    });
+    if (req.body.action === 'save-and-issue') {
+      const issued = identityStore.issueEnrolmentCode({
+        patientId: saved.patientId,
+        displayName: saved.displayName,
+        requireClinicalProfile: true,
+      });
+      return res.status(201).send(enrolmentPage({
+        issued,
+        editPatientId: saved.patientId,
+      }));
+    }
+    return res.send(enrolmentPage({
+      message: `Profile saved for ${saved.displayName}. Enrolled phones will receive revision ${saved.clinicalProfile.revision}.`,
+      editPatientId: saved.patientId,
+    }));
+  } catch (error) {
+    return res.status(400).send(enrolmentPage({
+      error: error.message,
+      editPatientId: String(req.body.patientId || '').trim(),
+    }));
+  }
 });
 
 app.post('/admin/enrolments/issue',requireAdmin,requireAdminCsrf,(req,res)=>{
   try {
+    const patientId = String(req.body.patientId || '').trim();
+    const patient = identityStore.snapshot().patients[patientId];
+    if (!patient) throw new Error('The patient identity was not found.');
     const issued = identityStore.issueEnrolmentCode({
-      patientId: String(req.body.patientId || '').trim(),
-      displayName: String(req.body.displayName || '').trim(),
+      patientId,
+      displayName: patient.displayName,
+      requireClinicalProfile: true,
     });
-    res.status(201).send(enrolmentPage({ issued }));
+    res.status(201).send(enrolmentPage({ issued, editPatientId: patientId }));
   } catch (error) {
     res.status(400).send(enrolmentPage({ error: error.message }));
   }
@@ -985,6 +1375,98 @@ app.post('/admin/enrolments/revoke',requireAdmin,requireAdminCsrf,(req,res)=>{
       ? `${revoked} device enrolment(s) were revoked.`
       : 'No active devices were found for that patient.',
   }));
+});
+
+function patientManagementPage({ error = '', message = '' } = {}) {
+  const rows = readRows();
+  const patients = enrolmentPatients(rows);
+  const csrfToken = adminCsrfToken();
+  const tableRows = patients.map(patient => {
+    const patientRows = rows.filter(row => patientKey(row) === patient.patientId);
+    const submissions = new Set(patientRows.map(row =>
+      row.SubmissionId || `${row.Date}|${row.Time}`
+    )).size;
+    return `<tr>
+      <td>${html(patient.displayName)}</td>
+      <td>${html(patient.supportId)}</td>
+      <td>${submissions}</td>
+      <td><form method="post" action="/admin/patients/delete" class="toolbar" onsubmit="return confirm('Permanently remove this patient from the portal and revoke every device? A server backup will be retained.')">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <input type="hidden" name="patientId" value="${html(patient.patientId)}">
+        <div class="field"><label>Type ${html(patient.supportId)} to confirm</label><input name="confirmation" required autocomplete="off"></div>
+        <div class="field"><label>&nbsp;</label><button class="danger" type="submit">Delete patient</button></div>
+      </form></td>
+    </tr>`;
+  }).join('');
+  const errorNotice = error
+    ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>`
+    : '';
+  const messageNotice = message
+    ? `<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>${html(message)}</strong></div>`
+    : '';
+  return pageShell('Manage patients', `${errorNotice}${messageNotice}
+    <section class="panel"><h2>Delete a patient record</h2>
+      <p class="flag">Deletion removes the patient’s portal identity, device access, unused enrolment codes, and submitted rows. It cannot be undone through the portal.</p>
+      <p class="muted">A timestamped server backup is created first. Records imported without a PatientId are deliberately excluded from this screen.</p>
+      <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Check-ins</th><th>Confirmation</th></tr></thead>
+      <tbody>${tableRows || '<tr><td colspan="4">No identified patients found.</td></tr>'}</tbody></table></div>
+    </section>`);
+}
+
+app.get('/admin/patients',requireAdmin,(req,res)=>{
+  res.send(patientManagementPage());
+});
+
+app.post('/admin/patients/delete',requireAdmin,requireAdminCsrf,(req,res)=>{
+  const patientId = String(req.body.patientId || '').trim();
+  const patient = identityStore.snapshot().patients[patientId];
+  if (!patient || patient.reviewIdentity) {
+    return res.status(404).send(patientManagementPage({
+      error: 'The patient identity was not found.',
+    }));
+  }
+  if (
+    String(req.body.confirmation || '').trim().toUpperCase() !==
+    supportId(patientId).toUpperCase()
+  ) {
+    return res.status(400).send(patientManagementPage({
+      error: 'The Support ID confirmation did not match.',
+    }));
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupDirectory = path.join(dataDir, 'backups');
+  const csvBackup = path.join(
+    backupDirectory,
+    `before-delete-${stamp}-symptom_entries.csv`,
+  );
+  const identityBackup = path.join(
+    backupDirectory,
+    `before-delete-${stamp}-identity_store.json`,
+  );
+  fs.mkdirSync(backupDirectory, { recursive: true });
+  ensureCsvFile();
+  identityStore.snapshot();
+  fs.copyFileSync(csvPath, csvBackup);
+  fs.copyFileSync(identityStore.identityPath, identityBackup);
+
+  try {
+    const rows = readRows();
+    const retainedRows = rows.filter(row => patientKey(row) !== patientId);
+    const removedRows = rows.length - retainedRows.length;
+    const deleted = identityStore.deletePatient(patientId);
+    if (!deleted.deleted) throw new Error('Patient identity deletion failed.');
+    writeCsvAtomically(retainedRows);
+    return res.send(patientManagementPage({
+      message: `${patient.displayName} was deleted. ${removedRows} submitted row(s), ${deleted.devices} device credential(s), and ${deleted.codes} enrolment code(s) were removed. Backup: ${path.basename(csvBackup)}.`,
+    }));
+  } catch (error) {
+    fs.copyFileSync(csvBackup, csvPath);
+    fs.copyFileSync(identityBackup, identityStore.identityPath);
+    return res.status(500).send(patientManagementPage({
+      error: `Deletion failed and the server backup was restored: ${error.message}`,
+    }));
+  }
 });
 
 app.get('/admin/report.pdf',requireAdmin,(req,res)=>{

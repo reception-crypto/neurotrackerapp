@@ -1,9 +1,10 @@
 # NeuroSol clinic backend
 
-Node/Express backend for secure mobile enrolment, symptom submission, CSV
-storage, clinician review, population analytics, and PDF reports.
+Node/Express backend for staff-managed patient profiles, secure mobile
+enrolment, symptom submission, CSV storage, clinician review, population
+analytics, deletion safeguards, and PDF reports.
 
-## Configure and run
+## Configure and verify
 
 ```cmd
 cd C:\Projects\neurotrackerapp\backend
@@ -13,57 +14,80 @@ npm test
 npm start
 ```
 
-Production must set a random `IDENTITY_SECRET` of at least 32 characters and a
-long unique `ADMIN_PASSWORD`. Build 6 does not accept the former shared mobile
-API key. Bind Node to `127.0.0.1` and publish it only through the clinic HTTPS
-reverse proxy.
+Production must use:
 
-## Enrol a patient
+- a stable random `IDENTITY_SECRET` of at least 32 characters;
+- a unique `ADMIN_PASSWORD` of at least 16 characters;
+- `HOST=127.0.0.1`, exposed only through the clinic HTTPS reverse proxy;
+- `DATA_DIR` outside the source directory where practical;
+- `LATEST_MOBILE_BUILD=7`;
+- `MIN_SUPPORTED_MOBILE_BUILD=7` after the Play release is available.
 
-1. Open `/admin/enrolments` using the clinician portal credentials.
-2. For a new patient, enter the display name and create a one-time code.
-3. Give the code directly to the intended patient. It expires after seven days
-   and can only be redeemed once.
-4. For a reinstall or replacement phone, use **New device code** beside the
-   existing support ID. This preserves the PatientId.
-5. Use **Revoke devices** if a phone or credential may be compromised.
+Do not replace the existing production `IDENTITY_SECRET`: doing so invalidates
+every device credential and unused enrolment code.
 
-The plaintext code is displayed once. The server stores only an HMAC hash.
-Mobile access tokens are also stored only as HMAC hashes.
+## Create and maintain a patient
 
-## Portal
+1. Open `/admin/enrolments`.
+2. Enter the clinic display name.
+3. Select a primary disorder and exactly three symptoms.
+4. Optionally select a distinct second disorder and exactly three symptoms.
+5. Choose **Save and create enrolment code**.
+6. Copy the one-time HTTPS link or code and send it through the clinic’s
+   existing communication system.
+
+Codes expire after seven days and work once. Only an HMAC digest is stored.
+Opening the HTTPS invitation page does not redeem the code and shows no patient
+name or clinical details.
+
+Use **Edit profile** for later clinical changes. The revision increments only
+when disorders or symptoms change; a name-only correction keeps the same
+clinical revision. Enrolled Build 7 phones fetch the latest profile.
+
+For a reinstall or replacement phone, use **New device code** on the existing
+Support ID. Do not create a second patient identity.
+
+## Mobile version policy
+
+The backend recognises these headers:
+
+```text
+X-NeuroSol-Build: 7
+X-NeuroSol-Profile: clinic-managed-v1
+```
+
+Unsupported requests receive HTTP `426` with `app_update_required`. The server
+defaults the minimum to the latest build. During the short Play review window
+only, explicitly set the minimum to 6; restore it to 7 immediately after Build
+7 becomes available.
+
+A clinic-managed code cannot be consumed by Build 6 even during that temporary
+window. Build 7 submissions must exactly match the assigned profile revision.
+Queued Build 6 records without a revision are migrated only if their records
+exactly match the current clinic profile.
+
+## Portal and runtime data
 
 - Patient review: `/admin`
 - Population analytics: `/admin/population`
-- Enrolment administration: `/admin/enrolments`
+- Profile and enrolment administration: `/admin/enrolments`
+- Backed-up patient deletion: `/admin/patients`
 - CSV export: `/admin/export.csv`
-- Health check: `/health`
+- Health: `/health`
+- Mobile configuration: `/api/mobile-config`
 
-Patient charts, filters, population overlays, outlier summaries, and PDF
-reports use PatientId as the grouping key. The latest submitted name is a
-display label, not an identity key.
+PatientId is the grouping, filtering, daily uniqueness, and deletion key. The
+clinic-stored name is only a display label. `ProfileRevision` is appended to
+the CSV schema.
 
-## Runtime data and backup
+The runtime directory contains `symptom_entries.csv`,
+`identity_store.json`, CSV migration backups, and deletion backups. Protect
+all of them as clinical information and back up the CSV and identity store
+together.
 
-The configured `DATA_DIR` contains:
+## Google Play review
 
-- `symptom_entries.csv`
-- `identity_store.json`
-- timestamped CSV migration backups
-
-Back up and restore the CSV and identity store together. Protect the backup as
-clinical information. The production `.env` and `IDENTITY_SECRET` require a
-separate secure backup. None of these files belong in Git.
-
-The server accepts an exact SubmissionId retry without adding rows, but rejects
-a second distinct submission for the same PatientId and date with HTTP `409`
-and code `daily_submission_exists`.
-
-## Google Play reviewer access
-
-Google requires reusable credentials when an app normally uses one-time
-authentication. For a review submission, production may temporarily enable a
-reusable credential that is restricted to one clearly synthetic identity:
+Reusable reviewer access remains restricted to a synthetic identity:
 
 ```env
 REVIEW_ENROLMENT_CODE=<random 12-character code>
@@ -71,11 +95,5 @@ REVIEW_PATIENT_ID_PREFIX=pt-review-google-play
 REVIEW_DISPLAY_NAME=Google Play Review
 ```
 
-The code is read only from the protected production environment, is never
-written to the identity store or logs, and can never enrol an existing
-non-review PatientId. Each clean installation receives a separate synthetic
-review PatientId and revocable device token, so repeated store-review runs do
-not collide with the one-check-in-per-day rule. Reconnecting an existing review
-installation preserves its synthetic PatientId. Do not use a real patient
-name, PatientId, or check-in. Rotate the code for each store submission and
-remove all three settings after review if ongoing access is not required.
+Each clean reviewer installation receives a separate synthetic PatientId and
+the fixed synthetic Migraine profile. Never use real patient information.

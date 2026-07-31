@@ -26,6 +26,15 @@ jobs:
             echo "Legacy shared mobile credential reference found."
             exit 1
           fi
+      - name: Verify clinic-managed Build 7 identity
+        run: |
+          rg -n '^version: 1\.0\.0\+7$' pubspec.yaml
+          rg -n 'appBuildNumber = 7' lib/app_identity.dart
+          rg -n 'clinic-managed-v1' lib/app_identity.dart
+          if rg -n 'ProfileScreen|SymptomSelectionScreen|Edit patient profile' lib; then
+            echo "Patient self-configuration remains reachable in source."
+            exit 1
+          fi
 
   backend:
     runs-on: ubuntu-latest
@@ -42,6 +51,7 @@ jobs:
       - run: npm ci
       - run: node --check server.js
       - run: node --check identity_store.js
+      - run: node --check clinical_profiles.js
       - run: npm test
       - name: Reject committed runtime clinical data
         working-directory: .

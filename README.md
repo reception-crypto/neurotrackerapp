@@ -5,32 +5,48 @@ with a CSV-backed clinician portal.
 
 ## Current release
 
-- App version: `1.0.0+6`
+- App version: `1.0.0+7`
+- Backend version: `0.7.0`
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
 - Production API: `https://tracker.melindapascoeneurology.com`
 
-## Build 6 safety and identity model
+## Build 7 clinic-managed workflow
 
-- The clinic creates a one-time enrolment code in the clinician portal.
-- Redeeming the code gives the app a server-issued PatientId and a unique
-  per-device access token.
-- The access token is stored in protected operating-system storage and is
-  never committed to source or compiled as a shared secret.
-- A recovery or new-device code is linked to the existing PatientId so identity
-  survives a reinstall or phone change.
-- Clinic staff can revoke all active devices for a PatientId.
-- The server verifies that every upload PatientId matches the enrolled device.
-- At most one submission is accepted for each PatientId and local calendar
-  date; exact retry requests remain idempotent.
-- The portal groups and filters by PatientId and uses only the latest submitted
-  name as its display label.
-- Settings shows a shortened support ID, and local CSV exports include the full
-  PatientId.
+1. Dr Pascoe or authorised clinic staff create the patient in
+   `/admin/enrolments`.
+2. Staff select one or two disorders and exactly three symptoms for each.
+3. The portal produces a seven-day, one-time enrolment link and code. The
+   clinic sends either through its existing email or SMS process.
+4. The patient installs the newest app and enters the code. The link itself
+   displays no patient information and does not consume the code.
+5. The app receives the versioned clinic profile. Patients may change only the
+   daily reminder time.
+6. Later staff changes synchronise to the app on launch, resume, or refresh.
+   Pending entries retain the profile revision under which they were recorded.
 
-The app retains its once-per-day home-screen workflow, daily reminder,
-offline queue, local history, editable symptom profile, HTTPS-only release
-traffic, consent gate, and emergency/medical disclaimers.
+The app retains its once-per-day home-screen workflow, notification entry
+point, offline queue, local history, HTTPS-only release traffic, consent gate,
+support ID, and emergency/medical disclaimers.
+
+## Required updates
+
+Every mobile API request identifies its build. The backend defaults
+`MIN_SUPPORTED_MOBILE_BUILD` to `LATEST_MOBILE_BUILD`, and Build 7 also blocks
+itself if `/api/mobile-config` reports a newer release. Unsupported apps receive
+HTTP `426 app_update_required` for enrolment, profile sync, and submissions.
+
+For Google Play review only, the server may temporarily use:
+
+```env
+LATEST_MOBILE_BUILD=7
+MIN_SUPPORTED_MOBILE_BUILD=6
+```
+
+As soon as Build 7 is available to patients, set
+`MIN_SUPPORTED_MOBILE_BUILD=7` and restart the service. This final switch is
+mandatory. Build 6 does not contain the new update screen, but after the switch
+its enrolment and uploads are rejected by the server.
 
 ## Development checks
 
@@ -47,81 +63,44 @@ Backend:
 cd backend
 npm ci
 npm test
-npm start
 ```
 
-For a local debug run, pass only the API URL:
+For a local debug run:
 
 ```cmd
 flutter run --dart-define=NEUROTRACKER_API_URL=http://YOUR-SERVER-IP:3000
 ```
 
-No mobile API key is used by Build 6.
+## Android Build 7
 
-## Android Build 6
-
-Release signing still uses the permanent `android/key.properties` and
-keystore already configured for this application ID. Keep both outside source
-control and maintain an offline backup.
+Release signing uses the permanent `android/key.properties` and keystore
+already configured for this application ID. Keep both outside source control
+and maintain an offline backup.
 
 From the project root in PowerShell:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delivery\build-neurosol-android-build6.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delivery\build-neurosol-android-build7.ps1
 ```
 
-The script restores packages, formats and verifies source, runs tests, builds
-the signed AAB and APK, copies them to `delivery\android-build6`, and prints
-SHA-256 hashes.
+The script verifies the identity, version, clinic-managed workflow, Android
+security settings, signing configuration, formatting, analysis, tests, AAB,
+APK, and SHA-256 hashes. `-SkipFlutterTests` exists only for diagnosing a stuck
+test process; output made with it must not be published until `flutter test`
+passes separately.
 
-## Production backend
+## Production data
 
-Copy `backend/.env.example` to the production `.env`. The two essential
-secrets are:
-
-- `IDENTITY_SECRET`: at least 32 cryptographically random characters; it
-  protects enrolment-code and device-token hashes.
-- `ADMIN_PASSWORD`: a unique clinician portal password of at least 16
-  characters.
-
-Build 6 has no shared mobile API-key path. Older builds cannot upload after the
-Build 6 backend is deployed; they must be upgraded and enrolled.
-
-Runtime clinical files are:
+The backend runtime directory contains:
 
 - `symptom_entries.csv`
 - `identity_store.json`
-- automatic CSV migration backups
+- automatic migration/deletion backups
 
-Store them in the configured `DATA_DIR`, outside the repository. Back up the
-CSV and identity store together. Keep the `.env`, especially
-`IDENTITY_SECRET`, in the clinic's secret-management backup; changing or losing
-that secret invalidates existing enrolment codes and device credentials.
+Back up the CSV and identity store together. Keep the production `.env`,
+`IDENTITY_SECRET`, signing material, clinical exports, and patient screenshots
+out of Git.
 
-Use the deployment instructions in
-`deploy/WINDOWS_HTTPS_DEPLOYMENT.md`. Node binds to `127.0.0.1` and must be
-exposed only through the existing HTTPS reverse proxy.
-
-Portal pages:
-
-```text
-https://tracker.melindapascoeneurology.com/admin
-https://tracker.melindapascoeneurology.com/admin/population
-https://tracker.melindapascoeneurology.com/admin/enrolments
-```
-
-## Safe rollout order
-
-1. Back up the current production data and `.env`.
-2. Deploy the Build 6 backend and configure `IDENTITY_SECRET`.
-3. Run `npm test` and verify `/health`, the portal, code issuance, enrolment,
-   one check-in, CSV storage, and portal grouping.
-4. For each existing Build 5 patient, issue a new-device code against their
-   existing PatientId rather than creating a new identity.
-5. Install Build 6 on a clinic test phone and complete the release acceptance
-   tests.
-6. Upload the Build 6 AAB to Google Play testing only after those gates pass.
-
-This application handles identifiable health information. Never commit
-production `.env`, `symptom_entries.csv`, `identity_store.json`, signing
-material, or screenshots containing patient information.
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the controlled Build 7
+rollout and [deploy/WINDOWS_HTTPS_DEPLOYMENT.md](deploy/WINDOWS_HTTPS_DEPLOYMENT.md)
+for the Windows service.

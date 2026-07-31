@@ -48,7 +48,7 @@ the reverse proxy instead.
 ## 3. Back up the existing service
 
 Before replacing backend source, take a timestamped backup of the current
-production `.env` and data directory. The Build 6 identity store and symptom
+production `.env` and data directory. The identity store and symptom
 CSV must subsequently be backed up and restored together.
 
 Do not copy production clinical data into the Git repository or a release
@@ -68,7 +68,14 @@ IDENTITY_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_CHARACTERS
 ADMIN_USER=admin
 ADMIN_PASSWORD=REPLACE_WITH_A_LONG_UNIQUE_PASSWORD
 DATA_DIR=C:\ProgramData\NeuroSol\data
+LATEST_MOBILE_BUILD=7
+MIN_SUPPORTED_MOBILE_BUILD=6
+PUBLIC_BASE_URL=https://tracker.melindapascoeneurology.com
+GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol
 ```
+
+`MIN_SUPPORTED_MOBILE_BUILD=6` is only for the controlled Build 7 Play review
+and migration window. The final required-update switch changes it to 7.
 
 Generate a strong identity secret in PowerShell, save it in the clinic's
 password manager, and paste it into `.env`:
@@ -97,12 +104,14 @@ Invoke-RestMethod http://127.0.0.1:3000/health
 
 Port 3000 must not have a public inbound firewall rule.
 
-Open `http://127.0.0.1:3000/admin/enrolments`, create a code for a synthetic
-test identity, enrol the clinic test phone, submit one check-in, and confirm:
+Open `http://127.0.0.1:3000/admin/enrolments`, create a complete synthetic
+clinic profile and code, enrol the clinic test phone, submit one check-in, and
+confirm:
 
 - the second distinct check-in for that PatientId/date is rejected;
 - an exact network retry does not create duplicate rows;
-- the portal groups by support ID and displays the latest name;
+- the portal groups by PatientId/support ID and displays the clinic name;
+- profile edits synchronise to the Build 7 phone;
 - revoking devices prevents further uploads.
 
 ## 5. Caddy
@@ -156,15 +165,33 @@ http://117.20.4.91:3000/health
 Only after these checks pass should a patient APK be built against the HTTPS
 address.
 
-## 8. Build 5 migration and Build 6 rollout
+## 8. Build 7 clinic-profile rollout
 
-Deploy and verify the Build 6 backend before distributing the Build 6 app.
-Existing Build 5 phones cannot upload after the backend change until they are
-upgraded and enrolled.
+Deploy backend `0.7.0` before distributing Build 7. During Play review only,
+set:
 
-For an existing patient, find their current PatientId in the portal and issue
-**New device code** against that same identity. Do not create a new patient
-identity, or their historical and future data will be split.
+```env
+LATEST_MOBILE_BUILD=7
+MIN_SUPPORTED_MOBILE_BUILD=6
+```
+
+Use `/admin/enrolments` to configure a clinic-managed profile for every
+existing PatientId before updating their phone. The portal may suggest the
+latest accepted symptom set, but clinic staff must review and save it.
+
+For an existing phone, install Build 7 as an update. Its protected token and
+PatientId are retained, and the clinic profile synchronises at startup. For a
+replacement phone or reinstall, issue **New device code** against the same
+PatientId. Do not create a second identity.
+
+After Build 7 is available to every intended patient, change:
+
+```env
+MIN_SUPPORTED_MOBILE_BUILD=7
+```
+
+Restart the service and verify `/api/mobile-config`. This switch is mandatory:
+Build 6 requests then receive HTTP 426 and cannot enrol, synchronise, or submit.
 
 ## 9. Backup and access control
 

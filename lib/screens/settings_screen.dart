@@ -11,7 +11,6 @@ import 'consent_screen.dart';
 import 'enrolment_screen.dart';
 import 'history_screen.dart';
 import 'privacy_screen.dart';
-import 'profile_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -201,22 +200,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           Card(
             child: ListTile(
-              leading: const Icon(Icons.manage_accounts),
-              title: const Text('Edit patient profile'),
+              leading: const Icon(Icons.assignment_ind_outlined),
+              title: const Text('Clinic-assigned profile'),
               subtitle: Text(
                 profile == null
                     ? 'Profile unavailable'
-                    : '${profile!.primaryDisorder}${profile!.hasSecondaryDisorder ? ' and ${profile!.secondaryDisorder}' : ''}',
+                    : '${profile!.primaryDisorder}: ${profile!.primarySymptoms.join(', ')}'
+                          '${profile!.hasSecondaryDisorder ? '\n${profile!.secondaryDisorder}: ${profile!.secondarySymptoms.join(', ')}' : ''}'
+                          '\nProfile revision ${profile!.profileRevision}. Contact the clinic to request changes.',
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: profile == null
-                  ? null
-                  : () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ProfileScreen(initialProfile: profile),
-                      ),
-                    ),
+              isThreeLine: true,
             ),
           ),
           const SizedBox(height: 12),
@@ -266,7 +259,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: Icon(Icons.info_outline),
               title: Text(appDisplayName),
               subtitle: Text(
-                'Version 1.0.0 (build 6)\nFor clinical monitoring; not for emergency use.',
+                'Version $appVersionLabel\nFor clinical monitoring; not for emergency use.',
               ),
             ),
           ),

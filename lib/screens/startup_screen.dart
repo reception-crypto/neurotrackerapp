@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_identity.dart';
 import '../models/patient_profile.dart';
+import '../services/clinic_profile_service.dart';
 import '../services/notification_service.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
@@ -11,6 +12,7 @@ import 'daily_symptom_screen.dart';
 import 'enrolment_screen.dart';
 import 'home_screen.dart';
 import 'privacy_screen.dart';
+import 'startup_blocked_screen.dart';
 
 class StartupScreen extends StatefulWidget {
   final bool openCheckIn;
@@ -29,18 +31,94 @@ class _StartupScreenState extends State<StartupScreen> {
   }
 
   Future<void> _load() async {
-    final PatientProfile? profile = await StorageService.loadProfile();
+    PatientProfile? profile = await StorageService.loadProfile();
+    final storedProfile = profile;
     final consentAccepted = await StorageService.hasAcceptedConsent(
       policyVersion: PrivacyScreen.policyVersion,
     );
-    final enrolled = profile != null && await IdentityService.hasAccessToken();
+    final enrolled =
+        storedProfile != null && await IdentityService.hasAccessToken();
+    MobileConfiguration? mobileConfiguration;
+    try {
+      mobileConfiguration =
+          await ClinicProfileService.fetchMobileConfiguration();
+      if (mobileConfiguration.updateRequired) {
+        if (!mounted) return;
+        _replace(
+          RequiredUpdateScreen(
+            googlePlayUrl: mobileConfiguration.googlePlayUrl,
+            appStoreUrl: mobileConfiguration.appStoreUrl,
+          ),
+        );
+        return;
+      }
+    } on ClinicProfileException catch (error) {
+      if (error.failure == ClinicProfileFailure.updateRequired) {
+        if (!mounted) return;
+        _replace(
+          RequiredUpdateScreen(
+            googlePlayUrl: error.googlePlayUrl,
+            appStoreUrl: error.appStoreUrl,
+          ),
+        );
+        return;
+      }
+      // An already-synchronised profile remains usable offline. Every
+      // authenticated backend request still independently enforces updates.
+    }
+
     var completedToday = false;
-    if (profile != null && consentAccepted && enrolled) {
+    if (storedProfile != null && consentAccepted && enrolled) {
+      var activeProfile = storedProfile;
+      try {
+        activeProfile = await ClinicProfileService.fetchAssignedProfile(
+          activeProfile,
+        );
+        await StorageService.saveProfile(activeProfile);
+        profile = activeProfile;
+      } on ClinicProfileException catch (error) {
+        if (!mounted) return;
+        switch (error.failure) {
+          case ClinicProfileFailure.updateRequired:
+            _replace(
+              RequiredUpdateScreen(
+                googlePlayUrl: error.googlePlayUrl,
+                appStoreUrl: error.appStoreUrl,
+              ),
+            );
+            return;
+          case ClinicProfileFailure.enrolmentRequired:
+            _replace(EnrolmentScreen(existingProfile: activeProfile));
+            return;
+          case ClinicProfileFailure.profileNotConfigured:
+          case ClinicProfileFailure.invalidResponse:
+            _replace(
+              ClinicSetupRequiredScreen(
+                profile: activeProfile,
+                message: error.patientMessage,
+                onRetry: (_) => _retryStartup(),
+              ),
+            );
+            return;
+          case ClinicProfileFailure.networkUnavailable:
+            if (!activeProfile.isClinicManaged) {
+              _replace(
+                ClinicSetupRequiredScreen(
+                  profile: activeProfile,
+                  message:
+                      'Connect to the internet so this phone can receive the clinic-assigned profile.',
+                  onRetry: (_) => _retryStartup(),
+                ),
+              );
+              return;
+            }
+        }
+      }
       completedToday = await StorageService.hasSubmittedToday();
       try {
         await NotificationService.scheduleDailyReminder(
-          hour: profile.reminderTime.hour,
-          minute: profile.reminderTime.minute,
+          hour: activeProfile.reminderTime.hour,
+          minute: activeProfile.reminderTime.minute,
           skipToday: completedToday,
         );
       } catch (_) {
@@ -50,18 +128,31 @@ class _StartupScreenState extends State<StartupScreen> {
     }
     if (!mounted) return;
 
+    _replace(
+      profile == null
+          ? const ConsentScreen()
+          : !consentAccepted
+          ? ConsentScreen(existingProfile: profile)
+          : !enrolled
+          ? EnrolmentScreen(existingProfile: profile)
+          : widget.openCheckIn && !completedToday
+          ? DailySymptomScreen(profile: profile)
+          : HomeScreen(profile: profile),
+    );
+  }
+
+  void _replace(Widget screen) {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => screen),
+    );
+  }
+
+  void _retryStartup() {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => profile == null
-            ? const ConsentScreen()
-            : !consentAccepted
-            ? ConsentScreen(existingProfile: profile)
-            : !enrolled
-            ? EnrolmentScreen(existingProfile: profile)
-            : widget.openCheckIn && !completedToday
-            ? DailySymptomScreen(profile: profile)
-            : HomeScreen(profile: profile),
+        builder: (_) => StartupScreen(openCheckIn: widget.openCheckIn),
       ),
     );
   }

@@ -1,7 +1,7 @@
 {
   "name": "neurosol-symptom-diary-backend",
-  "version": "0.6.1",
-  "description": "NeuroSol clinic backend with secure device enrolment, CSV storage, analytics, and PDF reports.",
+  "version": "0.7.0",
+  "description": "NeuroSol clinic backend with staff-managed profiles, secure device enrolment, CSV storage, analytics, and PDF reports.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

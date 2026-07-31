@@ -4,8 +4,8 @@ import '../models/patient_profile.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
 import 'enrolment_screen.dart';
-import 'home_screen.dart';
 import 'privacy_screen.dart';
+import 'startup_screen.dart';
 
 class ConsentScreen extends StatefulWidget {
   final PatientProfile? existingProfile;
@@ -28,7 +28,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => HomeScreen(profile: existing)),
+        MaterialPageRoute(builder: (_) => const StartupScreen()),
         (_) => false,
       );
       return;
@@ -59,7 +59,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'This app records your name, selected neurological condition, chosen symptoms, daily symptom scores, and overall wellness score. This information is intended to assist your clinical care. It is not diagnostic and does not replace medical advice.',
+                  'Dr Pascoe or authorised clinic staff assign your name, neurological condition, and symptoms. The app records that profile, your daily symptom scores, and your overall wellness score. This information is intended to assist your clinical care. It is not diagnostic and does not replace medical advice.',
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
                 const SizedBox(height: 20),
