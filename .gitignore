@@ -33,6 +33,7 @@ migrate_working_dir/
 /build/
 /coverage/
 /delivery/android-build*/
+/delivery/release-packs/
 
 # Symbolication related
 app.*.symbols

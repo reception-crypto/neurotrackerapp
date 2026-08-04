@@ -13,11 +13,15 @@ const {
   supportId,
 } = require('./identity_store');
 const {
+  canonicalRecordsForClinicalProfile,
   normaliseClinicalProfile,
-  recordsMatchClinicalProfile,
-  symptomCatalog,
+  profileMinimumBuild,
   values,
 } = require('./clinical_profiles');
+const {
+  catalogVersion,
+  createDisorderCatalogStore,
+} = require('./disorder_catalog');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -39,7 +43,7 @@ const reviewDisplayName = String(
 ).trim();
 const latestMobileBuild = Number(process.env.LATEST_MOBILE_BUILD || 7);
 const minimumMobileBuild = Number(
-  process.env.MIN_SUPPORTED_MOBILE_BUILD || latestMobileBuild,
+  process.env.MIN_SUPPORTED_MOBILE_BUILD || 7,
 );
 const publicBaseUrl = String(
   process.env.PUBLIC_BASE_URL ||
@@ -50,11 +54,19 @@ const googlePlayUrl = String(
     'https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol',
 ).trim();
 const appStoreUrl = String(process.env.APP_STORE_URL || '').trim();
+const customDisordersEnabled = /^(1|true|yes)$/i.test(
+  String(process.env.ENABLE_CUSTOM_DISORDERS || '').trim(),
+);
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
-const identityStore = createIdentityStore({ dataDir, secret: identitySecret });
+const disorderCatalog = createDisorderCatalogStore({ dataDir });
+const identityStore = createIdentityStore({
+  dataDir,
+  secret: identitySecret,
+  disorderCatalog,
+});
 
-const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision'];
+const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision','DisorderId','SymptomId','PayloadSchemaVersion'];
 
 const reviewConfigurationPresent = Boolean(
   reviewEnrolmentCode || reviewPatientIdPrefix || reviewDisplayName,
@@ -83,6 +95,13 @@ if (
 ) {
   throw new Error(
     'LATEST_MOBILE_BUILD and MIN_SUPPORTED_MOBILE_BUILD are invalid.',
+  );
+}
+
+if (process.env.NODE_ENV === 'production' &&
+    minimumMobileBuild !== 7) {
+  throw new Error(
+    'MIN_SUPPORTED_MOBILE_BUILD must remain 7 while Build 7 is supported.',
   );
 }
 
@@ -172,8 +191,66 @@ function validClinicalLabel(value, maximumLength = 160) {
     !/[\u0000-\u001f\u007f]/.test(text);
 }
 
-function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '', profileRevision = '') {
+function recordIdentifiers(disorder, symptom, disorderId = '', symptomId = '') {
+  const suppliedDisorderId = String(disorderId || '').trim();
+  const suppliedSymptomId = String(symptomId || '').trim();
+  let definition = null;
+  try {
+    definition = suppliedDisorderId
+      ? disorderCatalog.findDisorder({
+          id: suppliedDisorderId,
+          includeInactive: true,
+        })
+      : disorderCatalog.findDisorder({
+          displayName: disorder,
+          includeInactive: true,
+        });
+  } catch (_) {
+    definition = null;
+  }
+  if (!definition) {
+    try {
+      definition = disorderCatalog.findDisorder({
+        displayName: disorder,
+        includeInactive: true,
+      });
+    } catch (_) {
+      definition = null;
+    }
+  }
+  const canonicalDisorderId = definition?.id || '';
+  let symptomDefinition = null;
+  try {
+    symptomDefinition = definition
+      ? disorderCatalog.findSymptom(definition, {
+          id: suppliedSymptomId,
+        }) || disorderCatalog.findGlobalSymptom({ id: suppliedSymptomId })
+      : disorderCatalog.findGlobalSymptom({
+          id: suppliedSymptomId,
+        });
+  } catch (_) {
+    symptomDefinition = null;
+  }
+  if (!symptomDefinition) {
+    symptomDefinition = definition
+      ? disorderCatalog.findSymptom(definition, { displayName: symptom }) ||
+        disorderCatalog.findGlobalSymptom({ displayName: symptom })
+      : disorderCatalog.findGlobalSymptom({ displayName: symptom });
+  }
+  return {
+    disorderId: canonicalDisorderId,
+    symptomId: symptomDefinition?.id || '',
+  };
+}
+
+function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '', profileRevision = '', disorderId = '', symptomId = '', payloadSchemaVersion = 1) {
   if (!looksLikeDate(date) || !patient || !disorder || !symptom || !validScore(score)) return null;
+  const identifiers = recordIdentifiers(
+    disorder,
+    symptom,
+    disorderId,
+    symptomId,
+  );
   return {
     ReceivedAt: receivedAt || `${date}T${time || '00:00'}:00`,
     Date: date,
@@ -187,7 +264,50 @@ function normalisedRecord(receivedAt, date, time, patient, track, disorder, symp
     SubmissionId: String(submissionId || ''),
     PatientId: String(patientId || ''),
     ProfileRevision: String(profileRevision || ''),
+    DisorderId: identifiers.disorderId,
+    SymptomId: identifiers.symptomId,
+    PayloadSchemaVersion: [1, 2].includes(Number(payloadSchemaVersion))
+      ? String(Number(payloadSchemaVersion))
+      : '1',
   };
+}
+
+function submissionRecordKey(record) {
+  const disorder = String(record.disorder ?? record.Disorder ?? '');
+  const symptom = String(record.symptom ?? record.Symptom ?? '');
+  const identifiers = recordIdentifiers(
+    disorder,
+    symptom,
+    record.disorderId ?? record.DisorderId ?? '',
+    record.symptomId ?? record.SymptomId ?? '',
+  );
+  return JSON.stringify([
+    String(record.track ?? record.Track ?? ''),
+    identifiers.disorderId,
+    disorder,
+    identifiers.symptomId,
+    symptom,
+    Number(record.score ?? record.Score),
+  ]);
+}
+
+function isExactSubmissionRetry(
+  rows,
+  { patientId, date, time, wellness, profileRevision, records },
+) {
+  if (rows.length !== records.length) return false;
+  if (rows.some(row =>
+    patientKey(row) !== patientId ||
+    row.Date !== date ||
+    row.Time !== time ||
+    Number(row.WellnessPercent) !== Number(wellness) ||
+    String(row.ProfileRevision || '') !== String(profileRevision || '')
+  )) {
+    return false;
+  }
+  const stored = rows.map(submissionRecordKey).sort();
+  const submitted = records.map(submissionRecordKey).sort();
+  return JSON.stringify(stored) === JSON.stringify(submitted);
 }
 
 function expandLegacyWideRow(values, hasReceivedAt = false) {
@@ -229,7 +349,21 @@ function normaliseCsvRows(parsed) {
   for (const values of dataRows) {
     if (!values.some(v => String(v || '').trim())) continue;
 
-    // Current schema with stable submission and patient identifiers.
+    // Additive Build 8 schema with the originating payload schema retained.
+    if (values.length === 15 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
+      const record = normalisedRecord(...values.slice(0, 15));
+      if (record) normalised.push(record);
+      continue;
+    }
+
+    // Early Build 8 schema. Missing schema-version data is Build 7/schema 1.
+    if (values.length === 14 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
+      const record = normalisedRecord(...values.slice(0, 14));
+      if (record) normalised.push(record);
+      continue;
+    }
+
+    // Build 7 schema with profile revision but no catalogue identifiers.
     if (values.length === 12 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
       const record = normalisedRecord(...values.slice(0, 12));
       if (record) normalised.push(record);
@@ -274,6 +408,7 @@ function normaliseCsvRows(parsed) {
         get('ReceivedAt'), get('Date'), get('Time'), get('Patient'), get('Track'),
         get('Disorder'), get('Symptom'), get('Score'), get('WellnessPercent'),
         get('SubmissionId'), get('PatientId'), get('ProfileRevision'),
+        get('DisorderId'), get('SymptomId'), get('PayloadSchemaVersion') || 1,
       );
       if (record) normalised.push(record);
       continue;
@@ -335,6 +470,59 @@ function readRows() {
   })).filter(row => Number.isFinite(row.ScoreNumber));
 }
 
+function disorderKey(row) {
+  const id = String(row?.DisorderId || '').trim();
+  return id || `legacy:${String(row?.Disorder || '').trim()}`;
+}
+
+function disorderChoices(rows) {
+  const choices = new Map();
+  for (const row of rows) {
+    const id = disorderKey(row);
+    if (!id || id === 'legacy:') continue;
+    const existing = choices.get(id);
+    if (
+      !existing ||
+      String(row.ReceivedAt || '').localeCompare(existing.receivedAt) > 0
+    ) {
+      choices.set(id, {
+        id,
+        displayName: row.Disorder,
+        receivedAt: String(row.ReceivedAt || ''),
+      });
+    }
+  }
+  for (const choice of choices.values()) {
+    if (choice.id.startsWith('legacy:')) continue;
+    const registered = disorderCatalog.findDisorder({
+      id: choice.id,
+      includeInactive: true,
+    });
+    if (registered) choice.displayName = registered.displayName;
+  }
+  return [...choices.values()].sort((left, right) =>
+    left.displayName.localeCompare(right.displayName, 'en-AU')
+  );
+}
+
+function resolveDisorderKey(rows, suppliedId = '', suppliedName = '') {
+  const requestedId = String(suppliedId || '').trim();
+  const requestedName = String(suppliedName || '').trim();
+  const choices = disorderChoices(rows);
+  if (requestedId && choices.some(choice => choice.id === requestedId)) {
+    return requestedId;
+  }
+  if (requestedName) {
+    return choices.find(choice => choice.displayName === requestedName)?.id || '';
+  }
+  return '';
+}
+
+function disorderLabel(rows, id) {
+  return disorderChoices(rows).find(choice => choice.id === id)?.displayName ||
+    '';
+}
+
 function bearerToken(req) {
   const header = String(req.header('authorization') || '');
   return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
@@ -345,9 +533,41 @@ function mobileBuild(req) {
   return Number.isInteger(supplied) && supplied > 0 ? supplied : 6;
 }
 
+function payloadSchemaVersion(body = {}) {
+  if (
+    body.schemaVersion == null ||
+    String(body.schemaVersion).trim() === ''
+  ) {
+    return 1;
+  }
+  const supplied = Number(body.schemaVersion);
+  return Number.isInteger(supplied) && [1, 2].includes(supplied)
+    ? supplied
+    : null;
+}
+
+function advertisedLatestBuild(req) {
+  const clientBuild = mobileBuild(req);
+  // Build 7 treats latestBuild as mandatory. While it remains supported,
+  // advertise its own compatible build rather than turning Build 8 into a
+  // global forced update. Build-specific profile gates still return 426.
+  if (
+    clientBuild >= minimumMobileBuild &&
+    clientBuild <= latestMobileBuild
+  ) {
+    return clientBuild;
+  }
+  return latestMobileBuild;
+}
+
 function supportsClinicManagedProfile(req) {
   return mobileBuild(req) >= 7 &&
     req.header('x-neurosol-profile') === 'clinic-managed-v1';
+}
+
+function supportsCanonicalDisorders(req) {
+  return mobileBuild(req) >= 8 &&
+    req.header('x-neurosol-disorders') === 'canonical-v1';
 }
 
 function sendUpdateRequired(res, requiredBuild = minimumMobileBuild) {
@@ -356,7 +576,7 @@ function sendUpdateRequired(res, requiredBuild = minimumMobileBuild) {
     error: 'This version of NeuroSol Symptom Diary is no longer supported.',
     code: 'app_update_required',
     minimumBuild: requiredBuild,
-    latestBuild: latestMobileBuild,
+    latestBuild: Math.max(latestMobileBuild, requiredBuild),
     googlePlayUrl,
     appStoreUrl: appStoreUrl || undefined,
   });
@@ -379,7 +599,11 @@ function matchesReviewEnrolmentCode(value) {
 
 function requireDeviceIdentity(req, res, next) {
   res.set('Cache-Control', 'no-store');
-  const identity = identityStore.authenticate(bearerToken(req));
+  const identity = identityStore.authenticate(bearerToken(req), {
+    mobileBuild: mobileBuild(req),
+    supportsClinicManagedProfile: supportsClinicManagedProfile(req),
+    supportsCanonicalDisorders: supportsCanonicalDisorders(req),
+  });
   if (identity) {
     req.deviceIdentity = identity;
     return next();
@@ -388,6 +612,17 @@ function requireDeviceIdentity(req, res, next) {
     error: 'This device is not enrolled or its access has been revoked.',
     code: 'device_not_authorised',
   });
+}
+
+function recordAcceptedPayloadSchema(req, schemaVersion) {
+  try {
+    identityStore.recordPayloadSchema(bearerToken(req), schemaVersion);
+  } catch (error) {
+    console.warn(
+      `NeuroSol compatibility observation could not be recorded: ` +
+      `${error.message}`,
+    );
+  }
 }
 
 function adminCsrfToken() {
@@ -676,7 +911,7 @@ function renderMetricCalendar(rows, metric, requestedDays = 30, endDate = todayI
 
 function patientSeries(
   rows,
-  disorder,
+  disorderId,
   metric,
   aggregation='weekly',
   selectedPatients=[],
@@ -685,7 +920,7 @@ function patientSeries(
   const symptomMetric = metric.startsWith('symptom:') ? metric.slice('symptom:'.length) : '';
   const directory = patientNames || patientDirectory(rows);
   const filtered = rows.filter(r =>
-    (!disorder || r.Disorder === disorder) &&
+    (!disorderId || disorderKey(r) === disorderId) &&
     (!selectedPatients.length || selectedPatients.includes(patientKey(r))) &&
     (!symptomMetric || r.Symptom === symptomMetric)
   );
@@ -796,22 +1031,49 @@ function pageShell(title, body) {
     .calendar-date{top:4px;left:5px;font-size:9px}
     .calendar-dot{transform:scale(.75)}
   }
-  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
+  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/disorders">Disorders</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
 }
 
+// Validate the catalogue before any profile or CSV migration can write data.
+// A corrupt catalogue must stop startup and remain untouched for recovery.
+disorderCatalog.snapshot();
+const identityMigration = identityStore.migrateCanonicalProfiles();
+if (identityMigration.migrated) {
+  console.log(
+    `NeuroSol identity profiles migrated: ${identityMigration.migratedProfiles}. ` +
+    `Backup: ${identityMigration.backupPath}`,
+  );
+}
+const reconciledProfiles = identityStore.reconcileCurrentProfiles();
+if (reconciledProfiles) {
+  console.log(
+    `NeuroSol current profiles reconciled with the disorder catalogue: ` +
+    `${reconciledProfiles}.`,
+  );
+}
 repairCsvIfNeeded();
 app.use(express.json({limit:'256kb'}));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
-app.get('/health',(req,res)=>res.json({ok:true,storage:'csv'}));
+app.get('/health',(req,res)=>res.json({
+  ok:true,
+  storage:'csv',
+  disorderCatalogVersion: catalogVersion,
+  customDisordersEnabled,
+}));
 app.get('/api/mobile-config',(req,res)=>{
   res.set('Cache-Control', 'no-store');
   res.json({
     minimumBuild: minimumMobileBuild,
-    latestBuild: latestMobileBuild,
+    latestBuild: advertisedLatestBuild(req),
     googlePlayUrl,
     appStoreUrl: appStoreUrl || undefined,
     clinicManagedProfiles: true,
+    canonicalDisorders: true,
+    disorderCatalogVersion: catalogVersion,
+    preferredPayloadSchemaVersion: supportsCanonicalDisorders(req) ? 2 : 1,
+    build7Supported: minimumMobileBuild <= 7,
+    customDisordersEnabled,
   });
 });
 
@@ -898,6 +1160,9 @@ app.post(
     const reviewIdentity = identityStore.enrolReusableReviewDevice({
       patientId: reviewerPatientId,
       displayName: reviewDisplayName,
+      supportedMobileBuild: mobileBuild(req),
+      supportsClinicManagedProfile: supportsClinicManagedProfile(req),
+      supportsCanonicalDisorders: supportsCanonicalDisorders(req),
     });
     return res.status(200).json({
       patientId: reviewIdentity.patientId,
@@ -910,6 +1175,8 @@ app.post(
   const result = identityStore.redeemEnrolmentCode(req.body?.code, {
     expectedPatientId: req.body?.expectedPatientId,
     supportsClinicManagedProfile: supportsClinicManagedProfile(req),
+    supportsCanonicalDisorders: supportsCanonicalDisorders(req),
+    supportedMobileBuild: mobileBuild(req),
   });
   if (result.status === 'ok') {
     return res.status(200).json({
@@ -922,7 +1189,7 @@ app.post(
   }
   recordFailedEnrolment(req);
   if (result.status === 'upgrade_required') {
-    return sendUpdateRequired(res, 7);
+    return sendUpdateRequired(res, result.requiredBuild || 7);
   }
   if (result.status === 'patient_mismatch') {
     return res.status(409).json({
@@ -955,6 +1222,13 @@ app.get(
         supportId: supportId(req.deviceIdentity.patientId),
       });
     }
+    const requiredBuild = profileMinimumBuild(patient.clinicalProfile);
+    if (
+      requiredBuild >= 8 &&
+      (!supportsCanonicalDisorders(req) || mobileBuild(req) < requiredBuild)
+    ) {
+      return sendUpdateRequired(res, requiredBuild);
+    }
     return res.json({
       patientId: req.deviceIdentity.patientId,
       displayName: patient.displayName,
@@ -970,6 +1244,16 @@ app.post(
   requireSupportedMobileBuild,
   (req,res)=>{
   const b=req.body||{}, wellness=b.wellnessPercent??b.wellness_score??b.wellness??'';
+  const schemaVersion=payloadSchemaVersion(b);
+  if (schemaVersion==null) {
+    return res.status(400).json({
+      error:'The submission schema version is invalid.',
+      code:'invalid_schema_version',
+    });
+  }
+  if (schemaVersion===2 && !supportsCanonicalDisorders(req)) {
+    return sendUpdateRequired(res,8);
+  }
   const submissionId=typeof b.submissionId==='string'?b.submissionId.trim():'';
   const patientId=typeof b.patientId==='string'?b.patientId.trim():'';
   const rawPatientName=b.patientName??b.fullName;
@@ -1001,14 +1285,19 @@ app.post(
   ];
   const records=rawRecords.map(record=>({
     track:typeof record?.track==='string'?record.track.trim():'',
+    disorderId:schemaVersion===2&&typeof record?.disorderId==='string'?record.disorderId.trim():'',
     disorder:typeof record?.disorder==='string'?record.disorder.trim():'',
+    symptomId:schemaVersion===2&&typeof record?.symptomId==='string'?record.symptomId.trim():'',
     symptom:typeof record?.symptom==='string'?record.symptom.trim():'',
     score:record?.score,
   }));
   if (![3,6].includes(records.length) || records.some(r =>
     !['Primary','Second'].includes(r.track) ||
-    !validClinicalLabel(r.disorder,120) ||
-    !validClinicalLabel(r.symptom,120) ||
+    (schemaVersion===1
+      ? !validClinicalLabel(r.disorder,120) ||
+        !validClinicalLabel(r.symptom,120)
+      : !validClinicalLabel(r.disorderId,120) ||
+        !validClinicalLabel(r.symptomId,120)) ||
     !validSubmittedScore(r.score)
   )) {
     return res.status(400).json({error:'Exactly three valid symptom scores per disorder are required.'});
@@ -1020,7 +1309,7 @@ app.post(
     return res.status(400).json({error:'Primary and second symptom tracks are invalid.'});
   }
   const disorderCounts=records.reduce((counts,r)=>{
-    const key=`${r.track}|${r.disorder}`;
+    const key=`${r.track}|${r.disorderId||r.disorder}`;
     counts[key]=(counts[key]||0)+1;
     return counts;
   },{});
@@ -1030,12 +1319,13 @@ app.post(
   const duplicateSymptoms=records.some((record,index)=>records.some((other,otherIndex)=>
     otherIndex<index &&
     other.track===record.track &&
-    other.disorder===record.disorder &&
-    other.symptom===record.symptom
+    (other.disorderId||other.disorder)===(record.disorderId||record.disorder) &&
+    (other.symptomId||other.symptom)===(record.symptomId||record.symptom)
   ));
   if (duplicateSymptoms) {
     return res.status(400).json({error:'Each tracked symptom must be unique.'});
   }
+  let acceptedRecords=records;
   if (mobileBuild(req)>=7 || hasClinicProfile) {
     const assignedProfile=Number.isInteger(profileRevision) &&
       profileRevision>=1
@@ -1049,12 +1339,24 @@ app.post(
           : 'profile_not_configured',
       });
     }
-    if (!recordsMatchClinicalProfile(assignedProfile,records)) {
+    const requiredBuild=profileMinimumBuild(assignedProfile);
+    if (
+      requiredBuild>=8 &&
+      (!supportsCanonicalDisorders(req)||mobileBuild(req)<requiredBuild)
+    ) {
+      return sendUpdateRequired(res,requiredBuild);
+    }
+    const canonicalRecords=canonicalRecordsForClinicalProfile(
+      assignedProfile,
+      records,
+    );
+    if (!canonicalRecords) {
       return res.status(409).json({
         error:'Submitted symptoms do not match the clinic-assigned profile.',
         code:'assigned_profile_mismatch',
       });
     }
+    acceptedRecords=canonicalRecords;
     // Build 6 entries queued before a required Build 7 update have no profile
     // revision. They are accepted only when their records exactly match the
     // current clinic-assigned profile, then stamped with that revision.
@@ -1065,10 +1367,16 @@ app.post(
   const existingRows=readRows();
   const submissionRows=existingRows.filter(row=>row.SubmissionId===submissionId);
   if (submissionRows.length) {
-    const exactRetry=submissionRows.every(row=>
-      patientKey(row)===patientId && row.Date===b.date
-    );
+    const exactRetry=isExactSubmissionRetry(submissionRows,{
+      patientId,
+      date:b.date,
+      time:b.time,
+      wellness,
+      profileRevision:profileRevision||'',
+      records:acceptedRecords,
+    });
     if (exactRetry) {
+      recordAcceptedPayloadSchema(req,schemaVersion);
       return res.status(200).json({ok:true,duplicate:true,submissionId});
     }
     return res.status(409).json({
@@ -1088,20 +1396,26 @@ app.post(
     });
   }
   const receivedAt=new Date().toISOString();
-  const lines=records.map(r=>[
-    receivedAt,
-    b.date,
-    b.time,
-    patientName,
-    r.track,
-    r.disorder,
-    r.symptom,
-    r.score,
-    wellness,
-    submissionId,
-    patientId,
-    profileRevision||'',
-  ].map(escapeCsv).join(',')+'\n');
+  const lines=acceptedRecords.map(r=>{
+    const row=normalisedRecord(
+      receivedAt,
+      b.date,
+      b.time,
+      patientName,
+      r.track,
+      r.disorder,
+      r.symptom,
+      r.score,
+      wellness,
+      submissionId,
+      patientId,
+      profileRevision||'',
+      r.disorderId||'',
+      r.symptomId||'',
+      schemaVersion,
+    );
+    return csvColumns.map(column=>escapeCsv(row[column]||'')).join(',')+'\n';
+  });
   fs.appendFileSync(csvPath,lines.join(''),'utf8');
   if (
     mobileBuild(req)<7 &&
@@ -1109,7 +1423,14 @@ app.post(
   ) {
     identityStore.updatePatientDisplayName(patientId, patientName);
   }
-  res.status(201).json({ok:true,duplicate:false,submissionId,rows:lines.length});
+  recordAcceptedPayloadSchema(req,schemaVersion);
+  res.status(201).json({
+    ok:true,
+    duplicate:false,
+    submissionId,
+    rows:lines.length,
+    payloadSchemaVersion:schemaVersion,
+  });
 });
 
 function enrolmentPatients(rows) {
@@ -1123,14 +1444,20 @@ function enrolmentPatients(rows) {
     const fromData = directory.get(patientId);
     const fromStore = store.patients[patientId];
     if (fromStore?.reviewIdentity) return null;
-    const activeDevices = Object.values(store.devices).filter(
+    const activeDeviceRecords = Object.values(store.devices).filter(
       device => device.patientId === patientId && !device.revokedAt,
-    ).length;
+    );
+    const observedBuilds = [...new Set(activeDeviceRecords.map(device =>
+      Number.isInteger(device.lastMobileBuild)
+        ? `Build ${device.lastMobileBuild}`
+        : 'Build unknown'
+    ))].sort().join(', ');
     return {
       patientId,
       displayName: fromStore?.displayName || fromData?.displayName || 'Unnamed patient',
       supportId: supportId(patientId),
-      activeDevices,
+      activeDevices: activeDeviceRecords.length,
+      observedBuilds,
       clinicalProfile: fromStore?.clinicalProfile || null,
       suggestedProfile: fromStore?.clinicalProfile
         ? null
@@ -1156,11 +1483,15 @@ function suggestedClinicalProfile(rows, patientId) {
   const secondaryRows = submissionRows.filter(row => row.Track === 'Second');
   try {
     return normaliseClinicalProfile({
+      primaryDisorderId: primaryRows[0]?.DisorderId,
       primaryDisorder: primaryRows[0]?.Disorder,
+      primarySymptomIds: primaryRows.map(row => row.SymptomId).filter(Boolean),
       primarySymptoms: primaryRows.map(row => row.Symptom),
+      secondaryDisorderId: secondaryRows[0]?.DisorderId || '',
       secondaryDisorder: secondaryRows[0]?.Disorder || '',
+      secondarySymptomIds: secondaryRows.map(row => row.SymptomId).filter(Boolean),
       secondarySymptoms: secondaryRows.map(row => row.Symptom),
-    });
+    }, { disorderCatalog, includeInactive: true });
   } catch (_) {
     return null;
   }
@@ -1179,23 +1510,44 @@ function profileDescription(profile) {
   return tracks.join(' · ');
 }
 
-function disorderOptions(selected = '', allowBlank = false) {
+function availableDisorders(selectedIds = []) {
+  const selected = new Set(selectedIds.filter(Boolean));
+  const active = disorderCatalog.definitions();
+  const visible = customDisordersEnabled
+    ? active
+    : active.filter(disorder => disorder.kind === 'built-in');
+  for (const id of selected) {
+    if (visible.some(disorder => disorder.id === id)) continue;
+    const existing = disorderCatalog.findDisorder({
+      id,
+      includeInactive: true,
+    });
+    if (existing) visible.push(existing);
+  }
+  return visible;
+}
+
+function disorderOptions(selectedId = '', allowBlank = false) {
   return [
     allowBlank ? '<option value="">No second disorder</option>' : '',
-    ...Object.keys(symptomCatalog).map(disorder =>
-      `<option value="${html(disorder)}" ${disorder === selected ? 'selected' : ''}>${html(disorder)}</option>`
+    ...availableDisorders([selectedId]).map(disorder =>
+      `<option value="${html(disorder.id)}" ${disorder.id === selectedId ? 'selected' : ''}>${html(disorder.displayName)}${disorder.active ? '' : ' (archived)'}</option>`
     ),
   ].join('');
 }
 
-function symptomSelectors(track, selectedSymptoms = []) {
+function symptomSelectors(
+  track,
+  selectedDisorderIds = [],
+  selectedSymptomIds = [],
+) {
   const inputName = track === 'primary'
-    ? 'primarySymptoms'
-    : 'secondarySymptoms';
-  return Object.entries(symptomCatalog).map(([disorder, symptoms]) =>
-    `<div class="patient-list symptom-group" data-track="${track}" data-disorder="${html(disorder)}">
-      ${symptoms.map(symptom =>
-        `<label><input type="checkbox" name="${inputName}" value="${html(symptom)}" ${selectedSymptoms.includes(symptom) ? 'checked' : ''}>${html(symptom)}</label>`
+    ? 'primarySymptomIds'
+    : 'secondarySymptomIds';
+  return availableDisorders(selectedDisorderIds).map(disorder =>
+    `<div class="patient-list symptom-group" data-track="${track}" data-disorder="${html(disorder.id)}">
+      ${disorder.allowedSymptomIds.map((symptomId, index) =>
+        `<label><input type="checkbox" name="${inputName}" value="${html(symptomId)}" ${selectedSymptomIds.includes(symptomId) ? 'checked' : ''}>${html(disorder.allowedSymptoms[index])}</label>`
       ).join('')}
     </div>`
   ).join('');
@@ -1205,9 +1557,13 @@ function profileEditor(patient = null) {
   const profile = patient?.clinicalProfile ||
     patient?.suggestedProfile || {
       primaryDisorder: 'Migraine',
+      primaryDisorderId: 'migraine',
       primarySymptoms: [],
+      primarySymptomIds: [],
       secondaryDisorder: null,
+      secondaryDisorderId: null,
       secondarySymptoms: [],
+      secondarySymptomIds: [],
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
   return `<section class="panel"><h2>${patient ? 'Edit clinic-assigned profile' : 'Create patient profile'}</h2>
@@ -1218,13 +1574,13 @@ function profileEditor(patient = null) {
       <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
       <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient?.displayName || '')}"></div>
       <h3>Primary disorder</h3>
-      <div class="field"><label>Disorder</label><select name="primaryDisorder" id="primaryDisorder" required>${disorderOptions(profile.primaryDisorder)}</select></div>
+      <div class="field"><label>Disorder</label><select name="primaryDisorderId" id="primaryDisorder" required>${disorderOptions(profile.primaryDisorderId || 'migraine')}</select></div>
       <p class="muted"><span id="primaryCount">0</span>/3 symptoms selected</p>
-      ${symptomSelectors('primary', profile.primarySymptoms)}
+      ${symptomSelectors('primary', [profile.primaryDisorderId], profile.primarySymptomIds || [])}
       <h3>Optional second disorder</h3>
-      <div class="field"><label>Disorder</label><select name="secondaryDisorder" id="secondaryDisorder">${disorderOptions(profile.secondaryDisorder || '', true)}</select></div>
+      <div class="field"><label>Disorder</label><select name="secondaryDisorderId" id="secondaryDisorder">${disorderOptions(profile.secondaryDisorderId || '', true)}</select></div>
       <p class="muted"><span id="secondaryCount">0</span>/3 symptoms selected</p>
-      ${symptomSelectors('secondary', profile.secondarySymptoms)}
+      ${symptomSelectors('secondary', [profile.secondaryDisorderId], profile.secondarySymptomIds || [])}
       <div class="toolbar" style="margin-top:18px">
         <button type="submit" name="action" value="save">Save profile</button>
         <button type="submit" name="action" value="save-and-issue">Save and create enrolment code</button>
@@ -1284,7 +1640,7 @@ function enrolmentPage({
     <td>${html(patient.displayName)}</td>
     <td>${html(patient.supportId)}</td>
     <td>${html(profileDescription(patient.clinicalProfile))}</td>
-    <td>${patient.activeDevices}</td>
+    <td>${patient.activeDevices}${patient.observedBuilds ? `<br><span class="muted">${html(patient.observedBuilds)}</span>` : ''}</td>
     <td>
       <a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}">Edit profile</a>
       ${patient.clinicalProfile ? `<form class="inline-form" method="post" action="/admin/enrolments/issue">
@@ -1302,11 +1658,146 @@ function enrolmentPage({
   const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient)}
   <section class="panel"><h2>Existing clinic identities</h2>
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
-    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Assigned profile</th><th>Active devices</th><th>Actions</th></tr></thead>
+    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
     <tbody>${patientRows || '<tr><td colspan="5">No patient identities yet.</td></tr>'}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
+
+function disorderManagementPage({ error = '', message = '' } = {}) {
+  const csrfToken = adminCsrfToken();
+  const definitions = disorderCatalog.definitions({ includeInactive: true });
+  const compatibility = identityStore.compatibilitySummary();
+  const buildTraffic = Object.entries(compatibility.builds)
+    .sort(([left], [right]) => left.localeCompare(right, 'en-AU', {
+      numeric: true,
+    }))
+    .map(([build, count]) =>
+      `${build === 'unknown' ? 'Unknown build' : `Build ${build}`}: ${count}`
+    ).join(' · ') || 'No active devices observed';
+  const schemaTraffic = Object.entries(compatibility.payloadSchemas)
+    .sort(([left], [right]) => left.localeCompare(right, 'en-AU', {
+      numeric: true,
+    }))
+    .map(([schema, count]) =>
+      `${schema === 'unknown' ? 'No submission observed' : `Schema ${schema}`}: ${count}`
+    ).join(' · ');
+  const errorNotice = error
+    ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>`
+    : '';
+  const messageNotice = message
+    ? `<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>${html(message)}</strong></div>`
+    : '';
+  const rows = definitions.map(disorder => {
+    const status = disorder.kind === 'built-in'
+      ? 'Built in'
+      : disorder.active
+      ? 'Active'
+      : 'Archived';
+    const actions = disorder.kind === 'built-in'
+      ? '<span class="muted">Protected definition</span>'
+      : `<details><summary>Edit or archive</summary>
+          <form method="post" action="/admin/disorders/update" autocomplete="off" style="min-width:320px;margin-top:10px">
+            <input type="hidden" name="csrfToken" value="${csrfToken}">
+            <input type="hidden" name="disorderId" value="${html(disorder.id)}">
+            <div class="field"><label>Correct display name</label><input name="displayName" required maxlength="120" value="${html(disorder.displayName)}"></div>
+            <div class="field"><label>Retype display name</label><input name="confirmation" required maxlength="120"></div>
+            <button type="submit" name="action" value="rename">Save corrected name</button>
+          </form>
+          <form class="inline-form" method="post" action="/admin/disorders/update" style="display:block;margin-top:10px" onsubmit="return confirm('${disorder.active ? 'Archive this disorder for future profile assignments?' : 'Reactivate this disorder?'}')">
+            <input type="hidden" name="csrfToken" value="${csrfToken}">
+            <input type="hidden" name="disorderId" value="${html(disorder.id)}">
+            <button class="${disorder.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${disorder.active ? 'archive' : 'reactivate'}">${disorder.active ? 'Archive' : 'Reactivate'}</button>
+          </form>
+        </details>`;
+    return `<tr>
+      <td>${html(disorder.displayName)}</td>
+      <td><code>${html(disorder.id)}</code></td>
+      <td>${status}</td>
+      <td>${disorder.allowedSymptoms.length}</td>
+      <td>Build ${disorder.minimumAppBuild}+</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
+  const activation = customDisordersEnabled
+    ? '<strong class="good">Custom disorder assignment is enabled.</strong>'
+    : '<strong class="flag">Custom disorder assignment remains disabled until Build 8 is available on both stores.</strong>';
+  const body = `${errorNotice}${messageNotice}
+    <section class="panel"><h2>Compatibility traffic</h2>
+      <p><strong>${html(buildTraffic)}</strong></p>
+      <p class="muted">${html(schemaTraffic)}${schemaTraffic ? ' · ' : ''}Canonical-capable active devices: ${compatibility.canonicalDevices}/${compatibility.activeDevices}.</p>
+      <p class="muted">Build 7 and schema 1 remain supported. These observations are evidence for a later compatibility review; they do not automatically retire older handling.</p>
+    </section>
+    <section class="panel"><h2>Disorder catalogue</h2>
+      <p>${activation}</p>
+      <p class="muted">Disorder names are created once and then selected by stable ID. Patient profiles may choose exactly three symptoms from the controlled NeuroSol symptom vocabulary. Archiving never rewrites historical profiles or submitted records.</p>
+      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Available symptoms</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section>
+    <section class="panel"><h2>Create a custom disorder</h2>
+      <p class="muted">Use the clinically correct name and retype it independently. Case and spacing variants of existing disorders are rejected.</p>
+      <form method="post" action="/admin/disorders/create" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <div class="toolbar">
+          <div class="field"><label>Exact disorder name</label><input name="displayName" required minlength="3" maxlength="120"></div>
+          <div class="field"><label>Retype exact disorder name</label><input name="confirmation" required minlength="3" maxlength="120"></div>
+          <div class="field"><label>&nbsp;</label><button type="submit">Create catalogue entry</button></div>
+        </div>
+      </form>
+    </section>`;
+  return pageShell('Disorder catalogue', body);
+}
+
+app.get('/admin/disorders',requireAdmin,(req,res)=>{
+  res.send(disorderManagementPage());
+});
+
+app.post('/admin/disorders/create',requireAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    const created = disorderCatalog.createCustomDisorder({
+      displayName: req.body.displayName,
+      confirmation: req.body.confirmation,
+      actor: adminUser,
+    });
+    return res.status(201).send(disorderManagementPage({
+      message: `${created.displayName} was created with canonical ID ${created.id}.`,
+    }));
+  } catch (error) {
+    return res.status(400).send(disorderManagementPage({
+      error: error.message,
+    }));
+  }
+});
+
+app.post('/admin/disorders/update',requireAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    const action = String(req.body.action || '');
+    const input = {
+      id: req.body.disorderId,
+      actor: adminUser,
+    };
+    if (action === 'rename') {
+      input.displayName = req.body.displayName;
+      input.confirmation = req.body.confirmation;
+    } else if (action === 'archive') {
+      input.active = false;
+    } else if (action === 'reactivate') {
+      input.active = true;
+    } else {
+      throw new Error('The requested catalogue action is invalid.');
+    }
+    const updated = disorderCatalog.updateCustomDisorder(input);
+    const refreshedProfiles = action === 'rename'
+      ? identityStore.refreshProfilesForDisorder(updated.id)
+      : 0;
+    return res.send(disorderManagementPage({
+      message: `${updated.displayName} was updated.${refreshedProfiles ? ` ${refreshedProfiles} assigned profile(s) received a new revision.` : ''}`,
+    }));
+  } catch (error) {
+    return res.status(400).send(disorderManagementPage({
+      error: error.message,
+    }));
+  }
+});
 
 app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
 
@@ -1318,15 +1809,45 @@ app.get('/admin/enrolments',requireAdmin,(req,res)=>{
 
 app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res)=>{
   try {
+    const patientId = String(req.body.patientId || '').trim();
+    const clinicalProfile = normaliseClinicalProfile({
+      primaryDisorderId: req.body.primaryDisorderId,
+      primarySymptomIds: values(req.body.primarySymptomIds),
+      secondaryDisorderId: req.body.secondaryDisorderId,
+      secondarySymptomIds: values(req.body.secondarySymptomIds),
+      // Build 7 form compatibility during the backend-first rollout.
+      primaryDisorder: req.body.primaryDisorder,
+      primarySymptoms: values(req.body.primarySymptoms),
+      secondaryDisorder: req.body.secondaryDisorder,
+      secondarySymptoms: values(req.body.secondarySymptoms),
+    }, { disorderCatalog });
+    if (profileMinimumBuild(clinicalProfile) >= 8 && !customDisordersEnabled) {
+      throw new Error(
+        'Custom disorder assignment is disabled until Build 8 is available.',
+      );
+    }
+    if (profileMinimumBuild(clinicalProfile) >= 8 && patientId) {
+      const activeDevices = Object.values(identityStore.snapshot().devices)
+        .filter(device =>
+          device.patientId === patientId && !device.revokedAt
+        );
+      const incompatibleDevices = activeDevices.filter(device =>
+        !Number.isInteger(device.lastMobileBuild) ||
+        device.lastMobileBuild < 8 ||
+        device.supportsCanonicalDisorders !== true
+      );
+      if (incompatibleDevices.length) {
+        throw new Error(
+          'This patient still has an active Build 7 or unconfirmed device. ' +
+          'Observe the device on Build 8 with canonical support, or revoke ' +
+          'the obsolete device, before assigning a custom disorder.',
+        );
+      }
+    }
     const saved = identityStore.saveClinicalProfile({
-      patientId: String(req.body.patientId || '').trim(),
+      patientId,
       displayName: String(req.body.displayName || '').trim(),
-      clinicalProfile: normaliseClinicalProfile({
-        primaryDisorder: req.body.primaryDisorder,
-        primarySymptoms: values(req.body.primarySymptoms),
-        secondaryDisorder: req.body.secondaryDisorder,
-        secondarySymptoms: values(req.body.secondarySymptoms),
-      }),
+      clinicalProfile,
     });
     if (req.body.action === 'save-and-issue') {
       const issued = identityStore.issueEnrolmentCode({
@@ -1479,16 +2000,21 @@ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
     : '';
   const directory=patientDirectory(allRows);
   const selectedPatient=directory.get(selectedId);
+  const selectedDisorderId=resolveDisorderKey(
+    allRows,
+    req.query.disorderId,
+    req.query.disorder,
+  );
   const rows=allRows.filter(r=>
     (!selectedId||patientKey(r)===selectedId)&&
-    (!req.query.disorder||r.Disorder===req.query.disorder)
+    (!selectedDisorderId||disorderKey(r)===selectedDisorderId)
   );
   const doc=new PDFDocument({margin:48});
   res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurosol-clinical-report.pdf"');doc.pipe(res);
   doc.fontSize(20).text('NeuroSol Clinical Report');doc.moveDown();
   doc.fontSize(11).text(`Patient: ${selectedPatient?.displayName||'Cohort'}`);
   if (selectedPatient) doc.text(`Support ID: ${selectedPatient.supportId}`);
-  doc.text(`Disorder: ${req.query.disorder||'All'}`);doc.text(`Generated: ${new Date().toLocaleString('en-AU')}`);doc.moveDown();
+  doc.text(`Disorder: ${disorderLabel(allRows,selectedDisorderId)||'All'}`);doc.text(`Generated: ${new Date().toLocaleString('en-AU')}`);doc.moveDown();
   const dates=unique(rows,'Date');doc.text(`Date range: ${dates[0]||'-'} to ${dates[dates.length-1]||'-'}`);doc.text(`Submission rows: ${rows.length}`);doc.moveDown();
   unique(rows,'Symptom').forEach(sym=>{const vals=rows.filter(r=>r.Symptom===sym).map(r=>r.ScoreNumber);doc.text(`${sym}: mean ${round1(mean(vals))}/10, range ${Math.min(...vals)}–${Math.max(...vals)}`)});
   const wellness=[...new Map(rows.filter(r=>r.WellnessNumber>0).map(r=>[`${patientKey(r)}|${r.Date}`,r.WellnessNumber])).values()];doc.moveDown().text(`Average wellness: ${round1(mean(wellness))}%`);
@@ -1496,51 +2022,56 @@ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
 });
 
 app.get('/admin',requireAdmin,(req,res)=>{
-  const rows=readRows(), directory=patientDirectory(rows), disorders=unique(rows,'Disorder');
+  const rows=readRows(), directory=patientDirectory(rows), disorders=disorderChoices(rows);
   const patients=[...directory.values()].sort((a,b)=>a.label.localeCompare(b.label));
   const patientId=resolvePatientKey(rows,req.query.patientId,req.query.patient);
   const selectedPatient=directory.get(patientId);
-  const disorder=req.query.disorder||'';
+  const disorderId=resolveDisorderKey(
+    rows,
+    req.query.disorderId,
+    req.query.disorder,
+  );
   const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'weekly';
   const calendarDays=[30,60,90].includes(Number(req.query.calendarDays))?Number(req.query.calendarDays):30;
   const requestedMetric=String(req.query.metric||'wellness');
   const metric=requestedMetric==='symptom'||requestedMetric==='wellness'||requestedMetric.startsWith('symptom:')?requestedMetric:'wellness';
-  const filtered=rows.filter(r=>(!patientId||patientKey(r)===patientId)&&(!disorder||r.Disorder===disorder));
-  const series=patientSeries(filtered,disorder,metric,aggregation,patientId?[patientId]:[],directory);
+  const filtered=rows.filter(r=>(!patientId||patientKey(r)===patientId)&&(!disorderId||disorderKey(r)===disorderId));
+  const series=patientSeries(filtered,disorderId,metric,aggregation,patientId?[patientId]:[],directory);
   const dates=unique(filtered,'Date'), symptoms=unique(filtered,'Symptom');
   const avgSym=round1(mean(filtered.map(r=>r.ScoreNumber)));
   const wellness=[...new Map(filtered.filter(r=>r.WellnessNumber>0).map(r=>[`${patientKey(r)}|${r.Date}`,r.WellnessNumber])).values()];
   const latest=[...filtered].sort((a,b)=>`${b.Date}${b.Time}`.localeCompare(`${a.Date}${a.Time}`)).slice(0,120);
-  const options=(items,selected,all=false)=>(all?'<option value="">All</option>':'')+items.map(x=>`<option value="${html(x)}" ${x===selected?'selected':''}>${html(x)}</option>`).join('');
+  const disorderOptionsHtml='<option value="">All</option>'+disorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
   const patientOptions=patients.map(patient=>`<option value="${html(patient.patientId)}" ${patient.patientId===patientId?'selected':''}>${html(patient.label)}</option>`).join('');
   const body=`<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${round1(mean(wellness))}%</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${avgSym}/10</div></div></div>
-  <form class="panel toolbar"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorder">${options(disorders,disorder,true)}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Calendar range</label><select name="calendarDays">${[30,60,90].map(days=>`<option value="${days}" ${days===calendarDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
+  <form class="panel toolbar"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Calendar range</label><select name="calendarDays">${[30,60,90].map(days=>`<option value="${days}" ${days===calendarDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
   <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Weekly aggregation is the default to reduce day-to-day noise. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
   <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,calendarDays)}</section>
-  <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div><a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorder=${encodeURIComponent(disorder)}">Generate PDF</a></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(r.Disorder)}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join('')}</tbody></table></div></section>`;
+  <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div><a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(r.Disorder)}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join('')}</tbody></table></div></section>`;
   res.send(pageShell('Patient review',body));
 });
 
 app.get('/admin/population',requireAdmin,(req,res)=>{
-  const rows=readRows(), directory=patientDirectory(rows), disorders=unique(rows,'Disorder');
-  const disorder=req.query.disorder||disorders[0]||'', metric=req.query.metric==='symptom'?'symptom':'wellness';
+  const rows=readRows(), directory=patientDirectory(rows), disorders=disorderChoices(rows);
+  const disorderId=resolveDisorderKey(rows,req.query.disorderId,req.query.disorder)||disorders[0]?.id||'', metric=req.query.metric==='symptom'?'symptom':'wellness';
+  const disorder=disorderLabel(rows,disorderId);
   const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'weekly';
-  const allPatients=[...new Set(rows.filter(r=>r.Disorder===disorder).map(patientKey).filter(Boolean))]
+  const allPatients=[...new Set(rows.filter(r=>disorderKey(r)===disorderId).map(patientKey).filter(Boolean))]
     .sort((a,b)=>(directory.get(a)?.label||a).localeCompare(directory.get(b)?.label||b));
   const selected=String(req.query.patients||'').split('|').filter(x=>allPatients.includes(x)).slice(0,10);
-  const cohort=patientSeries(rows,disorder,metric,aggregation,[],directory);
+  const cohort=patientSeries(rows,disorderId,metric,aggregation,[],directory);
   const overlayPatients=selected.length?selected:allPatients.slice(0,10);
-  const overlay=patientSeries(rows,disorder,metric,aggregation,overlayPatients,directory);
+  const overlay=patientSeries(rows,disorderId,metric,aggregation,overlayPatients,directory);
   const summary=cohortSeries(cohort,metric), latest=summary[summary.length-1]||{average:0,median:0,count:0};
   const statuses=cohort.map(p=>({patient:p.patient,label:p.label||p.patient,status:classifyPatientTrend(p,metric),latest:p.series[p.series.length-1]?.value||0}));
   const improving=statuses.filter(x=>x.status==='Improving').length, deteriorating=statuses.filter(x=>x.status==='Deteriorating').length;
   const deviations=statuses.map(s=>({ ...s, deviation:round1(s.latest-latest.average) })).sort((a,b)=>Math.abs(b.deviation)-Math.abs(a.deviation));
   const threshold=metric==='wellness'?20:2;
   const flagged=deviations.filter(x=>Math.abs(x.deviation)>=threshold);
-  const options=disorders.map(x=>`<option ${x===disorder?'selected':''}>${html(x)}</option>`).join('');
+  const options=disorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
   const patientChecks=allPatients.map(patientId=>`<label><input type="checkbox" name="patient" value="${html(patientId)}" ${overlayPatients.includes(patientId)?'checked':''}>${html(directory.get(patientId)?.label||patientId)}</label>`).join('');
   const body=`<div class="cards"><div class="stat"><div class="label">Disorder</div><div class="value" style="font-size:20px">${html(disorder)}</div></div><div class="stat"><div class="label">Patients</div><div class="value">${cohort.length}</div></div><div class="stat"><div class="label">Latest cohort mean</div><div class="value">${latest.average}${metric==='wellness'?'%':'/10'}</div></div><div class="stat"><div class="label">Improving</div><div class="value good">${improving}</div></div><div class="stat"><div class="label">Deteriorating</div><div class="value flag">${deteriorating}</div></div><div class="stat"><div class="label">Cohort outliers</div><div class="value">${flagged.length}</div></div></div>
-  <form class="panel toolbar" id="filters"><div class="field"><label>Disorder</label><select name="disorder">${options}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option></select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button type="button" onclick="applyFilters()">Update view</button></div></form>
+  <form class="panel toolbar" id="filters"><div class="field"><label>Disorder</label><select name="disorderId">${options}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option></select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button type="button" onclick="applyFilters()">Update view</button></div></form>
   <section class="panel"><h2>Cohort summary</h2><p class="muted">Faint grey lines are individual patients. Blue is the cohort mean, purple dashed is the median, and the shaded band is ±1 standard deviation.</p>${svgChart(cohort,metric,aggregation,'summary')}<div class="legend"><span><i class="swatch" style="background:#1d4ed8"></i>Cohort mean</span><span><i class="swatch" style="background:#7c3aed"></i>Median</span><span><i class="swatch" style="background:#93c5fd;height:12px"></i>±1 SD</span></div></section>
   <section class="panel"><h2>Patient overlay</h2><p class="muted">Select up to 10 patients for a legible comparison. The first 10 are shown by default.</p><div class="patient-list" id="patientList">${patientChecks}</div><div style="display:flex;gap:8px;margin:10px 0 16px"><button style="width:auto" onclick="selectFirstTen()">First 10</button><button class="button secondary" style="width:auto" onclick="clearPatients()">Clear</button></div>${svgChart(overlay,metric,aggregation,'overlay')}</section>
   <section class="panel"><h2>Outliers and response status</h2><p class="muted">Outliers compare each patient's latest aggregated value with the latest cohort mean. Threshold: ${threshold}${metric==='wellness'?' percentage points':' score points'}.</p><div class="table-wrap"><table><thead><tr><th>Patient</th><th>Status</th><th>Latest</th><th>Deviation</th><th>Flag</th></tr></thead><tbody>${deviations.map(x=>`<tr><td>${html(x.label)}</td><td class="${x.status==='Improving'?'good':x.status==='Deteriorating'?'flag':''}">${x.status}</td><td>${x.latest}${metric==='wellness'?'%':'/10'}</td><td>${x.deviation>0?'+':''}${x.deviation}</td><td class="${Math.abs(x.deviation)>=threshold?'flag':''}">${Math.abs(x.deviation)>=threshold?'Cohort outlier':'Within range'}</td></tr>`).join('')}</tbody></table></div></section>
@@ -1568,6 +2099,9 @@ if (require.main === module) {
 module.exports = {
   app,
   csvPath,
+  disorderCatalog,
+  disorderChoices,
+  disorderKey,
   identityStore,
   patientDirectory,
   patientSeries,

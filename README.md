@@ -5,8 +5,8 @@ with a CSV-backed clinician portal.
 
 ## Current release
 
-- App version: `1.0.0+7`
-- Backend version: `0.7.0`
+- Public mobile version: `1.0.0+7` (remains supported)
+- Compatible backend source: `0.8.0` (deploy before Build 8 mobile)
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
 - Production API: `https://tracker.melindapascoeneurology.com`
@@ -31,22 +31,21 @@ support ID, and emergency/medical disclaimers.
 
 ## Required updates
 
-Every mobile API request identifies its build. The backend defaults
-`MIN_SUPPORTED_MOBILE_BUILD` to `LATEST_MOBILE_BUILD`, and Build 7 also blocks
-itself if `/api/mobile-config` reports a newer release. Unsupported apps receive
-HTTP `426 app_update_required` for enrolment, profile sync, and submissions.
-
-For Google Play review only, the server may temporarily use:
+Every mobile API request identifies its build. Build 7 is public and its
+support floor must remain locked at 7 throughout the Build 8 rollout. Deploy
+backend `0.8.0` before releasing either Build 8 app with:
 
 ```env
 LATEST_MOBILE_BUILD=7
-MIN_SUPPORTED_MOBILE_BUILD=6
+MIN_SUPPORTED_MOBILE_BUILD=7
+ENABLE_CUSTOM_DISORDERS=false
 ```
 
-As soon as Build 7 is available to patients, set
-`MIN_SUPPORTED_MOBILE_BUILD=7` and restart the service. This final switch is
-mandatory. Build 6 does not contain the new update screen, but after the switch
-its enrolment and uploads are rejected by the server.
+Missing payload `schemaVersion` remains the Build 7/schema 1 contract. The
+backend maps validated Build 7 labels to canonical disorder and symptom IDs
+without changing `PatientId` or `ProfileRevision`. After Build 8 is
+downloadable from both stores, `LATEST_MOBILE_BUILD` can become 8 and custom
+disorders can be enabled; `MIN_SUPPORTED_MOBILE_BUILD` remains 7.
 
 ## Development checks
 
@@ -95,12 +94,15 @@ The backend runtime directory contains:
 
 - `symptom_entries.csv`
 - `identity_store.json`
+- `disorder_catalog.json`
 - automatic migration/deletion backups
 
-Back up the CSV and identity store together. Keep the production `.env`,
+Back up the CSV, identity store, and disorder catalogue together. Keep the production `.env`,
 `IDENTITY_SECRET`, signing material, clinical exports, and patient screenshots
 out of Git.
 
-Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the controlled Build 7
-rollout and [deploy/WINDOWS_HTTPS_DEPLOYMENT.md](deploy/WINDOWS_HTTPS_DEPLOYMENT.md)
-for the Windows service.
+Use the
+[Build 8 compatible backend pack](delivery/build8-backend-compatibility/README.md)
+for the protected migration and live Build 7 verification, and
+[deploy/WINDOWS_HTTPS_DEPLOYMENT.md](deploy/WINDOWS_HTTPS_DEPLOYMENT.md) for the
+Windows service topology.

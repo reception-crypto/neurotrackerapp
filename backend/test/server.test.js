@@ -13,13 +13,15 @@ process.env.ADMIN_PASSWORD = 'test-admin-password';
 process.env.REVIEW_ENROLMENT_CODE = 'R3VW4CC3SS99';
 process.env.REVIEW_PATIENT_ID_PREFIX = 'pt-review-google-play';
 process.env.REVIEW_DISPLAY_NAME = 'Google Play Review';
-// The main suite also exercises the temporary Build 6 compatibility window.
-// Production defaults to the latest build and has a separate enforcement test.
+process.env.ENABLE_CUSTOM_DISORDERS = 'true';
+// The main suite lowers this only to preserve regression coverage for queued
+// historical Build 6 data. Production startup separately enforces Build 7.
 process.env.MIN_SUPPORTED_MOBILE_BUILD = '6';
 process.env.LATEST_MOBILE_BUILD = '7';
 
 const {
   app,
+  disorderCatalog,
   identityStore,
   patientDirectory,
 } = require('../server');
@@ -78,6 +80,14 @@ function build7Headers(accessToken = '', json = true) {
   };
 }
 
+function build8Headers(accessToken = '', json = true) {
+  return {
+    ...build7Headers(accessToken, json),
+    'x-neurosol-build': '8',
+    'x-neurosol-disorders': 'canonical-v1',
+  };
+}
+
 async function enrol({
   patientId = '',
   displayName = 'Synthetic Patient',
@@ -123,10 +133,16 @@ async function enrolClinicManaged({
   };
 }
 
-async function post(body, accessToken = '', { clinicManaged = false } = {}) {
+async function post(
+  body,
+  accessToken = '',
+  { clinicManaged = false, canonical = false } = {},
+) {
   return fetch(`${baseUrl}/api/symptom-entry`, {
     method: 'POST',
-    headers: clinicManaged
+    headers: canonical
+      ? build8Headers(accessToken)
+      : clinicManaged
       ? build7Headers(accessToken)
       : {
           'content-type': 'application/json',
@@ -157,6 +173,8 @@ test('production refuses placeholder deployment secrets', () => {
         ...process.env,
         NODE_ENV: 'production',
         DATA_DIR: configDataDir,
+        MIN_SUPPORTED_MOBILE_BUILD: '7',
+        LATEST_MOBILE_BUILD: '7',
         IDENTITY_SECRET: 'replace-with-at-least-32-random-characters',
         ADMIN_PASSWORD: 'replace-with-a-long-unique-admin-password',
       },
@@ -170,7 +188,7 @@ test('production refuses placeholder deployment secrets', () => {
   );
 });
 
-test('production defaults to requiring the latest mobile build', () => {
+test('mobile configuration keeps Build 7 supported when Build 8 is latest', () => {
   const configDataDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'neurosol-version-'),
   );
@@ -182,12 +200,32 @@ test('production defaults to requiring the latest mobile build', () => {
         const { app } = require('./server');
         const server = app.listen(0, '127.0.0.1', async () => {
           const port = server.address().port;
-          const response = await fetch('http://127.0.0.1:' + port + '/api/enrol', {
+          const base = 'http://127.0.0.1:' + port;
+          const build7 = await fetch(base + '/api/mobile-config', {
+            headers: {
+              'x-neurosol-build': '7',
+              'x-neurosol-profile': 'clinic-managed-v1',
+            },
+          });
+          const build8 = await fetch(base + '/api/mobile-config', {
+            headers: {
+              'x-neurosol-build': '8',
+              'x-neurosol-profile': 'clinic-managed-v1',
+              'x-neurosol-disorders': 'canonical-v1',
+            },
+          });
+          const enrolment = await fetch(base + '/api/enrol', {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: {
+              'content-type': 'application/json',
+              'x-neurosol-build': '7',
+              'x-neurosol-profile': 'clinic-managed-v1',
+            },
             body: JSON.stringify({ code: 'AAAAAAAAAAAA' }),
           });
-          console.log(response.status);
+          console.log('BUILD7=' + JSON.stringify(await build7.json()));
+          console.log('BUILD8=' + JSON.stringify(await build8.json()));
+          console.log('ENROLMENT=' + enrolment.status);
           server.close();
         });
       `,
@@ -199,13 +237,215 @@ test('production defaults to requiring the latest mobile build', () => {
         ...process.env,
         DATA_DIR: configDataDir,
         MIN_SUPPORTED_MOBILE_BUILD: '',
-        LATEST_MOBILE_BUILD: '7',
+        LATEST_MOBILE_BUILD: '8',
       },
     },
   );
   fs.rmSync(configDataDir, { recursive: true, force: true });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /426/);
+  assert.match(result.stdout, /BUILD7=.*"minimumBuild":7.*"latestBuild":7/);
+  assert.match(result.stdout, /BUILD8=.*"minimumBuild":7.*"latestBuild":8/);
+  assert.match(result.stdout, /ENROLMENT=404/);
+});
+
+test('production refuses to raise the global minimum above Build 7', () => {
+  const configDataDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'neurosol-minimum-build-'),
+  );
+  const result = childProcess.spawnSync(
+    process.execPath,
+    ['-e', 'require("./server")'],
+    {
+      cwd: path.join(__dirname, '..'),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_ENV: 'production',
+        DATA_DIR: configDataDir,
+        MIN_SUPPORTED_MOBILE_BUILD: '8',
+        LATEST_MOBILE_BUILD: '8',
+        IDENTITY_SECRET: 'valid-production-identity-secret-at-least-32-characters',
+        ADMIN_PASSWORD: 'valid-production-admin-password',
+      },
+    },
+  );
+  fs.rmSync(configDataDir, { recursive: true, force: true });
+  assert.notEqual(result.status, 0);
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /must remain 7 while Build 7 is supported/,
+  );
+});
+
+test('Build 7 CSV migration backs up and appends canonical IDs', () => {
+  const migrationDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'neurosol-csv-migration-'),
+  );
+  try {
+    const csvPath = path.join(migrationDir, 'symptom_entries.csv');
+    fs.writeFileSync(
+      csvPath,
+      [
+        'ReceivedAt,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,SubmissionId,PatientId,ProfileRevision',
+        '2026-08-04T09:00:00.000Z,2026-08-04,19:00,Legacy Patient,Primary,Migraine,Headache,4,70,NS-legacy,pt-legacy,1',
+        '2026-07-01T09:00:00.000Z,2026-07-01,19:00,Historical Patient,Primary,Dysautonomia,Sweating changes,5,60,NS-historical,pt-historical,1',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const result = childProcess.spawnSync(
+      process.execPath,
+      ['-e', 'require("./server")'],
+      {
+        cwd: path.join(__dirname, '..'),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_ENV: '',
+          DATA_DIR: migrationDir,
+          IDENTITY_SECRET: 'migration-test-identity-secret-32-characters',
+          ADMIN_PASSWORD: 'migration-test-admin-password',
+          ENABLE_CUSTOM_DISORDERS: 'false',
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const migrated = fs.readFileSync(csvPath, 'utf8').trim().split('\n');
+    assert.match(migrated[0], /,DisorderId,SymptomId,PayloadSchemaVersion$/);
+    assert.match(migrated[1], /,migraine,headache,1$/);
+    assert.match(migrated[2], /,dysautonomia,sweating-changes,1$/);
+    assert.equal(
+      fs.readdirSync(migrationDir)
+        .filter(name => name.startsWith('symptom_entries.backup-')).length,
+      1,
+    );
+
+    const secondRun = childProcess.spawnSync(
+      process.execPath,
+      ['-e', 'require("./server")'],
+      {
+        cwd: path.join(__dirname, '..'),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_ENV: '',
+          DATA_DIR: migrationDir,
+          IDENTITY_SECRET: 'migration-test-identity-secret-32-characters',
+          ADMIN_PASSWORD: 'migration-test-admin-password',
+          ENABLE_CUSTOM_DISORDERS: 'false',
+        },
+      },
+    );
+    assert.equal(secondRun.status, 0, secondRun.stderr);
+    assert.equal(
+      fs.readdirSync(migrationDir)
+        .filter(name => name.startsWith('symptom_entries.backup-')).length,
+      1,
+    );
+  } finally {
+    fs.rmSync(migrationDir, { recursive: true, force: true });
+  }
+});
+
+test('server startup refuses a corrupt disorder catalogue without rewriting it', () => {
+  const corruptDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'neurosol-corrupt-catalog-'),
+  );
+  try {
+    const catalogPath = path.join(corruptDir, 'disorder_catalog.json');
+    const corruptText = '{"version":1,"customDisorders":{"broken":{}},"auditLog":[]}';
+    fs.writeFileSync(catalogPath, corruptText, 'utf8');
+    const result = childProcess.spawnSync(
+      process.execPath,
+      ['-e', 'require("./server")'],
+      {
+        cwd: path.join(__dirname, '..'),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_ENV: '',
+          DATA_DIR: corruptDir,
+          IDENTITY_SECRET: 'corrupt-test-identity-secret-at-least-32-characters',
+          ADMIN_PASSWORD: 'corrupt-test-admin-password',
+        },
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /invalid record/);
+    assert.equal(fs.readFileSync(catalogPath, 'utf8'), corruptText);
+  } finally {
+    fs.rmSync(corruptDir, { recursive: true, force: true });
+  }
+});
+
+test('custom disorder assignment remains gated until explicitly enabled', () => {
+  const gateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'neurosol-custom-gate-'),
+  );
+  try {
+    const script = `
+      const { createDisorderCatalogStore } = require('./disorder_catalog');
+      const catalog = createDisorderCatalogStore({ dataDir: process.env.DATA_DIR });
+      const custom = catalog.createCustomDisorder({
+        displayName: 'Multiple system atrophy',
+        confirmation: 'Multiple system atrophy',
+      });
+      const { app } = require('./server');
+      const credentials = Buffer.from('gate-admin:gate-admin-password').toString('base64');
+      const auth = { authorization: 'Basic ' + credentials };
+      const server = app.listen(0, '127.0.0.1', async () => {
+        try {
+          const base = 'http://127.0.0.1:' + server.address().port;
+          const page = await fetch(base + '/admin/enrolments', { headers: auth });
+          const html = await page.text();
+          const csrfToken = html.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+          const form = new URLSearchParams({
+            csrfToken,
+            displayName: 'Gated Patient',
+            primaryDisorderId: custom.id,
+            action: 'save',
+          });
+          ['pain', 'dizziness', 'fatigue'].forEach(id => form.append('primarySymptomIds', id));
+          const response = await fetch(base + '/admin/enrolments/save-profile', {
+            method: 'POST',
+            headers: {
+              ...auth,
+              'content-type': 'application/x-www-form-urlencoded',
+            },
+            body: form,
+          });
+          const body = await response.text();
+          console.log('GATE_STATUS=' + response.status);
+          console.log('GATE_MESSAGE=' + body.includes('disabled until Build 8 is available'));
+        } finally {
+          server.close();
+        }
+      });
+    `;
+    const result = childProcess.spawnSync(process.execPath, ['-e', script], {
+      cwd: path.join(__dirname, '..'),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_ENV: '',
+        DATA_DIR: gateDir,
+        IDENTITY_SECRET: 'gate-test-identity-secret-at-least-32-characters',
+        ADMIN_USER: 'gate-admin',
+        ADMIN_PASSWORD: 'gate-admin-password',
+        LATEST_MOBILE_BUILD: '7',
+        MIN_SUPPORTED_MOBILE_BUILD: '7',
+        ENABLE_CUSTOM_DISORDERS: 'false',
+        REVIEW_ENROLMENT_CODE: '',
+        REVIEW_PATIENT_ID_PREFIX: '',
+        REVIEW_DISPLAY_NAME: '',
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /GATE_STATUS=400/);
+    assert.match(result.stdout, /GATE_MESSAGE=true/);
+  } finally {
+    fs.rmSync(gateDir, { recursive: true, force: true });
+  }
 });
 
 test('rejects uploads from a device that is not enrolled', async () => {
@@ -460,6 +700,302 @@ test('admin profile forms require CSRF and never store plaintext codes', async (
   assert.equal(storedIdentity.includes(code.replaceAll('-', '')), false);
 });
 
+test('admin disorder creation requires CSRF, exact confirmation, and uniqueness', async () => {
+  const pageResponse = await fetch(`${baseUrl}/admin/disorders`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(pageResponse.status, 200);
+  const page = await pageResponse.text();
+  const csrfToken = page.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+
+  const mismatched = await fetch(`${baseUrl}/admin/disorders/create`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      displayName: 'Spinocerebellar ataxia',
+      confirmation: 'Spinocerebellar Ataxia',
+    }),
+  });
+  assert.equal(mismatched.status, 400);
+
+  const created = await fetch(`${baseUrl}/admin/disorders/create`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      displayName: 'Spinocerebellar ataxia',
+      confirmation: 'Spinocerebellar ataxia',
+    }),
+  });
+  assert.equal(created.status, 201);
+  assert.match(await created.text(), /Spinocerebellar ataxia/);
+
+  const duplicate = await fetch(`${baseUrl}/admin/disorders/create`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      displayName: 'SPINOCEREBELLAR ATAXIA',
+      confirmation: 'SPINOCEREBELLAR ATAXIA',
+    }),
+  });
+  assert.equal(duplicate.status, 400);
+  assert.match(await duplicate.text(), /already exists/);
+});
+
+test('an active Build 7 device blocks a Build 8-only profile assignment', async () => {
+  const custom = disorderCatalog.createCustomDisorder({
+    displayName: 'Progressive supranuclear palsy',
+    confirmation: 'Progressive supranuclear palsy',
+    actor: 'test-admin',
+  });
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-build7-custom-guard',
+    displayName: 'Build Seven Guard',
+  });
+  const page = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  const csrfToken = (await page.text())
+    .match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  const profileForm = () => {
+    const form = new URLSearchParams({
+      csrfToken,
+      patientId: identity.patientId,
+      displayName: 'Build Seven Guard',
+      primaryDisorderId: custom.id,
+      action: 'save',
+    });
+    ['pain', 'dizziness', 'fatigue'].forEach(id =>
+      form.append('primarySymptomIds', id)
+    );
+    return form;
+  };
+  const blocked = await fetch(
+    `${baseUrl}/admin/enrolments/save-profile`,
+    {
+      method: 'POST',
+      headers: {
+        ...adminHeaders(),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: profileForm(),
+    },
+  );
+  assert.equal(blocked.status, 400);
+  assert.match(await blocked.text(), /active Build 7 or unconfirmed device/);
+
+  const observedUpgrade = await fetch(`${baseUrl}/api/profile`, {
+    headers: build8Headers(identity.accessToken, false),
+  });
+  assert.equal(observedUpgrade.status, 200);
+
+  const accepted = await fetch(
+    `${baseUrl}/admin/enrolments/save-profile`,
+    {
+      method: 'POST',
+      headers: {
+        ...adminHeaders(),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: profileForm(),
+    },
+  );
+  assert.equal(accepted.status, 200);
+  assert.equal(
+    identityStore.patientClinicalProfile(identity.patientId)
+      .primaryDisorderId,
+    custom.id,
+  );
+});
+
+test('custom profiles require Build 8 and submissions receive canonical IDs', async () => {
+  const custom = disorderCatalog.createCustomDisorder({
+    displayName: 'Multiple sclerosis',
+    confirmation: 'Multiple sclerosis',
+    actor: 'test-admin',
+  });
+  const saved = identityStore.saveClinicalProfile({
+    patientId: 'pt-custom-disorder',
+    displayName: 'Custom Disorder Patient',
+    clinicalProfile: {
+      primaryDisorderId: custom.id,
+      primarySymptomIds: ['pain', 'dizziness', 'fatigue'],
+    },
+  });
+  const issued = identityStore.issueEnrolmentCode({
+    patientId: saved.patientId,
+    displayName: saved.displayName,
+    requireClinicalProfile: true,
+  });
+
+  const build7Attempt = await fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: build7Headers(),
+    body: JSON.stringify({ code: issued.code }),
+  });
+  assert.equal(build7Attempt.status, 426);
+  assert.equal((await build7Attempt.json()).minimumBuild, 8);
+  assert.equal(
+    Object.values(identityStore.snapshot().enrolmentCodes)
+      .find(record => record.patientId === saved.patientId)?.usedAt,
+    null,
+  );
+
+  const missingCapabilityAttempt = await fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: {
+      ...build7Headers(),
+      'x-neurosol-build': '8',
+    },
+    body: JSON.stringify({ code: issued.code }),
+  });
+  assert.equal(missingCapabilityAttempt.status, 426);
+  assert.equal(
+    Object.values(identityStore.snapshot().enrolmentCodes)
+      .find(record => record.patientId === saved.patientId)?.usedAt,
+    null,
+  );
+
+  const build8Attempt = await fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: build8Headers(),
+    body: JSON.stringify({ code: issued.code }),
+  });
+  assert.equal(build8Attempt.status, 200);
+  const identity = await build8Attempt.json();
+  assert.equal(identity.clinicalProfile.primaryDisorderId, custom.id);
+  assert.equal(identity.clinicalProfile.minimumAppBuild, 8);
+
+  const oldProfileRequest = await fetch(`${baseUrl}/api/profile`, {
+    headers: build7Headers(identity.accessToken, false),
+  });
+  assert.equal(oldProfileRequest.status, 426);
+  const profileRequest = await fetch(`${baseUrl}/api/profile`, {
+    headers: build8Headers(identity.accessToken, false),
+  });
+  assert.equal(profileRequest.status, 200);
+
+  const submission = {
+    schemaVersion: 2,
+    submissionId: 'NS-custom-canonical',
+    patientId: saved.patientId,
+    patientName: 'Untrusted Name',
+    date: '2026-08-04',
+    time: '19:00',
+    wellnessPercent: 70,
+    profileRevision: saved.clinicalProfile.revision,
+    records: [
+      {
+        track: 'Primary',
+        disorderId: custom.id,
+        disorder: 'Multiple sclerosis',
+        symptomId: 'pain',
+        symptom: 'Pain',
+        score: 4,
+      },
+      {
+        track: 'Primary',
+        disorderId: custom.id,
+        disorder: 'Multiple sclerosis',
+        symptomId: 'dizziness',
+        symptom: 'Dizziness',
+        score: 3,
+      },
+      {
+        track: 'Primary',
+        disorderId: custom.id,
+        disorder: 'Multiple sclerosis',
+        symptomId: 'fatigue',
+        symptom: 'Fatigue',
+        score: 5,
+      },
+    ],
+  };
+  const accepted = await post(
+    submission,
+    identity.accessToken,
+    { canonical: true },
+  );
+  assert.equal(accepted.status, 201);
+
+  const idsOnly = structuredClone(submission);
+  idsOnly.submissionId = 'NS-custom-ids-only';
+  idsOnly.date = '2026-08-05';
+  idsOnly.records = idsOnly.records.map(record => ({
+    track: record.track,
+    disorderId: record.disorderId,
+    symptomId: record.symptomId,
+    score: record.score,
+  }));
+  const acceptedIdsOnly = await post(
+    idsOnly,
+    identity.accessToken,
+    { canonical: true },
+  );
+  assert.equal(acceptedIdsOnly.status, 201);
+
+  const mismatched = structuredClone(submission);
+  mismatched.submissionId = 'NS-custom-wrong-id';
+  mismatched.date = '2026-08-06';
+  mismatched.records[0].symptomId = 'weakness';
+  const rejected = await post(
+    mismatched,
+    identity.accessToken,
+    { canonical: true },
+  );
+  assert.equal(rejected.status, 409);
+  assert.equal((await rejected.json()).code, 'assigned_profile_mismatch');
+
+  const csv = fs.readFileSync(
+    path.join(testDataDir, 'symptom_entries.csv'),
+    'utf8',
+  );
+  assert.match(
+    csv.split('\n')[0],
+    /,DisorderId,SymptomId,PayloadSchemaVersion$/,
+  );
+  assert.equal(
+    csv.split('\n').filter(line => line.includes('NS-custom-canonical'))
+      .every(line => line.includes(`,${custom.id},`)),
+    true,
+  );
+
+  disorderCatalog.updateCustomDisorder({
+    id: custom.id,
+    displayName: 'Multiple sclerosis (MS)',
+    confirmation: 'Multiple sclerosis (MS)',
+    actor: 'test-admin',
+  });
+  const refreshedProfiles = identityStore.refreshProfilesForDisorder(custom.id);
+  assert.equal(refreshedProfiles, 1);
+  assert.equal(
+    identityStore.patientClinicalProfile(saved.patientId).primaryDisorder,
+    'Multiple sclerosis (MS)',
+  );
+  assert.equal(
+    identityStore.patientClinicalProfile(saved.patientId).revision,
+    saved.clinicalProfile.revision + 1,
+  );
+  const population = await fetch(
+    `${baseUrl}/admin/population?disorderId=${encodeURIComponent(custom.id)}`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(population.status, 200);
+  assert.match(await population.text(), /Multiple sclerosis \(MS\)/);
+});
+
 test('clinic profile synchronises and controls Build 7 submissions', async () => {
   const identity = await enrolClinicManaged({
     patientId: 'pt-profile-sync',
@@ -509,6 +1045,84 @@ test('clinic profile synchronises and controls Build 7 submissions', async () =>
   );
   assert.match(csv, /Clinic Profile Name/);
   assert.doesNotMatch(csv, /Untrusted App Name/);
+  const build7Rows = csv.split('\n').filter(line =>
+    line.includes('NS-clinic-profile-accepted')
+  );
+  assert.equal(build7Rows.length, 3);
+  assert.equal(build7Rows.every(line => /,migraine,[^,]+,1$/.test(line)), true);
+  const observedDevice = Object.values(identityStore.snapshot().devices)
+    .find(device => device.patientId === identity.patientId);
+  assert.equal(observedDevice.lastMobileBuild, 7);
+  assert.equal(observedDevice.lastPayloadSchemaVersion, 1);
+});
+
+test('schema 2 is additive and requires a canonical-capable Build 8 client', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-schema-compatibility',
+    displayName: 'Schema Compatibility',
+  });
+  const body = validSubmission({
+    submissionId: 'NS-schema-two',
+    patientId: identity.patientId,
+    date: '2026-08-07',
+  });
+  body.profileRevision = identity.saved.clinicalProfile.revision;
+  body.schemaVersion = 2;
+  const symptomIds = {
+    Headache: 'headache',
+    Nausea: 'nausea',
+    Fatigue: 'fatigue',
+  };
+  body.records = body.records.map(record => ({
+    ...record,
+    disorderId: 'migraine',
+    symptomId: symptomIds[record.symptom],
+  }));
+
+  const build7Rejected = await post(
+    body,
+    identity.accessToken,
+    { clinicManaged: true },
+  );
+  assert.equal(build7Rejected.status, 426);
+  assert.equal((await build7Rejected.json()).minimumBuild, 8);
+
+  const invalidSchema = structuredClone(body);
+  invalidSchema.schemaVersion = 3;
+  const invalidResponse = await post(
+    invalidSchema,
+    identity.accessToken,
+    { canonical: true },
+  );
+  assert.equal(invalidResponse.status, 400);
+  assert.equal((await invalidResponse.json()).code, 'invalid_schema_version');
+
+  const missingSchema = validSubmission({
+    submissionId: 'NS-schema-missing-build8',
+    patientId: identity.patientId,
+    date: '2026-08-08',
+  });
+  missingSchema.profileRevision = identity.saved.clinicalProfile.revision;
+  const missingSchemaAccepted = await post(
+    missingSchema,
+    identity.accessToken,
+    { canonical: true },
+  );
+  assert.equal(missingSchemaAccepted.status, 201);
+  assert.equal((await missingSchemaAccepted.json()).payloadSchemaVersion, 1);
+
+  const build8Accepted = await post(
+    body,
+    identity.accessToken,
+    { canonical: true },
+  );
+  assert.equal(build8Accepted.status, 201);
+  assert.equal((await build8Accepted.json()).payloadSchemaVersion, 2);
+  const observedDevice = Object.values(identityStore.snapshot().devices)
+    .find(device => device.patientId === identity.patientId);
+  assert.equal(observedDevice.lastMobileBuild, 8);
+  assert.equal(observedDevice.lastPayloadSchemaVersion, 2);
+  assert.equal(observedDevice.supportsCanonicalDisorders, true);
 });
 
 test('queued Build 6 entries and historical profile revisions remain valid', async () => {
@@ -558,12 +1172,12 @@ test('queued Build 6 entries and historical profile revisions remain valid', asy
   ).split('\n');
   assert.equal(
     rows.filter(row => row.includes('NS-profile-history-old'))
-      .every(row => row.endsWith(',1')),
+      .every(row => row.split(',')[11] === '1'),
     true,
   );
   assert.equal(
     rows.filter(row => row.includes('NS-profile-history-queued'))
-      .every(row => row.endsWith(',2')),
+      .every(row => row.split(',')[11] === '2'),
     true,
   );
 });
@@ -681,6 +1295,12 @@ test('stores an exact submission retry only once', async () => {
   const retry = await post(body, identity.accessToken);
   assert.equal(retry.status, 200);
   assert.equal((await retry.json()).duplicate, true);
+
+  const changedRetry = structuredClone(body);
+  changedRetry.records[0].score = 9;
+  const conflict = await post(changedRetry, identity.accessToken);
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).code, 'submission_id_conflict');
 
   const csv = fs.readFileSync(
     path.join(testDataDir, 'symptom_entries.csv'),

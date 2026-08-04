@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   normaliseClinicalProfile,
+  profileMinimumBuild,
   reviewClinicalProfile,
   sameClinicalProfile,
 } = require('./clinical_profiles');
+const { staticDisorderCatalog } = require('./disorder_catalog');
 
 const codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -34,7 +36,12 @@ function randomCode() {
   return code;
 }
 
-function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
+function createIdentityStore({
+  dataDir,
+  secret,
+  now = () => new Date(),
+  disorderCatalog = staticDisorderCatalog,
+}) {
   if (!secret || String(secret).length < 32) {
     throw new Error('IDENTITY_SECRET must contain at least 32 characters.');
   }
@@ -43,7 +50,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
 
   function emptyStore() {
     return {
-      version: 2,
+      version: 3,
       patients: {},
       enrolmentCodes: {},
       devices: {},
@@ -63,7 +70,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     return {
       ...emptyStore(),
       ...parsed,
-      version: Math.max(Number(parsed.version) || 1, 2),
+      version: Math.max(Number(parsed.version) || 1, 3),
       patients: parsed.patients || {},
       enrolmentCodes: parsed.enrolmentCodes || {},
       devices: parsed.devices || {},
@@ -87,6 +94,33 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
       .digest('hex');
   }
 
+  function applyDeviceCompatibility(device, compatibility, observedAt) {
+    const build = Number(compatibility?.mobileBuild);
+    const payloadSchema = Number(compatibility?.payloadSchemaVersion);
+    if (Number.isInteger(build) && build > 0) {
+      device.lastMobileBuild = build;
+    }
+    if (typeof compatibility?.supportsClinicManagedProfile === 'boolean') {
+      device.supportsClinicManagedProfile =
+        compatibility.supportsClinicManagedProfile;
+    }
+    if (typeof compatibility?.supportsCanonicalDisorders === 'boolean') {
+      device.supportsCanonicalDisorders =
+        compatibility.supportsCanonicalDisorders;
+    }
+    if ([1, 2].includes(payloadSchema)) {
+      device.lastPayloadSchemaVersion = payloadSchema;
+    }
+    if (
+      (Number.isInteger(build) && build > 0) ||
+      [1, 2].includes(payloadSchema) ||
+      typeof compatibility?.supportsClinicManagedProfile === 'boolean' ||
+      typeof compatibility?.supportsCanonicalDisorders === 'boolean'
+    ) {
+      device.lastCompatibilityAt = observedAt;
+    }
+  }
+
   function createPatientId() {
     return `pt-${crypto.randomUUID()}`;
   }
@@ -107,7 +141,9 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     clinicalProfile = {},
   }) {
     const { id, name } = validatePatientIdentity(patientId, displayName);
-    const profile = normaliseClinicalProfile(clinicalProfile);
+    const profile = normaliseClinicalProfile(clinicalProfile, {
+      disorderCatalog,
+    });
     const store = readStore();
     const savedAt = now().toISOString();
     const existing = store.patients[id];
@@ -208,6 +244,8 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     {
       expectedPatientId = '',
       supportsClinicManagedProfile = false,
+      supportsCanonicalDisorders = false,
+      supportedMobileBuild = null,
     } = {},
   ) {
     const compactCode = normaliseCode(value);
@@ -228,8 +266,20 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
 
     const patient = store.patients[record.patientId];
     if (!patient) return { status: 'invalid' };
-    if (patient.clinicalProfile && !supportsClinicManagedProfile) {
-      return { status: 'upgrade_required' };
+    const effectiveSupportedBuild = Number.isInteger(supportedMobileBuild)
+      ? supportedMobileBuild
+      : supportsClinicManagedProfile
+      ? 7
+      : 6;
+    if (patient.clinicalProfile) {
+      const requiredBuild = profileMinimumBuild(patient.clinicalProfile);
+      if (
+        !supportsClinicManagedProfile ||
+        effectiveSupportedBuild < requiredBuild ||
+        (requiredBuild >= 8 && !supportsCanonicalDisorders)
+      ) {
+        return { status: 'upgrade_required', requiredBuild };
+      }
     }
 
     const accessToken = crypto.randomBytes(32).toString('base64url');
@@ -237,13 +287,19 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     const deviceId = crypto.randomUUID();
     const redeemedAt = now().toISOString();
     record.usedAt = redeemedAt;
-    store.devices[tokenHash] = {
+    const device = {
       deviceId,
       patientId: record.patientId,
       createdAt: redeemedAt,
       lastUsedAt: redeemedAt,
       revokedAt: null,
     };
+    applyDeviceCompatibility(device, {
+      mobileBuild: effectiveSupportedBuild,
+      supportsClinicManagedProfile,
+      supportsCanonicalDisorders,
+    }, redeemedAt);
+    store.devices[tokenHash] = device;
     writeStore(store);
 
     return {
@@ -260,6 +316,9 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
   function enrolReusableReviewDevice({
     patientId = '',
     displayName = '',
+    supportedMobileBuild = null,
+    supportsClinicManagedProfile = false,
+    supportsCanonicalDisorders = false,
   } = {}) {
     const id = String(patientId || '').trim();
     const name = String(displayName || '').trim();
@@ -275,6 +334,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     const existing = store.patients[id];
     const normalisedReviewProfile = normaliseClinicalProfile(
       reviewClinicalProfile,
+      { disorderCatalog },
     );
     const previousProfile = existing?.clinicalProfile;
     const changed = !previousProfile ||
@@ -306,7 +366,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     const accessToken = crypto.randomBytes(32).toString('base64url');
     const tokenHash = digest('device-token', accessToken);
     const deviceId = crypto.randomUUID();
-    store.devices[tokenHash] = {
+    const device = {
       deviceId,
       patientId: id,
       createdAt: enrolledAt,
@@ -314,6 +374,12 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
       revokedAt: null,
       reviewDevice: true,
     };
+    applyDeviceCompatibility(device, {
+      mobileBuild: supportedMobileBuild,
+      supportsClinicManagedProfile,
+      supportsCanonicalDisorders,
+    }, enrolledAt);
+    store.devices[tokenHash] = device;
     writeStore(store);
 
     return {
@@ -327,7 +393,7 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     };
   }
 
-  function authenticate(accessToken) {
+  function authenticate(accessToken, compatibility = {}) {
     const token = String(accessToken || '').trim();
     if (!token) return null;
     const store = readStore();
@@ -337,11 +403,27 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
 
     const usedAt = now().toISOString();
     device.lastUsedAt = usedAt;
+    applyDeviceCompatibility(device, compatibility, usedAt);
     writeStore(store);
     return {
       ...device,
       patient: store.patients[device.patientId] || null,
     };
+  }
+
+  function recordPayloadSchema(accessToken, schemaVersion) {
+    const token = String(accessToken || '').trim();
+    const schema = Number(schemaVersion);
+    if (!token || ![1, 2].includes(schema)) return false;
+    const store = readStore();
+    const tokenHash = digest('device-token', token);
+    const device = store.devices[tokenHash];
+    if (!device || device.revokedAt) return false;
+    applyDeviceCompatibility(device, {
+      payloadSchemaVersion: schema,
+    }, now().toISOString());
+    writeStore(store);
+    return true;
   }
 
   function revokePatientDevices(patientId) {
@@ -390,6 +472,192 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     ) || null;
   }
 
+  function refreshProfilesForDisorder(disorderId) {
+    const id = String(disorderId || '').trim();
+    if (!id) throw new Error('A disorder identifier is required.');
+    const store = readStore();
+    const refreshedAt = now().toISOString();
+    let updatedPatients = 0;
+    for (const patient of Object.values(store.patients)) {
+      const previousProfile = patient?.clinicalProfile;
+      if (
+        !previousProfile ||
+        (
+          previousProfile.primaryDisorderId !== id &&
+          previousProfile.secondaryDisorderId !== id
+        )
+      ) {
+        continue;
+      }
+      const refreshedProfile = normaliseClinicalProfile({
+        primaryDisorderId: previousProfile.primaryDisorderId,
+        primarySymptomIds: previousProfile.primarySymptomIds,
+        secondaryDisorderId: previousProfile.secondaryDisorderId,
+        secondarySymptomIds: previousProfile.secondarySymptomIds,
+      }, {
+        disorderCatalog,
+        includeInactive: true,
+        allowHistoricalSymptoms: true,
+      });
+      if (sameClinicalProfile(previousProfile, refreshedProfile)) continue;
+      const savedProfile = {
+        ...refreshedProfile,
+        revision: Number(previousProfile.revision || 0) + 1,
+        updatedAt: refreshedAt,
+      };
+      const history = Array.isArray(patient.clinicalProfileHistory)
+        ? [...patient.clinicalProfileHistory]
+        : [previousProfile];
+      history.push(savedProfile);
+      patient.clinicalProfile = savedProfile;
+      patient.clinicalProfileHistory = history;
+      patient.updatedAt = refreshedAt;
+      updatedPatients++;
+    }
+    if (updatedPatients) writeStore(store);
+    return updatedPatients;
+  }
+
+  function reconcileCurrentProfiles() {
+    const store = readStore();
+    const reconciledAt = now().toISOString();
+    let updatedPatients = 0;
+    for (const patient of Object.values(store.patients)) {
+      const previousProfile = patient?.clinicalProfile;
+      if (!previousProfile) continue;
+      const refreshedProfile = normaliseClinicalProfile({
+        primaryDisorderId: previousProfile.primaryDisorderId,
+        primarySymptomIds: previousProfile.primarySymptomIds,
+        secondaryDisorderId: previousProfile.secondaryDisorderId,
+        secondarySymptomIds: previousProfile.secondarySymptomIds,
+      }, {
+        disorderCatalog,
+        includeInactive: true,
+        allowHistoricalSymptoms: true,
+      });
+      if (sameClinicalProfile(previousProfile, refreshedProfile)) continue;
+      const savedProfile = {
+        ...refreshedProfile,
+        revision: Number(previousProfile.revision || 0) + 1,
+        updatedAt: reconciledAt,
+      };
+      const history = Array.isArray(patient.clinicalProfileHistory)
+        ? [...patient.clinicalProfileHistory]
+        : [previousProfile];
+      history.push(savedProfile);
+      patient.clinicalProfile = savedProfile;
+      patient.clinicalProfileHistory = history;
+      patient.updatedAt = reconciledAt;
+      updatedPatients++;
+    }
+    if (updatedPatients) writeStore(store);
+    return updatedPatients;
+  }
+
+  function migrateCanonicalProfiles() {
+    ensureStore();
+    const originalText = fs.readFileSync(identityPath, 'utf8');
+    const parsed = JSON.parse(originalText);
+    const store = {
+      ...emptyStore(),
+      ...parsed,
+      version: 3,
+      patients: parsed.patients || {},
+      enrolmentCodes: parsed.enrolmentCodes || {},
+      devices: parsed.devices || {},
+    };
+    let migratedProfiles = 0;
+
+    function canonicalise(profile) {
+      if (!profile) return null;
+      const hasCanonicalIdentifiers =
+        Number(profile.schemaVersion) >= 2 &&
+        String(profile.primaryDisorderId || '').trim() &&
+        Array.isArray(profile.primarySymptomIds) &&
+        profile.primarySymptomIds.length === 3;
+      if (hasCanonicalIdentifiers) {
+        const validated = normaliseClinicalProfile({
+          primaryDisorderId: profile.primaryDisorderId,
+          primarySymptomIds: profile.primarySymptomIds,
+          secondaryDisorderId: profile.secondaryDisorderId,
+          secondarySymptomIds: profile.secondarySymptomIds,
+        }, {
+          disorderCatalog,
+          includeInactive: true,
+          allowHistoricalSymptoms: true,
+        });
+        const primarySymptoms = Array.isArray(profile.primarySymptoms) &&
+          profile.primarySymptoms.length === 3
+          ? [...profile.primarySymptoms]
+          : validated.primarySymptoms;
+        const hasSecondary = Boolean(validated.secondaryDisorderId);
+        const secondarySymptoms = hasSecondary &&
+          Array.isArray(profile.secondarySymptoms) &&
+          profile.secondarySymptoms.length === 3
+          ? [...profile.secondarySymptoms]
+          : validated.secondarySymptoms;
+        return {
+          ...validated,
+          primaryDisorder: String(profile.primaryDisorder || '').trim() ||
+            validated.primaryDisorder,
+          primarySymptoms,
+          secondaryDisorder: hasSecondary
+            ? String(profile.secondaryDisorder || '').trim() ||
+              validated.secondaryDisorder
+            : null,
+          secondarySymptoms,
+          revision: Number(profile.revision || 0),
+          updatedAt: profile.updatedAt,
+        };
+      }
+      const canonical = normaliseClinicalProfile(profile, {
+        disorderCatalog,
+        includeInactive: true,
+        allowHistoricalSymptoms: true,
+      });
+      return {
+        ...canonical,
+        revision: Number(profile.revision || 0),
+        updatedAt: profile.updatedAt,
+      };
+    }
+
+    for (const patient of Object.values(store.patients)) {
+      if (!patient?.clinicalProfile) continue;
+      const before = JSON.stringify({
+        current: patient.clinicalProfile,
+        history: patient.clinicalProfileHistory || [],
+      });
+      const history = Array.isArray(patient.clinicalProfileHistory)
+        ? patient.clinicalProfileHistory.map(canonicalise)
+        : [];
+      patient.clinicalProfile = canonicalise(patient.clinicalProfile);
+      patient.clinicalProfileHistory = history.length
+        ? history
+        : [patient.clinicalProfile];
+      const after = JSON.stringify({
+        current: patient.clinicalProfile,
+        history: patient.clinicalProfileHistory,
+      });
+      if (before !== after) migratedProfiles++;
+    }
+
+    const repairedText = `${JSON.stringify(store, null, 2)}\n`;
+    if (originalText === repairedText) {
+      return { migrated: false, migratedProfiles, backupPath: null };
+    }
+    const backupDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    const stamp = now().toISOString().replace(/[:.]/g, '-');
+    const backupPath = path.join(
+      backupDir,
+      `identity_store.pre-build8-${stamp}.json`,
+    );
+    fs.copyFileSync(identityPath, backupPath);
+    writeStore(store);
+    return { migrated: true, migratedProfiles, backupPath };
+  }
+
   function deletePatient(patientId) {
     const id = String(patientId || '').trim();
     const store = readStore();
@@ -419,6 +687,31 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     return readStore();
   }
 
+  function compatibilitySummary() {
+    const activeDevices = Object.values(readStore().devices)
+      .filter(device => !device.revokedAt);
+    const builds = {};
+    const payloadSchemas = {};
+    for (const device of activeDevices) {
+      const buildKey = Number.isInteger(device.lastMobileBuild)
+        ? String(device.lastMobileBuild)
+        : 'unknown';
+      const schemaKey = [1, 2].includes(device.lastPayloadSchemaVersion)
+        ? String(device.lastPayloadSchemaVersion)
+        : 'unknown';
+      builds[buildKey] = (builds[buildKey] || 0) + 1;
+      payloadSchemas[schemaKey] = (payloadSchemas[schemaKey] || 0) + 1;
+    }
+    return {
+      activeDevices: activeDevices.length,
+      builds,
+      payloadSchemas,
+      canonicalDevices: activeDevices.filter(
+        device => device.supportsCanonicalDisorders === true,
+      ).length,
+    };
+  }
+
   return {
     identityPath,
     deletePatient,
@@ -427,10 +720,15 @@ function createIdentityStore({ dataDir, secret, now = () => new Date() }) {
     redeemEnrolmentCode,
     enrolReusableReviewDevice,
     authenticate,
+    recordPayloadSchema,
     patientClinicalProfile,
+    refreshProfilesForDisorder,
+    reconcileCurrentProfiles,
+    migrateCanonicalProfiles,
     revokePatientDevices,
     updatePatientDisplayName,
     snapshot,
+    compatibilitySummary,
   };
 }
 

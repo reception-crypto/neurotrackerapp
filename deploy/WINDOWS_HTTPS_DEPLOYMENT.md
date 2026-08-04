@@ -69,13 +69,16 @@ ADMIN_USER=admin
 ADMIN_PASSWORD=REPLACE_WITH_A_LONG_UNIQUE_PASSWORD
 DATA_DIR=C:\ProgramData\NeuroSol\data
 LATEST_MOBILE_BUILD=7
-MIN_SUPPORTED_MOBILE_BUILD=6
+MIN_SUPPORTED_MOBILE_BUILD=7
+ENABLE_CUSTOM_DISORDERS=false
 PUBLIC_BASE_URL=https://tracker.melindapascoeneurology.com
 GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol
 ```
 
-`MIN_SUPPORTED_MOBILE_BUILD=6` is only for the controlled Build 7 Play review
-and migration window. The final required-update switch changes it to 7.
+Build 7 is publicly available and remains supported during the Build 8
+rollout. Keep `MIN_SUPPORTED_MOBILE_BUILD=7`. Deploy the Build 8-compatible
+backend with `LATEST_MOBILE_BUILD=7` and `ENABLE_CUSTOM_DISORDERS=false` before
+either Build 8 app is released.
 
 Generate a strong identity secret in PowerShell, save it in the clinic's
 password manager, and paste it into `.env`:
@@ -165,33 +168,21 @@ http://117.20.4.91:3000/health
 Only after these checks pass should a patient APK be built against the HTTPS
 address.
 
-## 8. Build 7 clinic-profile rollout
+## 8. Build 7 compatibility during the Build 8 rollout
 
-Deploy backend `0.7.0` before distributing Build 7. During Play review only,
-set:
+Deploy backend `0.8.0` before distributing Build 8. Initially set:
 
 ```env
 LATEST_MOBILE_BUILD=7
-MIN_SUPPORTED_MOBILE_BUILD=6
-```
-
-Use `/admin/enrolments` to configure a clinic-managed profile for every
-existing PatientId before updating their phone. The portal may suggest the
-latest accepted symptom set, but clinic staff must review and save it.
-
-For an existing phone, install Build 7 as an update. Its protected token and
-PatientId are retained, and the clinic profile synchronises at startup. For a
-replacement phone or reinstall, issue **New device code** against the same
-PatientId. Do not create a second identity.
-
-After Build 7 is available to every intended patient, change:
-
-```env
 MIN_SUPPORTED_MOBILE_BUILD=7
+ENABLE_CUSTOM_DISORDERS=false
 ```
 
-Restart the service and verify `/api/mobile-config`. This switch is mandatory:
-Build 6 requests then receive HTTP 426 and cannot enrol, synchronise, or submit.
+Build 7 payloads omit `schemaVersion`; the backend interprets them as schema 1
+and maps their validated labels into canonical IDs. Keep PatientId and
+ProfileRevision unchanged. Do not enable custom disorders until Build 8 is
+downloadable from both stores, and do not raise the minimum build during this
+compatibility window.
 
 ## 9. Backup and access control
 

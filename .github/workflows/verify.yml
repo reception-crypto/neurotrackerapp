@@ -52,6 +52,7 @@ jobs:
       - run: node --check server.js
       - run: node --check identity_store.js
       - run: node --check clinical_profiles.js
+      - run: node --check disorder_catalog.js
       - run: npm test
       - name: Reject committed runtime clinical data
         working-directory: .
@@ -60,3 +61,51 @@ jobs:
             echo "Runtime clinical data must not be tracked."
             exit 1
           fi
+
+  windows-deployment-pack:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Parse deployment PowerShell
+        shell: powershell
+        run: |
+          $Scripts = Get-ChildItem `
+            .\delivery\build8-backend-compatibility\*.ps1
+          foreach ($Script in $Scripts) {
+            $Tokens = $null
+            $Errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $Script.FullName,
+              [ref]$Tokens,
+              [ref]$Errors
+            ) | Out-Null
+            if ($Errors.Count -gt 0) {
+              $Errors | Format-List
+              throw "PowerShell parsing failed: $($Script.Name)"
+            }
+          }
+      - name: Verify deployment data probe
+        run: >-
+          node --test
+          delivery/build8-backend-compatibility/test/verify-clinical-data.test.js
+      - name: Assemble offline deployment package
+        shell: powershell
+        run: |
+          .\delivery\build8-backend-compatibility\New-Build8BackendDeploymentPack.ps1 `
+            -SkipTests
+          $Zip = Get-ChildItem .\delivery\release-packs\*.zip |
+            Select-Object -First 1
+          $Hash = Get-ChildItem .\delivery\release-packs\*.sha256.txt |
+            Select-Object -First 1
+          if (-not $Zip -or -not $Hash) {
+            throw 'The offline backend deployment package was not created.'
+          }

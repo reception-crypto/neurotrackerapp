@@ -1,21 +1,20 @@
-# NeuroSol Symptom Diary Build 7 release checklist
+# NeuroSol Build 7 operations and Build 8 backend checklist
 
-Build 7 changes patient enrolment from patient-selected symptoms to a
-clinic-assigned, versioned profile. Complete every gate before open clinic use.
+Build 7 is publicly available and remains supported. Complete the backend
+compatibility gates before either Build 8 mobile app is released.
 
 ## 1. Source and backups
 
-- [ ] Confirm the branch contains the complete Build 6 checkpoint plus Build 7
-      changes.
-- [ ] Confirm `pubspec.yaml` is `1.0.0+7`, backend is `0.7.0`, and both app IDs
+- [ ] Confirm the branch contains the public Build 7 source plus the additive
+      Build 8 backend compatibility changes.
+- [ ] Confirm `pubspec.yaml` is `1.0.0+7`, backend is `0.8.0`, and both app IDs
       remain `au.com.pascoeneurology.neurosol`.
 - [ ] Confirm no `.env`, keystore, `key.properties`, clinical CSV, identity
       store, real enrolment code, or patient screenshot is staged.
 - [ ] Push source to GitHub and record the commit SHA.
-- [ ] Back up production `.env`, `symptom_entries.csv`, and
-      `identity_store.json` together before deployment.
-- [ ] Record SHA-256 hashes for the two production data files and the backend
-      source package.
+- [ ] Back up production `.env`, `symptom_entries.csv`, `identity_store.json`,
+      and `disorder_catalog.json` when present, as one recovery set.
+- [ ] Record the deployment-package SHA-256 and protected backup location.
 
 ## 2. Verify source
 
@@ -38,24 +37,29 @@ Pop-Location
 
 ## 3. Deploy the compatible backend first
 
-For the Play review window:
+For the backend-first Build 8 compatibility deployment:
 
 ```env
 LATEST_MOBILE_BUILD=7
-MIN_SUPPORTED_MOBILE_BUILD=6
+MIN_SUPPORTED_MOBILE_BUILD=7
+ENABLE_CUSTOM_DISORDERS=false
 PUBLIC_BASE_URL=https://tracker.melindapascoeneurology.com
 GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol
 ```
 
 - [ ] Keep the existing production `IDENTITY_SECRET`, `ADMIN_USER`, and
       `ADMIN_PASSWORD`; do not regenerate them.
-- [ ] Deploy backend `0.7.0`, install dependencies, restart the Windows service,
-      and verify `/health`.
-- [ ] Verify `/api/mobile-config` reports latest 7 and temporary minimum 6.
-- [ ] Verify existing Build 6 submissions still work during this controlled
-      window.
-- [ ] Verify a newly generated clinic-managed code returns update-required in
-      Build 6 and remains usable in Build 7.
+- [ ] Build and deploy the offline `0.8.0` package described in
+      `delivery/build8-backend-compatibility/README.md`; do not download or
+      replace dependencies on the terminal server.
+- [ ] Verify `/health` reports disorder catalogue version 1 with custom
+      disorders disabled.
+- [ ] Verify a Build 7 `/api/mobile-config` request reports minimum/latest 7,
+      schema 1, and `build7Supported=true`.
+- [ ] Verify an existing Build 7 profile sync and synthetic submission retain
+      the same PatientId and ProfileRevision.
+- [ ] Confirm patient, device, profile-history, and CSV row counts did not fall
+      during migration.
 
 ## 4. Configure every existing patient
 
@@ -121,22 +125,22 @@ Use synthetic data only:
       track after acceptance testing.
 - [ ] Notify all clinic users that Build 7 is required.
 
-## 8. Mandatory update switch
+## 8. Build 7 compatibility lock
 
-Only after Build 7 is available to every intended patient:
+Keep this configuration while Build 7 remains public:
 
 ```env
 LATEST_MOBILE_BUILD=7
 MIN_SUPPORTED_MOBILE_BUILD=7
+ENABLE_CUSTOM_DISORDERS=false
 ```
 
-- [ ] Change only these values in the protected production `.env`.
-- [ ] Restart the backend service and verify it is Running.
-- [ ] Verify `/health` and `/api/mobile-config`.
-- [ ] Verify a request without `X-NeuroSol-Build: 7` receives HTTP 426.
+- [ ] Verify the deployment script changed only these non-secret settings in
+      the protected production `.env`.
+- [ ] Verify `/health` and local/public `/api/mobile-config`.
 - [ ] Verify Build 7 enrolment, profile sync, and a synthetic submission.
-- [ ] Leave minimum build at 7. Any temporary rollback to 6 requires an
-      incident decision and a documented reason.
+- [ ] Leave minimum build at 7. Do not retire Build 7 based on a date or mobile
+      release alone; use observed production traffic and an approved decision.
 
 ## 9. Post-release
 
