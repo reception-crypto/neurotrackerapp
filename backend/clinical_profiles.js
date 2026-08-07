@@ -105,7 +105,10 @@ function normaliseTrack({
     disorder: definition.displayName,
     symptomIds: selected.map(item => item.id),
     symptoms: selected.map(item => item.displayName),
-    minimumAppBuild: Number(definition.minimumAppBuild || 7),
+    minimumAppBuild: Math.max(
+      Number(definition.minimumAppBuild || 7),
+      ...selected.map(item => Number(item.minimumAppBuild || 7)),
+    ),
   };
 }
 

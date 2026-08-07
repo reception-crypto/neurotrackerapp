@@ -472,23 +472,13 @@ function createIdentityStore({
     ) || null;
   }
 
-  function refreshProfilesForDisorder(disorderId) {
-    const id = String(disorderId || '').trim();
-    if (!id) throw new Error('A disorder identifier is required.');
+  function refreshProfilesWhere(matches) {
     const store = readStore();
     const refreshedAt = now().toISOString();
     let updatedPatients = 0;
     for (const patient of Object.values(store.patients)) {
       const previousProfile = patient?.clinicalProfile;
-      if (
-        !previousProfile ||
-        (
-          previousProfile.primaryDisorderId !== id &&
-          previousProfile.secondaryDisorderId !== id
-        )
-      ) {
-        continue;
-      }
+      if (!previousProfile || !matches(previousProfile)) continue;
       const refreshedProfile = normaliseClinicalProfile({
         primaryDisorderId: previousProfile.primaryDisorderId,
         primarySymptomIds: previousProfile.primarySymptomIds,
@@ -516,6 +506,24 @@ function createIdentityStore({
     }
     if (updatedPatients) writeStore(store);
     return updatedPatients;
+  }
+
+  function refreshProfilesForDisorder(disorderId) {
+    const id = String(disorderId || '').trim();
+    if (!id) throw new Error('A disorder identifier is required.');
+    return refreshProfilesWhere(profile =>
+      profile.primaryDisorderId === id ||
+      profile.secondaryDisorderId === id
+    );
+  }
+
+  function refreshProfilesForSymptom(symptomId) {
+    const id = String(symptomId || '').trim();
+    if (!id) throw new Error('A symptom identifier is required.');
+    return refreshProfilesWhere(profile =>
+      (profile.primarySymptomIds || []).includes(id) ||
+      (profile.secondarySymptomIds || []).includes(id)
+    );
   }
 
   function reconcileCurrentProfiles() {
@@ -723,6 +731,7 @@ function createIdentityStore({
     recordPayloadSchema,
     patientClinicalProfile,
     refreshProfilesForDisorder,
+    refreshProfilesForSymptom,
     reconcileCurrentProfiles,
     migrateCanonicalProfiles,
     revokePatientDevices,

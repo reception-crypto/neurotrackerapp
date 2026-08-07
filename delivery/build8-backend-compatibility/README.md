@@ -1,11 +1,13 @@
 # Build 8 compatible backend deployment
 
-This package deploys backend `0.8.0` before either Build 8 mobile app is
+This package deploys backend `0.8.1` before either Build 8 mobile app is
 released. It keeps the public Build 7 app fully supported:
 
 - `MIN_SUPPORTED_MOBILE_BUILD=7`
 - `LATEST_MOBILE_BUILD=7`
 - `ENABLE_CUSTOM_DISORDERS=false`
+- custom symptoms may be prepared in the catalogue, but Build 8-only profile
+  assignments remain gated
 - payloads without `schemaVersion` remain Build 7/schema 1
 - `PatientId` and `ProfileRevision` remain authoritative
 
@@ -63,11 +65,13 @@ The deployment:
 
 1. verifies every packaged file against `manifest.json`;
 2. confirms the current service is healthy and its Node dependencies exist;
-3. runs all 49 backend tests with temporary synthetic data;
+3. runs the complete backend and clinical-data verification suites with
+   temporary synthetic data;
 4. stops `NeuroSolBackend` for a consistent snapshot;
 5. backs up source, `.env`, and the complete clinical data directory;
 6. preserves `IDENTITY_SECRET`, `ADMIN_PASSWORD`, and all other settings;
-7. locks minimum/latest mobile build to 7 and custom disorders off;
+7. locks minimum/latest mobile build to 7 and Build 8-only catalogue
+   assignments off;
 8. starts the new backend and runs the canonical migrations;
 9. proves patient, device, profile-history, and CSV row counts did not change;
 10. verifies local and public HTTPS responses for Build 7 and Build 8 headers.
@@ -104,7 +108,7 @@ Before any Build 8 mobile release:
    submission for the same PatientId/date is rejected.
 5. Confirm built-in disorder filters, patient history, CSV export, and PDF
    output still work.
-6. Leave custom disorders disabled.
+6. Leave Build 8-only custom disorder/symptom assignments disabled.
 
 Record the backup path printed by deployment and keep it until Build 7 and
 Build 8 traffic has been observed safely in production.

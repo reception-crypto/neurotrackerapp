@@ -23,6 +23,8 @@ Production must use:
 - `LATEST_MOBILE_BUILD=7` before Build 8 is released, then `8`;
 - `MIN_SUPPORTED_MOBILE_BUILD=7` throughout the Build 8 rollout;
 - `ENABLE_CUSTOM_DISORDERS=false` until Build 8 is available from both stores.
+  This gate also prevents a Build 8-only custom symptom from being assigned to
+  a patient profile during the compatibility rollout.
 
 Do not replace the existing production `IDENTITY_SECRET`: doing so invalidates
 every device credential and unused enrolment code.
@@ -45,13 +47,27 @@ Use **Edit profile** for later clinical changes. The revision increments only
 when disorders or symptoms change; a name-only correction keeps the same
 clinical revision. Enrolled Build 7 phones fetch the latest profile.
 
-## Build 8 custom disorders
+## Build 8 disorder and symptom catalogue
 
-Custom disorder definitions are managed at `/admin/disorders`. Staff must type
-the exact clinical name twice. Case, whitespace, and dash variants of an
-existing definition are rejected. After creation, profiles select the stable
-canonical ID rather than retyping the name. Symptoms remain restricted to the
-controlled NeuroSol symptom vocabulary.
+Disorder definitions and the controlled symptom vocabulary are managed at
+`/admin/disorders`. Staff can change which active symptoms are offered for
+each disorder without rewriting existing patient profile revisions. A removed
+choice therefore disappears from future profile edits while an already
+assigned patient can continue submitting against the historical revision.
+
+Staff can also create a new symptom by typing its exact clinical name twice.
+Case, whitespace, punctuation-normalised, and dash variants of existing names
+are rejected. The new symptom receives an immutable `custom-symptom-*` ID and
+requires Build 8 when selected in a patient profile. It is not automatically
+added to any existing disorder; staff explicitly add it to the appropriate
+disorder symptom list. A custom disorder initially receives the active
+controlled symptom vocabulary and can then be narrowed in the same way.
+
+Custom symptoms and disorders are never hard-deleted. Archive them to prevent
+future selection. Reactivation restores their previous stable ID and disorder
+associations. Correcting a custom symptom name preserves its ID and creates a
+new revision for currently assigned profiles that use it. Earlier profile
+revisions and submitted display labels remain unchanged.
 
 Custom definitions are never hard-deleted. Archive a definition to remove it
 from future profile assignments while retaining historical profiles, CSV rows,
@@ -64,11 +80,13 @@ The active Migraine vocabulary includes both `Vertigo` and `Dizziness`.
 Build 7 profile revisions and submissions remain valid, but it cannot be
 selected for a new or edited profile.
 
-The backend creates `disorder_catalog.json` with an audit log. On first Build 8
-startup it also adds canonical disorder and symptom IDs to existing profiles
-and CSV rows. The original `identity_store.json` and CSV are backed up before
-either migration is committed. If an existing profile cannot be resolved, the
-identity migration aborts without overwriting the source file.
+The backend creates `disorder_catalog.json` with an audit log. Catalogue schema
+2 adds custom symptoms and per-disorder symptom availability additively. A
+schema-1 catalogue is validated and backed up before migration. Existing
+custom disorders and audit events are retained. The identity and CSV migration
+still preserves canonical disorder/symptom IDs and historical labels. If an
+existing profile cannot be resolved, the identity migration aborts without
+overwriting the source file.
 
 Safe rollout order:
 
@@ -87,7 +105,7 @@ treats `latestBuild` as a mandatory update. Build 8 clients see Build 8. This
 prevents a nominal “latest” value from accidentally disabling the public Build
 7 app.
 
-A custom-profile code requires Build 8 and the
+A profile containing a custom disorder or custom symptom requires Build 8 and the
 `X-NeuroSol-Disorders: canonical-v1` capability header. An older client receives
 HTTP `426` without consuming the one-time code. Existing Build 7 patients using
 built-in disorders continue normally. Do not assign a custom disorder to an
@@ -157,7 +175,8 @@ accepted payload used the Build 7/schema 1 or Build 8/schema 2 contract.
 The runtime directory contains `symptom_entries.csv`,
 `identity_store.json`, `disorder_catalog.json`, migration backups, and deletion
 backups. Protect all of them as clinical information and back up the CSV,
-identity store, and disorder catalogue together.
+identity store, and disorder catalogue together. Catalogue edits are audited;
+do not edit `disorder_catalog.json` by hand.
 
 ## Google Play review
 

@@ -4,8 +4,9 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const catalogVersion = 1;
+const catalogVersion = 2;
 const customDisorderMinimumBuild = 8;
+const customSymptomMinimumBuild = 8;
 
 const builtInSymptomCatalog = Object.freeze({
   Migraine: Object.freeze([
@@ -74,6 +75,58 @@ function stableSlug(value) {
     .replace(/^-+|-+$/g, '');
 }
 
+function normaliseTerm(value, { label, minimum, maximum }) {
+  const displayName = String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (displayName.length < minimum || displayName.length > maximum) {
+    throw new Error(
+      `The ${label} name must contain ${minimum} to ${maximum} characters.`,
+    );
+  }
+  if (!/^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.'’(),/&+\-–:]*$/u.test(displayName)) {
+    throw new Error(
+      `The ${label} name contains unsupported punctuation or characters.`,
+    );
+  }
+  return displayName;
+}
+
+function nameKey(value, normalise) {
+  return normalise(value)
+    .normalize('NFKC')
+    .toLocaleLowerCase('en-AU')
+    .replace(/[’']/g, "'")
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normaliseDisorderName(value) {
+  return normaliseTerm(value, {
+    label: 'disorder',
+    minimum: 3,
+    maximum: 120,
+  });
+}
+
+function disorderNameKey(value) {
+  return nameKey(value, normaliseDisorderName);
+}
+
+function normaliseSymptomName(value) {
+  return normaliseTerm(value, {
+    label: 'symptom',
+    minimum: 2,
+    maximum: 80,
+  });
+}
+
+function symptomNameKey(value) {
+  return nameKey(value, normaliseSymptomName);
+}
+
 const symptomLabels = Object.freeze([
   ...new Set(Object.values(builtInSymptomCatalog).flat()),
 ]);
@@ -81,30 +134,33 @@ const symptomDefinitions = Object.freeze(symptomLabels.map(displayName =>
   Object.freeze({
     id: stableSlug(displayName),
     displayName,
+    kind: 'built-in',
+    active: true,
+    minimumAppBuild: 7,
   })
 ));
 const historicalSymptomDefinitions = Object.freeze([
   Object.freeze({
     id: 'visual-aura',
     displayName: 'Visual aura',
+    kind: 'historical',
+    active: false,
+    minimumAppBuild: 7,
   }),
   Object.freeze({
     id: 'sweating-changes',
     displayName: 'Sweating changes',
+    kind: 'historical',
+    active: false,
+    minimumAppBuild: 7,
   }),
 ]);
-const allSymptomDefinitions = Object.freeze([
+const staticSymptomDefinitions = Object.freeze([
   ...symptomDefinitions,
   ...historicalSymptomDefinitions,
 ]);
-const symptomsById = new Map(
-  allSymptomDefinitions.map(definition => [definition.id, definition]),
-);
-const symptomsByName = new Map(
-  allSymptomDefinitions.map(definition => [
-    definition.displayName.toLocaleLowerCase('en-AU'),
-    definition,
-  ]),
+const staticSymptomsById = new Map(
+  staticSymptomDefinitions.map(definition => [definition.id, definition]),
 );
 
 const builtInDisorders = Object.freeze(
@@ -116,39 +172,16 @@ const builtInDisorders = Object.freeze(
       active: true,
       minimumAppBuild: 7,
       allowedSymptomIds: Object.freeze(
-        symptoms.map(symptom => symptomsByName.get(
-          symptom.toLocaleLowerCase('en-AU'),
+        symptoms.map(symptom => staticSymptomDefinitions.find(
+          item => item.displayName === symptom,
         ).id),
       ),
     })
   ),
 );
-
-function normaliseDisorderName(value) {
-  const displayName = String(value || '')
-    .normalize('NFKC')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (displayName.length < 3 || displayName.length > 120) {
-    throw new Error('The disorder name must contain 3 to 120 characters.');
-  }
-  if (!/^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}\s.'’(),/&+\-–:]*$/u.test(displayName)) {
-    throw new Error(
-      'The disorder name contains unsupported punctuation or characters.',
-    );
-  }
-  return displayName;
-}
-
-function disorderNameKey(value) {
-  return normaliseDisorderName(value)
-    .normalize('NFKC')
-    .toLocaleLowerCase('en-AU')
-    .replace(/[’']/g, "'")
-    .replace(/[‐‑‒–—−]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const builtInDisordersById = new Map(
+  builtInDisorders.map(disorder => [disorder.id, disorder]),
+);
 
 function validActor(value) {
   const actor = String(value || '').trim();
@@ -158,41 +191,44 @@ function validActor(value) {
   return actor;
 }
 
-function publicDisorder(record) {
+function publicSymptom(record) {
   return {
     id: record.id,
     displayName: record.displayName,
     kind: record.kind,
     active: record.active !== false,
     minimumAppBuild: Number(record.minimumAppBuild || 7),
-    allowedSymptomIds: [...record.allowedSymptomIds],
-    allowedSymptoms: record.allowedSymptomIds.map(
-      symptomId => symptomsById.get(symptomId).displayName,
-    ),
   };
 }
 
-function definitionsFrom(customDisorders = {}, { includeInactive = false } = {}) {
-  const custom = Object.values(customDisorders)
-    .filter(record => includeInactive || record.active !== false)
-    .map(publicDisorder)
-    .sort((left, right) => left.displayName.localeCompare(
-      right.displayName,
-      'en-AU',
-    ));
-  return [
-    ...builtInDisorders.map(publicDisorder),
-    ...custom,
-  ];
+function staticSymptomLookup() {
+  return new Map(
+    staticSymptomDefinitions.map(item => [item.id, publicSymptom(item)]),
+  );
 }
 
-function findDisorder(
-  customDisorders,
-  { id = '', displayName = '', includeInactive = true } = {},
+function publicDisorder(record, allowedSymptomIds, symptomLookup) {
+  const availableIds = allowedSymptomIds.filter(id => {
+    const symptom = symptomLookup.get(id);
+    return symptom && symptom.active !== false && symptom.kind !== 'historical';
+  });
+  return {
+    id: record.id,
+    displayName: record.displayName,
+    kind: record.kind,
+    active: record.active !== false,
+    minimumAppBuild: Number(record.minimumAppBuild || 7),
+    allowedSymptomIds: availableIds,
+    allowedSymptoms: availableIds.map(id => symptomLookup.get(id).displayName),
+  };
+}
+
+function findDisorderFromDefinitions(
+  definitions,
+  { id = '', displayName = '' } = {},
 ) {
   const suppliedId = String(id || '').trim();
   const suppliedName = String(displayName || '').trim();
-  const definitions = definitionsFrom(customDisorders, { includeInactive });
   let definition = null;
   if (suppliedId) {
     definition = definitions.find(item => item.id === suppliedId) || null;
@@ -214,22 +250,27 @@ function findDisorder(
   return definition;
 }
 
-function findSymptom(
+function findSymptomFromLookup(
   disorder,
   { id = '', displayName = '' } = {},
+  symptomLookup,
 ) {
   if (!disorder) return null;
   const suppliedId = String(id || '').trim();
   const suppliedName = String(displayName || '').trim();
-  let definition = null;
-  if (suppliedId) {
-    definition = symptomsById.get(suppliedId) || null;
-  } else if (suppliedName) {
-    definition = symptomsByName.get(
-      suppliedName.toLocaleLowerCase('en-AU'),
+  let definition = suppliedId ? symptomLookup.get(suppliedId) || null : null;
+  if (!definition && suppliedName) {
+    const key = symptomNameKey(suppliedName);
+    definition = [...symptomLookup.values()].find(
+      item => symptomNameKey(item.displayName) === key,
     ) || null;
   }
-  if (!definition || !disorder.allowedSymptomIds.includes(definition.id)) {
+  if (
+    !definition ||
+    definition.active === false ||
+    definition.kind === 'historical' ||
+    !disorder.allowedSymptomIds.includes(definition.id)
+  ) {
     return null;
   }
   if (suppliedName && suppliedName !== definition.displayName) {
@@ -237,33 +278,60 @@ function findSymptom(
       'The symptom identifier does not match its registered display name.',
     );
   }
-  return { ...definition };
+  return publicSymptom(definition);
 }
 
-function findGlobalSymptom({ id = '', displayName = '' } = {}) {
+function findGlobalSymptomFromLookup(
+  { id = '', displayName = '' } = {},
+  symptomLookup,
+) {
   const suppliedId = String(id || '').trim();
   const suppliedName = String(displayName || '').trim();
-  const definition = suppliedId
-    ? symptomsById.get(suppliedId) || null
-    : symptomsByName.get(suppliedName.toLocaleLowerCase('en-AU')) || null;
+  let definition = suppliedId ? symptomLookup.get(suppliedId) || null : null;
+  if (!definition && suppliedName) {
+    const key = symptomNameKey(suppliedName);
+    definition = [...symptomLookup.values()].find(
+      item => symptomNameKey(item.displayName) === key,
+    ) || null;
+  }
   if (!definition) return null;
   if (suppliedName && suppliedName !== definition.displayName) {
     throw new Error(
       'The symptom identifier does not match its registered display name.',
     );
   }
-  return { ...definition };
+  return publicSymptom(definition);
 }
 
 function staticDisorderCatalog() {
-  const customDisorders = {};
+  const symptomLookup = staticSymptomLookup();
+  const definitions = builtInDisorders.map(disorder => publicDisorder(
+    disorder,
+    [...disorder.allowedSymptomIds],
+    symptomLookup,
+  ));
   return {
     version: catalogVersion,
-    definitions: options => definitionsFrom(customDisorders, options),
-    findDisorder: input => findDisorder(customDisorders, input),
-    findSymptom,
-    findGlobalSymptom,
-    symptomDefinitions: () => symptomDefinitions.map(item => ({ ...item })),
+    definitions: ({ includeInactive = false } = {}) => definitions.filter(
+      item => includeInactive || item.active !== false,
+    ),
+    findDisorder: input => findDisorderFromDefinitions(definitions, input),
+    findSymptom: (disorder, input) => findSymptomFromLookup(
+      disorder,
+      input,
+      symptomLookup,
+    ),
+    findGlobalSymptom: input => findGlobalSymptomFromLookup(
+      input,
+      symptomLookup,
+    ),
+    symptomDefinitions: ({
+      includeInactive = false,
+      includeHistorical = false,
+    } = {}) => [...symptomLookup.values()]
+      .filter(item => includeInactive || item.active !== false)
+      .filter(item => includeHistorical || item.kind !== 'historical')
+      .map(publicSymptom),
   };
 }
 
@@ -279,6 +347,8 @@ function createDisorderCatalogStore({
     return {
       version: catalogVersion,
       customDisorders: {},
+      customSymptoms: {},
+      builtInDisorderSymptomOverrides: {},
       auditLog: [],
     };
   }
@@ -298,7 +368,119 @@ function createDisorderCatalogStore({
     if (!fs.existsSync(catalogPath)) writeStore(emptyStore());
   }
 
-  function validateStoredDisorder(record, key) {
+  function validateV1Store(store) {
+    if (
+      Number(store.version) !== 1 ||
+      !store.customDisorders ||
+      typeof store.customDisorders !== 'object' ||
+      !Array.isArray(store.auditLog)
+    ) {
+      throw new Error('The disorder catalogue schema is invalid.');
+    }
+    const nameKeys = new Set(
+      builtInDisorders.map(item => disorderNameKey(item.displayName)),
+    );
+    const expectedSymptoms = symptomDefinitions.map(item => item.id);
+    for (const [key, record] of Object.entries(store.customDisorders)) {
+      if (!record || typeof record !== 'object' || record.id !== key) {
+        throw new Error('The disorder catalogue contains an invalid record.');
+      }
+      if (!/^custom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id)) {
+        throw new Error('The disorder catalogue contains an invalid identifier.');
+      }
+      const displayName = normaliseDisorderName(record.displayName);
+      if (
+        displayName !== record.displayName ||
+        disorderNameKey(displayName) !== record.nameKey ||
+        record.kind !== 'custom' ||
+        typeof record.active !== 'boolean' ||
+        Number(record.minimumAppBuild) !== customDisorderMinimumBuild ||
+        !Array.isArray(record.allowedSymptomIds) ||
+        record.allowedSymptomIds.length !== expectedSymptoms.length ||
+        record.allowedSymptomIds.some((id, index) => id !== expectedSymptoms[index])
+      ) {
+        throw new Error('The disorder catalogue contains invalid symptoms.');
+      }
+      if (nameKeys.has(record.nameKey)) {
+        throw new Error('The disorder catalogue contains a duplicate name.');
+      }
+      nameKeys.add(record.nameKey);
+    }
+  }
+
+  function upgradeV1Store(store) {
+    validateV1Store(store);
+    const backupSuffix = now().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    const backupPath = `${catalogPath}.backup-v1-${backupSuffix}-${randomUUID().slice(0, 8)}`;
+    fs.copyFileSync(catalogPath, backupPath, fs.constants.COPYFILE_EXCL);
+    const upgraded = {
+      ...store,
+      version: catalogVersion,
+      customSymptoms: {},
+      builtInDisorderSymptomOverrides: {},
+    };
+    writeStore(upgraded);
+    return upgraded;
+  }
+
+  function symptomLookupFor(store) {
+    return new Map([
+      ...staticSymptomDefinitions.map(item => [item.id, publicSymptom(item)]),
+      ...Object.values(store.customSymptoms || {}).map(
+        item => [item.id, publicSymptom(item)],
+      ),
+    ]);
+  }
+
+  function rawAllowedSymptomIds(store, disorder) {
+    if (disorder.kind === 'built-in') {
+      return store.builtInDisorderSymptomOverrides[disorder.id] ||
+        [...disorder.allowedSymptomIds];
+    }
+    return [...disorder.allowedSymptomIds];
+  }
+
+  function definitionsFromStore(store, { includeInactive = false } = {}) {
+    const symptomLookup = symptomLookupFor(store);
+    const builtIn = builtInDisorders.map(disorder => publicDisorder(
+      disorder,
+      rawAllowedSymptomIds(store, disorder),
+      symptomLookup,
+    ));
+    const custom = Object.values(store.customDisorders)
+      .filter(record => includeInactive || record.active !== false)
+      .map(record => publicDisorder(
+        record,
+        rawAllowedSymptomIds(store, record),
+        symptomLookup,
+      ))
+      .sort((left, right) => left.displayName.localeCompare(
+        right.displayName,
+        'en-AU',
+      ));
+    return [...builtIn, ...custom];
+  }
+
+  function validateStoredSymptom(record, key) {
+    if (!record || typeof record !== 'object' || record.id !== key) {
+      throw new Error('The symptom catalogue contains an invalid record.');
+    }
+    if (!/^custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id)) {
+      throw new Error('The symptom catalogue contains an invalid identifier.');
+    }
+    const displayName = normaliseSymptomName(record.displayName);
+    if (
+      displayName !== record.displayName ||
+      symptomNameKey(displayName) !== record.nameKey ||
+      record.kind !== 'custom' ||
+      typeof record.active !== 'boolean' ||
+      Number(record.minimumAppBuild) !== customSymptomMinimumBuild
+    ) {
+      throw new Error('The symptom catalogue contains an invalid record.');
+    }
+  }
+
+  function validateStoredDisorder(record, key, symptomLookup) {
     if (!record || typeof record !== 'object' || record.id !== key) {
       throw new Error('The disorder catalogue contains an invalid record.');
     }
@@ -308,50 +490,103 @@ function createDisorderCatalogStore({
     const displayName = normaliseDisorderName(record.displayName);
     if (
       displayName !== record.displayName ||
-      disorderNameKey(displayName) !== record.nameKey
-    ) {
-      throw new Error('The disorder catalogue contains an invalid name index.');
-    }
-    if (
+      disorderNameKey(displayName) !== record.nameKey ||
       record.kind !== 'custom' ||
       typeof record.active !== 'boolean' ||
       Number(record.minimumAppBuild) !== customDisorderMinimumBuild ||
       !Array.isArray(record.allowedSymptomIds) ||
-      record.allowedSymptomIds.length !== symptomDefinitions.length ||
+      record.allowedSymptomIds.length < 3 ||
       new Set(record.allowedSymptomIds).size !== record.allowedSymptomIds.length ||
-      record.allowedSymptomIds.some(
-        (id, index) => id !== symptomDefinitions[index].id,
-      )
+      record.allowedSymptomIds.some(id => {
+        const symptom = symptomLookup.get(id);
+        return !symptom || symptom.kind === 'historical';
+      })
     ) {
       throw new Error('The disorder catalogue contains invalid symptoms.');
     }
   }
 
-  function readStore() {
-    ensureStore();
-    const parsed = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+  function validateV2Store(store) {
     if (
-      Number(parsed.version) !== catalogVersion ||
-      !parsed.customDisorders ||
-      typeof parsed.customDisorders !== 'object' ||
-      !Array.isArray(parsed.auditLog)
+      Number(store.version) !== catalogVersion ||
+      !store.customDisorders ||
+      typeof store.customDisorders !== 'object' ||
+      !store.customSymptoms ||
+      typeof store.customSymptoms !== 'object' ||
+      !store.builtInDisorderSymptomOverrides ||
+      typeof store.builtInDisorderSymptomOverrides !== 'object' ||
+      !Array.isArray(store.auditLog)
     ) {
       throw new Error('The disorder catalogue schema is invalid.');
     }
-    const nameKeys = new Set(
+
+    const symptomKeys = new Set(
+      staticSymptomDefinitions.map(item => symptomNameKey(item.displayName)),
+    );
+    for (const [key, record] of Object.entries(store.customSymptoms)) {
+      validateStoredSymptom(record, key);
+      if (symptomKeys.has(record.nameKey)) {
+        throw new Error('The symptom catalogue contains a duplicate name.');
+      }
+      symptomKeys.add(record.nameKey);
+    }
+
+    const symptomLookup = symptomLookupFor(store);
+    const disorderKeys = new Set(
       builtInDisorders.map(item => disorderNameKey(item.displayName)),
     );
-    for (const [key, record] of Object.entries(parsed.customDisorders)) {
-      validateStoredDisorder(record, key);
-      if (nameKeys.has(record.nameKey)) {
+    for (const [key, record] of Object.entries(store.customDisorders)) {
+      validateStoredDisorder(record, key, symptomLookup);
+      if (disorderKeys.has(record.nameKey)) {
         throw new Error('The disorder catalogue contains a duplicate name.');
       }
-      nameKeys.add(record.nameKey);
+      disorderKeys.add(record.nameKey);
     }
+
+    for (const [disorderId, symptomIds] of Object.entries(
+      store.builtInDisorderSymptomOverrides,
+    )) {
+      if (
+        !builtInDisordersById.has(disorderId) ||
+        !Array.isArray(symptomIds) ||
+        symptomIds.length < 3 ||
+        new Set(symptomIds).size !== symptomIds.length ||
+        symptomIds.some(id => {
+          const symptom = symptomLookup.get(id);
+          return !symptom || symptom.kind === 'historical';
+        })
+      ) {
+        throw new Error('A built-in disorder symptom override is invalid.');
+      }
+    }
+
+    for (const disorder of [
+      ...builtInDisorders,
+      ...Object.values(store.customDisorders),
+    ]) {
+      const availableCount = rawAllowedSymptomIds(store, disorder)
+        .filter(id => {
+          const symptom = symptomLookup.get(id);
+          return symptom && symptom.active !== false &&
+            symptom.kind !== 'historical';
+        }).length;
+      if (availableCount < 3) {
+        throw new Error(
+          `${disorder.displayName} has fewer than three active symptoms.`,
+        );
+      }
+    }
+  }
+
+  function readStore() {
+    ensureStore();
+    let parsed = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+    if (Number(parsed.version) === 1) parsed = upgradeV1Store(parsed);
+    validateV2Store(parsed);
     return parsed;
   }
 
-  function allNameKeys(store, exceptId = '') {
+  function allDisorderNameKeys(store, exceptId = '') {
     const keys = new Set(
       builtInDisorders.map(item => disorderNameKey(item.displayName)),
     );
@@ -361,24 +596,60 @@ function createDisorderCatalogStore({
     return keys;
   }
 
-  function audit(store, { actor, action, disorderId, before, after }) {
+  function allSymptomNameKeys(store, exceptId = '') {
+    const keys = new Set(
+      staticSymptomDefinitions.map(item => symptomNameKey(item.displayName)),
+    );
+    for (const record of Object.values(store.customSymptoms)) {
+      if (record.id !== exceptId) keys.add(record.nameKey);
+    }
+    return keys;
+  }
+
+  function audit(store, {
+    actor,
+    action,
+    disorderId = null,
+    symptomId = null,
+    before,
+    after,
+  }) {
     store.auditLog.push({
       eventId: randomUUID(),
       at: now().toISOString(),
       actor: validActor(actor),
       action,
       disorderId,
+      symptomId,
       before,
       after,
     });
   }
 
-  function auditSnapshot(record) {
+  function disorderAuditSnapshot(record) {
+    if (!record) return null;
+    return {
+      displayName: record.displayName,
+      active: record.active !== false,
+      allowedSymptomIds: [...record.allowedSymptomIds],
+    };
+  }
+
+  function symptomAuditSnapshot(record) {
     if (!record) return null;
     return {
       displayName: record.displayName,
       active: record.active !== false,
     };
+  }
+
+  function activeAssignableSymptoms(store) {
+    return [...symptomLookupFor(store).values()]
+      .filter(item => item.active !== false && item.kind !== 'historical')
+      .sort((left, right) => left.displayName.localeCompare(
+        right.displayName,
+        'en-AU',
+      ));
   }
 
   function createCustomDisorder({
@@ -393,7 +664,7 @@ function createDisorderCatalogStore({
     }
     const store = readStore();
     const nameKey = disorderNameKey(name);
-    if (allNameKeys(store).has(nameKey)) {
+    if (allDisorderNameKeys(store).has(nameKey)) {
       throw new Error('That disorder already exists in the catalogue.');
     }
     const id = `custom-${randomUUID()}`;
@@ -405,7 +676,7 @@ function createDisorderCatalogStore({
       kind: 'custom',
       active: true,
       minimumAppBuild: customDisorderMinimumBuild,
-      allowedSymptomIds: symptomDefinitions.map(item => item.id),
+      allowedSymptomIds: activeAssignableSymptoms(store).map(item => item.id),
       createdAt: timestamp,
       createdBy: validActor(actor),
       updatedAt: timestamp,
@@ -417,10 +688,11 @@ function createDisorderCatalogStore({
       action: 'custom_disorder_created',
       disorderId: id,
       before: null,
-      after: auditSnapshot(record),
+      after: disorderAuditSnapshot(record),
     });
+    validateV2Store(store);
     writeStore(store);
-    return publicDisorder(record);
+    return publicDisorder(record, record.allowedSymptomIds, symptomLookupFor(store));
   }
 
   function updateCustomDisorder({
@@ -433,7 +705,7 @@ function createDisorderCatalogStore({
     const store = readStore();
     const record = store.customDisorders[String(id || '').trim()];
     if (!record) throw new Error('The custom disorder was not found.');
-    const before = auditSnapshot(record);
+    const before = disorderAuditSnapshot(record);
     let action = 'custom_disorder_updated';
 
     if (displayName != null || confirmation != null) {
@@ -442,12 +714,12 @@ function createDisorderCatalogStore({
       if (name !== confirmedName) {
         throw new Error('The two disorder-name entries must match exactly.');
       }
-      const nameKey = disorderNameKey(name);
-      if (allNameKeys(store, record.id).has(nameKey)) {
+      const newNameKey = disorderNameKey(name);
+      if (allDisorderNameKeys(store, record.id).has(newNameKey)) {
         throw new Error('That disorder already exists in the catalogue.');
       }
       record.displayName = name;
-      record.nameKey = nameKey;
+      record.nameKey = newNameKey;
     }
 
     if (typeof active === 'boolean' && active !== record.active) {
@@ -463,18 +735,184 @@ function createDisorderCatalogStore({
       action,
       disorderId: record.id,
       before,
-      after: auditSnapshot(record),
+      after: disorderAuditSnapshot(record),
     });
+    validateV2Store(store);
     writeStore(store);
-    return publicDisorder(record);
+    return publicDisorder(record, record.allowedSymptomIds, symptomLookupFor(store));
+  }
+
+  function createCustomSymptom({
+    displayName,
+    confirmation,
+    actor = 'clinic-admin',
+  } = {}) {
+    const name = normaliseSymptomName(displayName);
+    const confirmedName = normaliseSymptomName(confirmation);
+    if (name !== confirmedName) {
+      throw new Error('The two symptom-name entries must match exactly.');
+    }
+    const store = readStore();
+    const newNameKey = symptomNameKey(name);
+    if (allSymptomNameKeys(store).has(newNameKey)) {
+      throw new Error('That symptom already exists in the catalogue.');
+    }
+    const id = `custom-symptom-${randomUUID()}`;
+    const timestamp = now().toISOString();
+    const record = {
+      id,
+      displayName: name,
+      nameKey: newNameKey,
+      kind: 'custom',
+      active: true,
+      minimumAppBuild: customSymptomMinimumBuild,
+      createdAt: timestamp,
+      createdBy: validActor(actor),
+      updatedAt: timestamp,
+      updatedBy: validActor(actor),
+    };
+    store.customSymptoms[id] = record;
+    audit(store, {
+      actor,
+      action: 'custom_symptom_created',
+      symptomId: id,
+      before: null,
+      after: symptomAuditSnapshot(record),
+    });
+    validateV2Store(store);
+    writeStore(store);
+    return publicSymptom(record);
+  }
+
+  function updateCustomSymptom({
+    id,
+    displayName,
+    confirmation,
+    active,
+    actor = 'clinic-admin',
+  } = {}) {
+    const store = readStore();
+    const record = store.customSymptoms[String(id || '').trim()];
+    if (!record) throw new Error('The custom symptom was not found.');
+    const before = symptomAuditSnapshot(record);
+    let action = 'custom_symptom_updated';
+
+    if (displayName != null || confirmation != null) {
+      const name = normaliseSymptomName(displayName);
+      const confirmedName = normaliseSymptomName(confirmation);
+      if (name !== confirmedName) {
+        throw new Error('The two symptom-name entries must match exactly.');
+      }
+      const newNameKey = symptomNameKey(name);
+      if (allSymptomNameKeys(store, record.id).has(newNameKey)) {
+        throw new Error('That symptom already exists in the catalogue.');
+      }
+      record.displayName = name;
+      record.nameKey = newNameKey;
+    }
+
+    if (typeof active === 'boolean' && active !== record.active) {
+      record.active = active;
+      action = active
+        ? 'custom_symptom_reactivated'
+        : 'custom_symptom_archived';
+    }
+    record.updatedAt = now().toISOString();
+    record.updatedBy = validActor(actor);
+    audit(store, {
+      actor,
+      action,
+      symptomId: record.id,
+      before,
+      after: symptomAuditSnapshot(record),
+    });
+    validateV2Store(store);
+    writeStore(store);
+    return publicSymptom(record);
+  }
+
+  function setDisorderSymptoms({
+    disorderId,
+    symptomIds = [],
+    actor = 'clinic-admin',
+  } = {}) {
+    const store = readStore();
+    const id = String(disorderId || '').trim();
+    const source = builtInDisordersById.get(id) || store.customDisorders[id];
+    if (!source) throw new Error('The disorder was not found.');
+    const selectedIds = [...new Set(
+      (Array.isArray(symptomIds) ? symptomIds : [symptomIds])
+        .map(value => String(value || '').trim())
+        .filter(Boolean),
+    )];
+    if (selectedIds.length < 3) {
+      throw new Error('Each disorder must offer at least three symptoms.');
+    }
+    const symptomLookup = symptomLookupFor(store);
+    for (const symptomId of selectedIds) {
+      const symptom = symptomLookup.get(symptomId);
+      if (!symptom || symptom.active === false || symptom.kind === 'historical') {
+        throw new Error('Only active catalogue symptoms can be made available.');
+      }
+    }
+    const beforeIds = rawAllowedSymptomIds(store, source);
+    if (JSON.stringify(beforeIds) === JSON.stringify(selectedIds)) {
+      return publicDisorder(source, beforeIds, symptomLookup);
+    }
+    if (source.kind === 'built-in') {
+      store.builtInDisorderSymptomOverrides[id] = selectedIds;
+    } else {
+      source.allowedSymptomIds = selectedIds;
+      source.updatedAt = now().toISOString();
+      source.updatedBy = validActor(actor);
+    }
+    audit(store, {
+      actor,
+      action: 'disorder_symptoms_updated',
+      disorderId: id,
+      before: { allowedSymptomIds: beforeIds },
+      after: { allowedSymptomIds: selectedIds },
+    });
+    validateV2Store(store);
+    writeStore(store);
+    return publicDisorder(source, selectedIds, symptomLookupFor(store));
   }
 
   function definitions(options) {
-    return definitionsFrom(readStore().customDisorders, options);
+    return definitionsFromStore(readStore(), options);
   }
 
   function resolveDisorder(input = {}) {
-    return findDisorder(readStore().customDisorders, input);
+    const store = readStore();
+    const definitions = definitionsFromStore(store, {
+      includeInactive: input.includeInactive !== false,
+    });
+    return findDisorderFromDefinitions(definitions, input);
+  }
+
+  function resolveSymptom(disorder, input = {}) {
+    const store = readStore();
+    return findSymptomFromLookup(disorder, input, symptomLookupFor(store));
+  }
+
+  function resolveGlobalSymptom(input = {}) {
+    const store = readStore();
+    return findGlobalSymptomFromLookup(input, symptomLookupFor(store));
+  }
+
+  function listSymptoms({
+    includeInactive = false,
+    includeHistorical = false,
+  } = {}) {
+    const store = readStore();
+    return [...symptomLookupFor(store).values()]
+      .filter(item => includeInactive || item.active !== false)
+      .filter(item => includeHistorical || item.kind !== 'historical')
+      .sort((left, right) => left.displayName.localeCompare(
+        right.displayName,
+        'en-AU',
+      ))
+      .map(publicSymptom);
   }
 
   function snapshot() {
@@ -486,11 +924,14 @@ function createDisorderCatalogStore({
     catalogPath,
     createCustomDisorder,
     updateCustomDisorder,
+    createCustomSymptom,
+    updateCustomSymptom,
+    setDisorderSymptoms,
     definitions,
     findDisorder: resolveDisorder,
-    findSymptom,
-    findGlobalSymptom,
-    symptomDefinitions: () => symptomDefinitions.map(item => ({ ...item })),
+    findSymptom: resolveSymptom,
+    findGlobalSymptom: resolveGlobalSymptom,
+    symptomDefinitions: listSymptoms,
     snapshot,
   };
 }
@@ -501,8 +942,11 @@ module.exports = {
   catalogVersion,
   createDisorderCatalogStore,
   customDisorderMinimumBuild,
+  customSymptomMinimumBuild,
   disorderNameKey,
   normaliseDisorderName,
+  normaliseSymptomName,
   staticDisorderCatalog: staticDisorderCatalog(),
   symptomDefinitions,
+  symptomNameKey,
 };

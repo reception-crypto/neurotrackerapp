@@ -156,6 +156,72 @@ test('custom profiles use registered IDs and require Build 8', () => {
   }
 });
 
+test('a custom symptom makes only profiles that select it require Build 8', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-profile-'));
+  try {
+    const catalog = createDisorderCatalogStore({ dataDir });
+    const customSymptom = catalog.createCustomSymptom({
+      displayName: 'Limb heaviness',
+      confirmation: 'Limb heaviness',
+    });
+    const migraine = catalog.findDisorder({ id: 'migraine' });
+    catalog.setDisorderSymptoms({
+      disorderId: migraine.id,
+      symptomIds: [...migraine.allowedSymptomIds, customSymptom.id],
+    });
+
+    const legacyCompatible = normaliseClinicalProfile({
+      primaryDisorderId: 'migraine',
+      primarySymptomIds: ['headache', 'nausea', 'dizziness'],
+    }, { disorderCatalog: catalog });
+    assert.equal(profileMinimumBuild(legacyCompatible), 7);
+
+    const build8Profile = normaliseClinicalProfile({
+      primaryDisorderId: 'migraine',
+      primarySymptomIds: ['headache', 'nausea', customSymptom.id],
+    }, { disorderCatalog: catalog });
+    assert.equal(profileMinimumBuild(build8Profile), 8);
+    assert.equal(build8Profile.primarySymptoms[2], 'Limb heaviness');
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('removing a symptom from future choices does not invalidate an old profile revision', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-profile-'));
+  try {
+    const catalog = createDisorderCatalogStore({ dataDir });
+    const original = normaliseClinicalProfile({
+      primaryDisorderId: 'migraine',
+      primarySymptomIds: ['headache', 'nausea', 'dizziness'],
+    }, { disorderCatalog: catalog });
+    const migraine = catalog.findDisorder({ id: 'migraine' });
+    catalog.setDisorderSymptoms({
+      disorderId: 'migraine',
+      symptomIds: migraine.allowedSymptomIds.filter(id => id !== 'headache'),
+    });
+
+    assert.throws(
+      () => normaliseClinicalProfile({
+        primaryDisorderId: 'migraine',
+        primarySymptomIds: ['headache', 'nausea', 'dizziness'],
+      }, { disorderCatalog: catalog }),
+      /do not match/,
+    );
+    const historical = normaliseClinicalProfile({
+      primaryDisorderId: original.primaryDisorderId,
+      primarySymptomIds: original.primarySymptomIds,
+    }, {
+      disorderCatalog: catalog,
+      allowHistoricalSymptoms: true,
+    });
+    assert.deepEqual(historical.primarySymptomIds, original.primarySymptomIds);
+    assert.deepEqual(historical.primarySymptoms, original.primarySymptoms);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('accepted records are stamped from the assigned canonical profile', () => {
   const profile = normaliseClinicalProfile({
     primaryDisorder: 'Dysautonomia',

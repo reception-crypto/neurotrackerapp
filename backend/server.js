@@ -1491,7 +1491,11 @@ function suggestedClinicalProfile(rows, patientId) {
       secondaryDisorder: secondaryRows[0]?.Disorder || '',
       secondarySymptomIds: secondaryRows.map(row => row.SymptomId).filter(Boolean),
       secondarySymptoms: secondaryRows.map(row => row.Symptom),
-    }, { disorderCatalog, includeInactive: true });
+    }, {
+      disorderCatalog,
+      includeInactive: true,
+      allowHistoricalSymptoms: true,
+    });
   } catch (_) {
     return null;
   }
@@ -1667,6 +1671,10 @@ function enrolmentPage({
 function disorderManagementPage({ error = '', message = '' } = {}) {
   const csrfToken = adminCsrfToken();
   const definitions = disorderCatalog.definitions({ includeInactive: true });
+  const symptoms = disorderCatalog.symptomDefinitions({
+    includeInactive: true,
+  });
+  const activeSymptoms = symptoms.filter(symptom => symptom.active);
   const compatibility = identityStore.compatibilitySummary();
   const buildTraffic = Object.entries(compatibility.builds)
     .sort(([left], [right]) => left.localeCompare(right, 'en-AU', {
@@ -1694,9 +1702,9 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
       : disorder.active
       ? 'Active'
       : 'Archived';
-    const actions = disorder.kind === 'built-in'
-      ? '<span class="muted">Protected definition</span>'
-      : `<details><summary>Edit or archive</summary>
+    const identityActions = disorder.kind === 'built-in'
+      ? '<span class="muted">Name protected</span>'
+      : `<details><summary>Edit or archive name</summary>
           <form method="post" action="/admin/disorders/update" autocomplete="off" style="min-width:320px;margin-top:10px">
             <input type="hidden" name="csrfToken" value="${csrfToken}">
             <input type="hidden" name="disorderId" value="${html(disorder.id)}">
@@ -1710,18 +1718,62 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
             <button class="${disorder.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${disorder.active ? 'archive' : 'reactivate'}">${disorder.active ? 'Archive' : 'Reactivate'}</button>
           </form>
         </details>`;
+    const symptomChoices = activeSymptoms.map(symptom =>
+      `<label><input type="checkbox" name="symptomIds" value="${html(symptom.id)}" ${disorder.allowedSymptomIds.includes(symptom.id) ? 'checked' : ''}>${html(symptom.displayName)}${symptom.kind === 'custom' ? ' <span class="muted">(custom)</span>' : ''}</label>`
+    ).join('');
+    const availabilityActions = disorder.active
+      ? `<details><summary>Change available symptoms</summary>
+          <form method="post" action="/admin/disorders/set-symptoms" style="min-width:420px;margin-top:10px">
+            <input type="hidden" name="csrfToken" value="${csrfToken}">
+            <input type="hidden" name="disorderId" value="${html(disorder.id)}">
+            <p class="muted">Select at least three. Existing patient profile revisions are not rewritten when this list changes.</p>
+            <div class="patient-list">${symptomChoices}</div>
+            <button type="submit" style="margin-top:10px">Save available symptoms</button>
+          </form>
+        </details>`
+      : '<span class="muted">Archive is not assignable</span>';
     return `<tr>
       <td>${html(disorder.displayName)}</td>
       <td><code>${html(disorder.id)}</code></td>
       <td>${status}</td>
       <td>${disorder.allowedSymptoms.length}</td>
       <td>Build ${disorder.minimumAppBuild}+</td>
+      <td>${identityActions}<br>${availabilityActions}</td>
+    </tr>`;
+  }).join('');
+  const symptomRows = symptoms.map(symptom => {
+    const status = symptom.kind === 'built-in'
+      ? 'Built in'
+      : symptom.active
+      ? 'Active custom'
+      : 'Archived custom';
+    const actions = symptom.kind === 'custom'
+      ? `<details><summary>Edit or archive</summary>
+          <form method="post" action="/admin/disorders/update-symptom" autocomplete="off" style="min-width:320px;margin-top:10px">
+            <input type="hidden" name="csrfToken" value="${csrfToken}">
+            <input type="hidden" name="symptomId" value="${html(symptom.id)}">
+            <div class="field"><label>Correct symptom name</label><input name="displayName" required maxlength="80" value="${html(symptom.displayName)}"></div>
+            <div class="field"><label>Retype symptom name</label><input name="confirmation" required maxlength="80"></div>
+            <button type="submit" name="action" value="rename">Save corrected name</button>
+          </form>
+          <form class="inline-form" method="post" action="/admin/disorders/update-symptom" style="display:block;margin-top:10px" onsubmit="return confirm('${symptom.active ? 'Archive this symptom for future profile assignments?' : 'Reactivate this symptom?'}')">
+            <input type="hidden" name="csrfToken" value="${csrfToken}">
+            <input type="hidden" name="symptomId" value="${html(symptom.id)}">
+            <button class="${symptom.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${symptom.active ? 'archive' : 'reactivate'}">${symptom.active ? 'Archive' : 'Reactivate'}</button>
+          </form>
+        </details>`
+      : '<span class="muted">Remove from individual disorder lists as required</span>';
+    return `<tr>
+      <td>${html(symptom.displayName)}</td>
+      <td><code>${html(symptom.id)}</code></td>
+      <td>${status}</td>
+      <td>Build ${symptom.minimumAppBuild}+</td>
       <td>${actions}</td>
     </tr>`;
   }).join('');
   const activation = customDisordersEnabled
-    ? '<strong class="good">Custom disorder assignment is enabled.</strong>'
-    : '<strong class="flag">Custom disorder assignment remains disabled until Build 8 is available on both stores.</strong>';
+    ? '<strong class="good">Build 8-only disorder and symptom assignment is enabled.</strong>'
+    : '<strong class="flag">Build 8-only disorder and symptom assignment remains disabled until Build 8 is available on both stores.</strong>';
   const body = `${errorNotice}${messageNotice}
     <section class="panel"><h2>Compatibility traffic</h2>
       <p><strong>${html(buildTraffic)}</strong></p>
@@ -1730,8 +1782,21 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
     </section>
     <section class="panel"><h2>Disorder catalogue</h2>
       <p>${activation}</p>
-      <p class="muted">Disorder names are created once and then selected by stable ID. Patient profiles may choose exactly three symptoms from the controlled NeuroSol symptom vocabulary. Archiving never rewrites historical profiles or submitted records.</p>
+      <p class="muted">Disorders and symptoms use stable IDs. Changing availability affects future profile edits only; existing profile revisions and submitted records are preserved. A profile still selects exactly three symptoms per disorder.</p>
       <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Available symptoms</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section>
+    <section class="panel"><h2>Symptom vocabulary</h2>
+      <p class="muted">Create a symptom once, then add it to the relevant disorder lists above. Custom symptom names require exact double entry. Archiving prevents future selection but never deletes the stable ID or historical data.</p>
+      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${symptomRows}</tbody></table></div>
+      <h3>Create a custom symptom</h3>
+      <form method="post" action="/admin/disorders/create-symptom" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <div class="toolbar">
+          <div class="field"><label>Exact symptom name</label><input name="displayName" required minlength="2" maxlength="80"></div>
+          <div class="field"><label>Retype exact symptom name</label><input name="confirmation" required minlength="2" maxlength="80"></div>
+          <div class="field"><label>&nbsp;</label><button type="submit">Create symptom</button></div>
+        </div>
+      </form>
     </section>
     <section class="panel"><h2>Create a custom disorder</h2>
       <p class="muted">Use the clinically correct name and retype it independently. Case and spacing variants of existing disorders are rejected.</p>
@@ -1799,6 +1864,71 @@ app.post('/admin/disorders/update',requireAdmin,requireAdminCsrf,(req,res)=>{
   }
 });
 
+app.post('/admin/disorders/create-symptom',requireAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    const created = disorderCatalog.createCustomSymptom({
+      displayName: req.body.displayName,
+      confirmation: req.body.confirmation,
+      actor: adminUser,
+    });
+    return res.status(201).send(disorderManagementPage({
+      message: `${created.displayName} was created. Add it to the appropriate disorder symptom list before assigning it to a profile.`,
+    }));
+  } catch (error) {
+    return res.status(400).send(disorderManagementPage({
+      error: error.message,
+    }));
+  }
+});
+
+app.post('/admin/disorders/update-symptom',requireAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    const action = String(req.body.action || '');
+    const input = {
+      id: req.body.symptomId,
+      actor: adminUser,
+    };
+    if (action === 'rename') {
+      input.displayName = req.body.displayName;
+      input.confirmation = req.body.confirmation;
+    } else if (action === 'archive') {
+      input.active = false;
+    } else if (action === 'reactivate') {
+      input.active = true;
+    } else {
+      throw new Error('The requested symptom action is invalid.');
+    }
+    const updated = disorderCatalog.updateCustomSymptom(input);
+    const refreshedProfiles = action === 'rename'
+      ? identityStore.refreshProfilesForSymptom(updated.id)
+      : 0;
+    return res.send(disorderManagementPage({
+      message: `${updated.displayName} was updated.${refreshedProfiles ? ` ${refreshedProfiles} assigned profile(s) received a new revision.` : ''}`,
+    }));
+  } catch (error) {
+    return res.status(400).send(disorderManagementPage({
+      error: error.message,
+    }));
+  }
+});
+
+app.post('/admin/disorders/set-symptoms',requireAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    const updated = disorderCatalog.setDisorderSymptoms({
+      disorderId: req.body.disorderId,
+      symptomIds: values(req.body.symptomIds),
+      actor: adminUser,
+    });
+    return res.send(disorderManagementPage({
+      message: `${updated.displayName} now offers ${updated.allowedSymptoms.length} symptoms for future profile assignments. Existing assigned revisions were preserved.`,
+    }));
+  } catch (error) {
+    return res.status(400).send(disorderManagementPage({
+      error: error.message,
+    }));
+  }
+});
+
 app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
 
 app.get('/admin/enrolments',requireAdmin,(req,res)=>{
@@ -1823,7 +1953,7 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
     }, { disorderCatalog });
     if (profileMinimumBuild(clinicalProfile) >= 8 && !customDisordersEnabled) {
       throw new Error(
-        'Custom disorder assignment is disabled until Build 8 is available.',
+        'Build 8-only disorder or symptom assignment is disabled until Build 8 is available.',
       );
     }
     if (profileMinimumBuild(clinicalProfile) >= 8 && patientId) {
@@ -1840,7 +1970,7 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
         throw new Error(
           'This patient still has an active Build 7 or unconfirmed device. ' +
           'Observe the device on Build 8 with canonical support, or revoke ' +
-          'the obsolete device, before assigning a custom disorder.',
+          'the obsolete device, before assigning Build 8-only profile content.',
         );
       }
     }

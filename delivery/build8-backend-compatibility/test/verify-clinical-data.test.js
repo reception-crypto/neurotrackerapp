@@ -46,8 +46,10 @@ function writeFixture(directory, profile, columns = requiredCsvColumns) {
     `${columns.join(',')}\n${columns.map((_, index) => `value-${index}`).join(',')}\n`,
   );
   fs.writeFileSync(path.join(directory, 'disorder_catalog.json'), JSON.stringify({
-    version: 1,
+    version: 2,
     customDisorders: {},
+    customSymptoms: {},
+    builtInDisorderSymptomOverrides: {},
     auditLog: [],
   }));
 }
@@ -77,6 +79,9 @@ test('comparison rejects lost clinical rows or identities', () => {
     currentProfileCount: 1,
     historicalProfileCount: 1,
     csvDataRowCount: 2,
+    customDisorderCount: 0,
+    customSymptomCount: 0,
+    disorderAuditEventCount: 0,
   };
   const after = {
     ...before,
@@ -85,7 +90,7 @@ test('comparison rejects lost clinical rows or identities', () => {
     canonicalCurrentProfileCount: 1,
     canonicalHistoricalProfileCount: 1,
     disorderCatalogPresent: true,
-    disorderCatalogVersion: 1,
+    disorderCatalogVersion: 2,
     csvColumns: requiredCsvColumns,
   };
   assert.throws(
@@ -124,6 +129,9 @@ test('comparison permits a missing history entry to be recovered', () => {
     currentProfileCount: 1,
     historicalProfileCount: 0,
     csvDataRowCount: 1,
+    customDisorderCount: 0,
+    customSymptomCount: 0,
+    disorderAuditEventCount: 0,
   };
   const after = {
     ...before,
@@ -132,8 +140,35 @@ test('comparison permits a missing history entry to be recovered', () => {
     canonicalCurrentProfileCount: 1,
     canonicalHistoricalProfileCount: 1,
     disorderCatalogPresent: true,
-    disorderCatalogVersion: 1,
+    disorderCatalogVersion: 2,
     csvColumns: requiredCsvColumns,
   };
+  assert.doesNotThrow(() => compareAfterMigration(before, after));
+});
+
+test('comparison permits catalogue schema 1 to migrate to schema 2 without losing catalogue records', () => {
+  const before = {
+    patientCount: 1,
+    enrolmentCodeCount: 1,
+    deviceCount: 1,
+    activeDeviceCount: 1,
+    currentProfileCount: 1,
+    historicalProfileCount: 1,
+    csvDataRowCount: 1,
+    customDisorderCount: 2,
+    customSymptomCount: 0,
+    disorderAuditEventCount: 5,
+    disorderCatalogPresent: true,
+    disorderCatalogVersion: 1,
+  };
+  const after = {
+    ...before,
+    identityStoreVersion: 3,
+    canonicalCurrentProfileCount: 1,
+    canonicalHistoricalProfileCount: 1,
+    disorderCatalogVersion: 2,
+    csvColumns: requiredCsvColumns,
+  };
+
   assert.doesNotThrow(() => compareAfterMigration(before, after));
 });

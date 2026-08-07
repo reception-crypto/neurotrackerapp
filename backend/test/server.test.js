@@ -382,7 +382,7 @@ test('server startup refuses a corrupt disorder catalogue without rewriting it',
   }
 });
 
-test('custom disorder assignment remains gated until explicitly enabled', () => {
+test('Build 8-only disorder and symptom assignment remains gated until explicitly enabled', () => {
   const gateDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'neurosol-custom-gate-'),
   );
@@ -393,6 +393,15 @@ test('custom disorder assignment remains gated until explicitly enabled', () => 
       const custom = catalog.createCustomDisorder({
         displayName: 'Multiple system atrophy',
         confirmation: 'Multiple system atrophy',
+      });
+      const customSymptom = catalog.createCustomSymptom({
+        displayName: 'Limb heaviness',
+        confirmation: 'Limb heaviness',
+      });
+      const migraine = catalog.findDisorder({ id: 'migraine' });
+      catalog.setDisorderSymptoms({
+        disorderId: 'migraine',
+        symptomIds: [...migraine.allowedSymptomIds, customSymptom.id],
       });
       const { app } = require('./server');
       const credentials = Buffer.from('gate-admin:gate-admin-password').toString('base64');
@@ -421,6 +430,25 @@ test('custom disorder assignment remains gated until explicitly enabled', () => 
           const body = await response.text();
           console.log('GATE_STATUS=' + response.status);
           console.log('GATE_MESSAGE=' + body.includes('disabled until Build 8 is available'));
+          const symptomForm = new URLSearchParams({
+            csrfToken,
+            displayName: 'Gated Symptom Patient',
+            primaryDisorderId: 'migraine',
+            action: 'save',
+          });
+          ['headache', 'nausea', customSymptom.id]
+            .forEach(id => symptomForm.append('primarySymptomIds', id));
+          const symptomResponse = await fetch(base + '/admin/enrolments/save-profile', {
+            method: 'POST',
+            headers: {
+              ...auth,
+              'content-type': 'application/x-www-form-urlencoded',
+            },
+            body: symptomForm,
+          });
+          const symptomBody = await symptomResponse.text();
+          console.log('GATE_SYMPTOM_STATUS=' + symptomResponse.status);
+          console.log('GATE_SYMPTOM_MESSAGE=' + symptomBody.includes('disabled until Build 8 is available'));
         } finally {
           server.close();
         }
@@ -447,6 +475,8 @@ test('custom disorder assignment remains gated until explicitly enabled', () => 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /GATE_STATUS=400/);
     assert.match(result.stdout, /GATE_MESSAGE=true/);
+    assert.match(result.stdout, /GATE_SYMPTOM_STATUS=400/);
+    assert.match(result.stdout, /GATE_SYMPTOM_MESSAGE=true/);
   } finally {
     fs.rmSync(gateDir, { recursive: true, force: true });
   }
@@ -756,6 +786,118 @@ test('admin disorder creation requires CSRF, exact confirmation, and uniqueness'
   });
   assert.equal(duplicate.status, 400);
   assert.match(await duplicate.text(), /already exists/);
+});
+
+test('admin can add a controlled symptom and change disorder availability without rewriting profiles', async () => {
+  const pageResponse = await fetch(`${baseUrl}/admin/disorders`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(pageResponse.status, 200);
+  const page = await pageResponse.text();
+  const csrfToken = page.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+
+  const mismatched = await fetch(`${baseUrl}/admin/disorders/create-symptom`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      displayName: 'Limb heaviness',
+      confirmation: 'Limb weakness',
+    }),
+  });
+  assert.equal(mismatched.status, 400);
+
+  const created = await fetch(`${baseUrl}/admin/disorders/create-symptom`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      displayName: 'Limb heaviness',
+      confirmation: 'Limb heaviness',
+    }),
+  });
+  assert.equal(created.status, 201);
+  const createdPage = await created.text();
+  const symptomId = createdPage.match(
+    /custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+  )?.[0];
+  assert.ok(symptomId);
+
+  const migraine = disorderCatalog.findDisorder({ id: 'migraine' });
+  const availabilityForm = new URLSearchParams({
+    csrfToken,
+    disorderId: 'migraine',
+  });
+  for (const id of [...migraine.allowedSymptomIds, symptomId]) {
+    availabilityForm.append('symptomIds', id);
+  }
+  const availability = await fetch(`${baseUrl}/admin/disorders/set-symptoms`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: availabilityForm,
+  });
+  assert.equal(availability.status, 200);
+  assert.equal(
+    disorderCatalog.findDisorder({ id: 'migraine' })
+      .allowedSymptomIds.includes(symptomId),
+    true,
+  );
+
+  const profileForm = new URLSearchParams({
+    csrfToken,
+    displayName: 'Custom Symptom Patient',
+    primaryDisorderId: 'migraine',
+    action: 'save',
+  });
+  ['headache', 'nausea', symptomId].forEach(id =>
+    profileForm.append('primarySymptomIds', id)
+  );
+  const saved = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: profileForm,
+  });
+  assert.equal(saved.status, 200);
+  const patient = Object.values(identityStore.snapshot().patients)
+    .find(value => value.displayName === 'Custom Symptom Patient');
+  assert.ok(patient);
+  assert.equal(patient.clinicalProfile.minimumAppBuild, 8);
+  const revision = patient.clinicalProfile.revision;
+
+  const archive = await fetch(`${baseUrl}/admin/disorders/update-symptom`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      symptomId,
+      action: 'archive',
+    }),
+  });
+  assert.equal(archive.status, 200);
+  const afterArchive = identityStore.snapshot().patients[patient.patientId];
+  assert.equal(afterArchive.clinicalProfile.revision, revision);
+  assert.equal(afterArchive.clinicalProfile.primarySymptomIds.includes(symptomId), true);
+  assert.equal(
+    disorderCatalog.findDisorder({ id: 'migraine' })
+      .allowedSymptomIds.includes(symptomId),
+    false,
+  );
 });
 
 test('an active Build 7 device blocks a Build 8-only profile assignment', async () => {

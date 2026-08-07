@@ -160,6 +160,10 @@ function snapshotData(dataDirectory) {
       typeof catalog.customDisorders === 'object'
       ? Object.keys(catalog.customDisorders).length
       : 0,
+    customSymptomCount: catalog && catalog.customSymptoms &&
+      typeof catalog.customSymptoms === 'object'
+      ? Object.keys(catalog.customSymptoms).length
+      : 0,
     disorderAuditEventCount: catalog && Array.isArray(catalog.auditLog)
       ? catalog.auditLog.length
       : 0,
@@ -181,6 +185,14 @@ function compareAfterMigration(before, after) {
   assertEqual(before, after, 'activeDeviceCount', 'Active-device count');
   assertEqual(before, after, 'currentProfileCount', 'Current-profile count');
   assertEqual(before, after, 'csvDataRowCount', 'Symptom CSV row count');
+  assertEqual(before, after, 'customDisorderCount', 'Custom-disorder count');
+  assertEqual(before, after, 'customSymptomCount', 'Custom-symptom count');
+  assertEqual(
+    before,
+    after,
+    'disorderAuditEventCount',
+    'Disorder-catalogue audit-event count',
+  );
 
   if (after.historicalProfileCount < before.historicalProfileCount) {
     throw new Error(
@@ -198,7 +210,7 @@ function compareAfterMigration(before, after) {
   if (after.canonicalHistoricalProfileCount !== after.historicalProfileCount) {
     throw new Error('At least one historical profile lacks canonical identifiers.');
   }
-  if (!after.disorderCatalogPresent || after.disorderCatalogVersion !== 1) {
+  if (!after.disorderCatalogPresent || after.disorderCatalogVersion !== 2) {
     throw new Error('The Build 8 disorder catalogue was not initialised safely.');
   }
   const missingColumns = requiredCsvColumns.filter(

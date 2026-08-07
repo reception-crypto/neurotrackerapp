@@ -244,6 +244,59 @@ test('reconciliation adds a revision without rewriting historical names', () => 
   }
 });
 
+test('renaming a custom symptom creates a new current profile revision and preserves history', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const customSymptom = disorderCatalog.createCustomSymptom({
+      displayName: 'Limb heaviness',
+      confirmation: 'Limb heaviness',
+    });
+    const migraine = disorderCatalog.findDisorder({ id: 'migraine' });
+    disorderCatalog.setDisorderSymptoms({
+      disorderId: 'migraine',
+      symptomIds: [...migraine.allowedSymptomIds, customSymptom.id],
+    });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+    });
+    const saved = identityStore.saveClinicalProfile({
+      patientId: 'pt-custom-symptom-rename',
+      displayName: 'Custom Symptom Rename',
+      clinicalProfile: {
+        primaryDisorderId: 'migraine',
+        primarySymptomIds: ['headache', 'nausea', customSymptom.id],
+      },
+    });
+
+    disorderCatalog.updateCustomSymptom({
+      id: customSymptom.id,
+      displayName: 'Heavy limb sensation',
+      confirmation: 'Heavy limb sensation',
+    });
+    assert.equal(identityStore.refreshProfilesForSymptom(customSymptom.id), 1);
+
+    const patient = identityStore.snapshot()
+      .patients['pt-custom-symptom-rename'];
+    assert.equal(
+      patient.clinicalProfile.revision,
+      saved.clinicalProfile.revision + 1,
+    );
+    assert.deepEqual(
+      patient.clinicalProfile.primarySymptoms,
+      ['Headache', 'Nausea', 'Heavy limb sensation'],
+    );
+    assert.deepEqual(
+      patient.clinicalProfileHistory[0].primarySymptoms,
+      ['Headache', 'Nausea', 'Limb heaviness'],
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('device compatibility observations retain Build 7 traffic evidence', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
   try {

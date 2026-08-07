@@ -122,8 +122,8 @@ if (
     throw 'The deployment package is incomplete.'
 }
 $release = Get-Content -LiteralPath $releasePath -Raw | ConvertFrom-Json
-if ($release.backendVersion -ne '0.8.0') {
-    throw "Expected backend version 0.8.0, found $($release.backendVersion)."
+if ($release.backendVersion -ne '0.8.1') {
+    throw "Expected backend version 0.8.1, found $($release.backendVersion)."
 }
 if (
     [string]($release.sourceCommit) -notmatch '^[0-9a-f]{40}$' -or

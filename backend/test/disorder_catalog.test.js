@@ -7,10 +7,13 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  catalogVersion,
   createDisorderCatalogStore,
   disorderNameKey,
   normaliseDisorderName,
+  normaliseSymptomName,
   symptomDefinitions,
+  symptomNameKey,
 } = require('../disorder_catalog');
 
 function withCatalog(run) {
@@ -49,15 +52,159 @@ test('built-in disorders and symptoms have stable canonical identifiers', () => 
       catalog.findSymptom(migraine, { displayName: 'Visual aura' }),
       null,
     );
-    assert.deepEqual(
-      catalog.findGlobalSymptom({ displayName: 'Visual aura' }),
-      { id: 'visual-aura', displayName: 'Visual aura' },
-    );
+    const historicalAura = catalog.findGlobalSymptom({
+      displayName: 'Visual aura',
+    });
+    assert.equal(historicalAura.id, 'visual-aura');
+    assert.equal(historicalAura.displayName, 'Visual aura');
+    assert.equal(historicalAura.active, false);
     assert.equal(
       new Set(symptomDefinitions.map(item => item.id)).size,
       symptomDefinitions.length,
     );
   });
+});
+
+test('catalogue version 1 upgrades additively before editable symptoms are used', () => {
+  withCatalog(({ catalog, dataDir }) => {
+    const catalogPath = path.join(dataDir, 'disorder_catalog.json');
+    fs.writeFileSync(
+      catalogPath,
+      `${JSON.stringify({
+        version: 1,
+        customDisorders: {
+          'custom-10000000-0000-4000-8000-000000000001': {
+            id: 'custom-10000000-0000-4000-8000-000000000001',
+            displayName: 'Multiple sclerosis',
+            nameKey: disorderNameKey('Multiple sclerosis'),
+            kind: 'custom',
+            active: true,
+            minimumAppBuild: 8,
+            allowedSymptomIds: symptomDefinitions.map(item => item.id),
+          },
+        },
+        auditLog: [{ action: 'pre-existing-audit-event' }],
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const migrated = catalog.snapshot();
+    assert.equal(migrated.version, catalogVersion);
+    assert.deepEqual(migrated.customSymptoms, {});
+    assert.deepEqual(migrated.builtInDisorderSymptomOverrides, {});
+    assert.equal(Object.keys(migrated.customDisorders).length, 1);
+    assert.equal(
+      migrated.customDisorders['custom-10000000-0000-4000-8000-000000000001']
+        .displayName,
+      'Multiple sclerosis',
+    );
+    assert.equal(migrated.auditLog.length, 1);
+    assert.equal(
+      fs.readdirSync(dataDir)
+        .filter(name => name.startsWith('disorder_catalog.json.backup-v1-'))
+        .length,
+      1,
+    );
+  });
+});
+
+test('custom symptoms use stable IDs, exact confirmation and explicit disorder availability', () => {
+  withCatalog(({ catalog }) => {
+    assert.throws(
+      () => catalog.createCustomSymptom({
+        displayName: 'Electric shock sensation',
+        confirmation: 'Electric shock sensations',
+      }),
+      /must match exactly/,
+    );
+    assert.throws(
+      () => catalog.createCustomSymptom({
+        displayName: ' pain ',
+        confirmation: 'pain',
+      }),
+      /already exists/,
+    );
+
+    const custom = catalog.createCustomSymptom({
+      displayName: 'Electric shock sensation',
+      confirmation: 'Electric shock sensation',
+      actor: 'test-admin',
+    });
+    assert.match(custom.id, /^custom-symptom-[0-9a-f-]{36}$/);
+    assert.equal(custom.minimumAppBuild, 8);
+
+    const migraineBefore = catalog.findDisorder({ id: 'migraine' });
+    assert.equal(migraineBefore.allowedSymptomIds.includes(custom.id), false);
+    const updatedIds = [
+      ...migraineBefore.allowedSymptomIds.filter(id => id !== 'vomiting'),
+      custom.id,
+    ];
+    const migraineAfter = catalog.setDisorderSymptoms({
+      disorderId: 'migraine',
+      symptomIds: updatedIds,
+      actor: 'test-admin',
+    });
+    assert.equal(migraineAfter.allowedSymptomIds.includes('vomiting'), false);
+    assert.equal(migraineAfter.allowedSymptomIds.includes(custom.id), true);
+    assert.equal(
+      catalog.findSymptom(migraineAfter, { id: custom.id }).displayName,
+      'Electric shock sensation',
+    );
+
+    const renamed = catalog.updateCustomSymptom({
+      id: custom.id,
+      displayName: 'Electric-shock sensation',
+      confirmation: 'Electric-shock sensation',
+      actor: 'test-admin',
+    });
+    assert.equal(renamed.id, custom.id);
+    assert.equal(renamed.displayName, 'Electric-shock sensation');
+
+    catalog.updateCustomSymptom({
+      id: custom.id,
+      active: false,
+      actor: 'test-admin',
+    });
+    assert.equal(
+      catalog.findDisorder({ id: 'migraine' }).allowedSymptomIds
+        .includes(custom.id),
+      false,
+    );
+    assert.equal(catalog.findGlobalSymptom({ id: custom.id }).id, custom.id);
+
+    catalog.updateCustomSymptom({
+      id: custom.id,
+      active: true,
+      actor: 'test-admin',
+    });
+    assert.equal(
+      catalog.findDisorder({ id: 'migraine' }).allowedSymptomIds
+        .includes(custom.id),
+      true,
+    );
+    assert.deepEqual(
+      catalog.snapshot().auditLog.map(event => event.action),
+      [
+        'custom_symptom_created',
+        'disorder_symptoms_updated',
+        'custom_symptom_updated',
+        'custom_symptom_archived',
+        'custom_symptom_reactivated',
+      ],
+    );
+  });
+});
+
+test('symptom names are normalised for duplicate prevention', () => {
+  assert.equal(normaliseSymptomName('  Limb   heaviness  '), 'Limb heaviness');
+  assert.equal(
+    symptomNameKey('Shock–like pain'),
+    symptomNameKey('shock-like pain'),
+  );
+  assert.throws(
+    () => normaliseSymptomName('<script>'),
+    /unsupported punctuation/,
+  );
 });
 
 test('custom disorders require exact confirmation and use controlled symptoms', () => {
