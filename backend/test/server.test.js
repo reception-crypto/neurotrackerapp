@@ -21,10 +21,12 @@ process.env.LATEST_MOBILE_BUILD = '7';
 
 const {
   app,
+  csvPath,
   disorderCatalog,
   identityStore,
   patientDirectory,
 } = require('../server');
+const { supportId } = require('../identity_store');
 
 let server;
 let baseUrl;
@@ -1539,4 +1541,52 @@ test('patient deletion requires typed Support ID and creates backups', async () 
   const backups = fs.readdirSync(path.join(testDataDir, 'backups'));
   assert.ok(backups.some(name => name.endsWith('-symptom_entries.csv')));
   assert.ok(backups.some(name => name.endsWith('-identity_store.json')));
+});
+
+test('patient deletion supports PatientId records missing from the identity store', async () => {
+  const patientId = 'pt-delete-csv-only';
+  const patientName = 'CSV Only Synthetic';
+  const identifiedSubmission = 'NS-delete-csv-only';
+  const legacySubmission = 'NS-delete-legacy-same-name';
+  fs.appendFileSync(
+    csvPath,
+    [
+      `2026-08-07T09:00:00.000Z,2026-08-07,19:00,${patientName},Primary,Migraine,Headache,3,70,${identifiedSubmission},${patientId},1,migraine,headache,2`,
+      `2026-08-06T09:00:00.000Z,2026-08-06,19:00,${patientName},Primary,Migraine,Headache,4,60,${legacySubmission},,1,migraine,headache,1`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  assert.equal(identityStore.snapshot().patients[patientId], undefined);
+
+  const pageResponse = await fetch(`${baseUrl}/admin/patients`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(pageResponse.status, 200);
+  const page = await pageResponse.text();
+  const csrfToken = page.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+  assert.match(page, new RegExp(supportId(patientId)));
+
+  const confirmed = await fetch(`${baseUrl}/admin/patients/delete`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      patientId,
+      confirmation: supportId(patientId),
+    }),
+  });
+  assert.equal(confirmed.status, 200);
+  const responseBody = await confirmed.text();
+  assert.match(responseBody, /CSV Only Synthetic was deleted/);
+
+  const csv = fs.readFileSync(csvPath, 'utf8');
+  assert.equal(csv.includes(identifiedSubmission), false);
+  assert.equal(csv.includes(patientId), false);
+  assert.equal(csv.includes(legacySubmission), true);
+  assert.equal(identityStore.snapshot().patients[patientId], undefined);
 });

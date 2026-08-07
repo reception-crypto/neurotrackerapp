@@ -1940,8 +1940,13 @@ app.get('/admin/patients',requireAdmin,(req,res)=>{
 
 app.post('/admin/patients/delete',requireAdmin,requireAdminCsrf,(req,res)=>{
   const patientId = String(req.body.patientId || '').trim();
-  const patient = identityStore.snapshot().patients[patientId];
-  if (!patient || patient.reviewIdentity) {
+  const rows = readRows();
+  const storedPatient = identityStore.snapshot().patients[patientId];
+  const recordedPatient = patientId && !patientId.startsWith('legacy:')
+    ? patientDirectory(rows).get(patientId)
+    : null;
+  const patient = storedPatient || recordedPatient;
+  if (!patient || storedPatient?.reviewIdentity) {
     return res.status(404).send(patientManagementPage({
       error: 'The patient identity was not found.',
     }));
@@ -1972,11 +1977,14 @@ app.post('/admin/patients/delete',requireAdmin,requireAdminCsrf,(req,res)=>{
   fs.copyFileSync(identityStore.identityPath, identityBackup);
 
   try {
-    const rows = readRows();
     const retainedRows = rows.filter(row => patientKey(row) !== patientId);
     const removedRows = rows.length - retainedRows.length;
-    const deleted = identityStore.deletePatient(patientId);
-    if (!deleted.deleted) throw new Error('Patient identity deletion failed.');
+    const deleted = storedPatient
+      ? identityStore.deletePatient(patientId)
+      : { deleted: false, devices: 0, codes: 0 };
+    if (storedPatient && !deleted.deleted) {
+      throw new Error('Patient identity deletion failed.');
+    }
     writeCsvAtomically(retainedRows);
     return res.send(patientManagementPage({
       message: `${patient.displayName} was deleted. ${removedRows} submitted row(s), ${deleted.devices} device credential(s), and ${deleted.codes} enrolment code(s) were removed. Backup: ${path.basename(csvBackup)}.`,
