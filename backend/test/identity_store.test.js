@@ -150,6 +150,51 @@ test('retired symptoms migrate without becoming selectable again', () => {
   }
 });
 
+test('retired Migraine Visual aura remains valid for a Build 7 profile revision', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    fs.writeFileSync(
+      path.join(dataDir, 'identity_store.json'),
+      `${JSON.stringify(legacyStore({
+        primaryDisorder: 'Migraine',
+        primarySymptoms: ['Headache', 'Visual aura', 'Dizziness'],
+        secondaryDisorder: null,
+        secondarySymptoms: [],
+        revision: 5,
+        updatedAt: '2026-07-01T00:00:00.000Z',
+      }), null, 2)}\n`,
+      'utf8',
+    );
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+    });
+    identityStore.migrateCanonicalProfiles();
+    const profile = identityStore.snapshot()
+      .patients['pt-legacy-profile'].clinicalProfile;
+    assert.equal(profile.revision, 5);
+    assert.deepEqual(
+      profile.primarySymptomIds,
+      ['headache', 'visual-aura', 'dizziness'],
+    );
+    assert.throws(
+      () => identityStore.saveClinicalProfile({
+        patientId: 'pt-new-visual-aura-profile',
+        displayName: 'Retired Visual Aura Test',
+        clinicalProfile: {
+          primaryDisorder: 'Migraine',
+          primarySymptoms: ['Headache', 'Visual aura', 'Dizziness'],
+        },
+      }),
+      /do not match/,
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('reconciliation adds a revision without rewriting historical names', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
   try {

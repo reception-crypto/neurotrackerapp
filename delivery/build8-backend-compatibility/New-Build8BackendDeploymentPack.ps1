@@ -50,10 +50,14 @@ $sourceCommit = (& $gitExecutable -C $repositoryRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
     throw 'Could not determine the source commit.'
 }
+$publicBuild7Commit = 'e8e761733d73860c259d3486cf363487af35ff34'
 & $gitExecutable -C $repositoryRoot merge-base --is-ancestor `
-    841afca $sourceCommit
+    $publicBuild7Commit $sourceCommit
 if ($LASTEXITCODE -ne 0) {
-    throw 'The source does not contain the permanent Build 7 compatibility layer.'
+    throw (
+        'The source is not descended from the public Build 7 release ' +
+        "$publicBuild7Commit."
+    )
 }
 
 $sourceStatus = @(

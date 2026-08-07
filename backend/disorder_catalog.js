@@ -14,7 +14,7 @@ const builtInSymptomCatalog = Object.freeze({
     'Vomiting',
     'Light sensitivity',
     'Sound sensitivity',
-    'Visual aura',
+    'Vertigo',
     'Neck pain',
     'Dizziness',
     'Brain fog',
@@ -84,6 +84,10 @@ const symptomDefinitions = Object.freeze(symptomLabels.map(displayName =>
   })
 ));
 const historicalSymptomDefinitions = Object.freeze([
+  Object.freeze({
+    id: 'visual-aura',
+    displayName: 'Visual aura',
+  }),
   Object.freeze({
     id: 'sweating-changes',
     displayName: 'Sweating changes',

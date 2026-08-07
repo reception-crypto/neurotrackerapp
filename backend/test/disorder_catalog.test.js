@@ -38,6 +38,22 @@ test('built-in disorders and symptoms have stable canonical identifiers', () => 
       'headache',
     );
     assert.equal(
+      catalog.findSymptom(migraine, { displayName: 'Vertigo' }).id,
+      'vertigo',
+    );
+    assert.equal(
+      catalog.findSymptom(migraine, { displayName: 'Dizziness' }).id,
+      'dizziness',
+    );
+    assert.equal(
+      catalog.findSymptom(migraine, { displayName: 'Visual aura' }),
+      null,
+    );
+    assert.deepEqual(
+      catalog.findGlobalSymptom({ displayName: 'Visual aura' }),
+      { id: 'visual-aura', displayName: 'Visual aura' },
+    );
+    assert.equal(
       new Set(symptomDefinitions.map(item => item.id)).size,
       symptomDefinitions.length,
     );
@@ -62,6 +78,8 @@ test('custom disorders require exact confirmation and use controlled symptoms', 
     assert.equal(created.minimumAppBuild, 8);
     assert.equal(created.allowedSymptoms.includes('Pain'), true);
     assert.equal(created.allowedSymptoms.includes('Dizziness'), true);
+    assert.equal(created.allowedSymptoms.includes('Vertigo'), true);
+    assert.equal(created.allowedSymptoms.includes('Visual aura'), false);
     assert.equal(created.allowedSymptoms.includes('Sweating changes'), false);
     assert.equal(created.allowedSymptoms.length, symptomDefinitions.length);
     assert.equal(created.allowedSymptomIds.includes('pain'), true);

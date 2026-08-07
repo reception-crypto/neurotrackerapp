@@ -70,6 +70,10 @@ GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneuro
       symptoms for each; save the profile.
 - [ ] For Dysautonomia confirm the current catalogue includes **Pain** and
       **Weakness**, not **Shortness of breath** or **Sweating changes**.
+- [ ] For new or edited Migraine profiles confirm the active catalogue includes
+      both **Vertigo** and **Dizziness**. **Visual aura** is historical-only:
+      existing Build 7 profile revisions must remain readable and submittable,
+      but it must not appear as a new profile choice.
 - [ ] Do not create a second identity for an existing patient.
 - [ ] Issue a new-device code only when a patient is reinstalling or replacing
       a phone.

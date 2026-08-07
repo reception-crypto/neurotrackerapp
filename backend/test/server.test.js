@@ -289,6 +289,7 @@ test('Build 7 CSV migration backs up and appends canonical IDs', () => {
         'ReceivedAt,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,SubmissionId,PatientId,ProfileRevision',
         '2026-08-04T09:00:00.000Z,2026-08-04,19:00,Legacy Patient,Primary,Migraine,Headache,4,70,NS-legacy,pt-legacy,1',
         '2026-07-01T09:00:00.000Z,2026-07-01,19:00,Historical Patient,Primary,Dysautonomia,Sweating changes,5,60,NS-historical,pt-historical,1',
+        '2026-06-20T09:00:00.000Z,2026-06-20,19:00,Historical Migraine,Primary,Migraine,Visual aura,3,70,NS-historical-aura,pt-historical-aura,2',
         '',
       ].join('\n'),
       'utf8',
@@ -314,6 +315,7 @@ test('Build 7 CSV migration backs up and appends canonical IDs', () => {
     assert.match(migrated[0], /,DisorderId,SymptomId,PayloadSchemaVersion$/);
     assert.match(migrated[1], /,migraine,headache,1$/);
     assert.match(migrated[2], /,dysautonomia,sweating-changes,1$/);
+    assert.match(migrated[3], /,migraine,visual-aura,1$/);
     assert.equal(
       fs.readdirSync(migrationDir)
         .filter(name => name.startsWith('symptom_entries.backup-')).length,

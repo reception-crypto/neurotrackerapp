@@ -27,6 +27,35 @@ test('Dysautonomia catalogue uses the approved Build 7 symptoms', () => {
   );
 });
 
+test('Migraine catalogue adds Vertigo while preserving Dizziness', () => {
+  assert.ok(symptomCatalog.Migraine.includes('Vertigo'));
+  assert.ok(symptomCatalog.Migraine.includes('Dizziness'));
+  assert.equal(symptomCatalog.Migraine.includes('Visual aura'), false);
+
+  const historical = normaliseClinicalProfile({
+    primaryDisorder: 'Migraine',
+    primarySymptoms: ['Headache', 'Visual aura', 'Dizziness'],
+  }, {
+    allowHistoricalSymptoms: true,
+  });
+  assert.deepEqual(
+    historical.primarySymptomIds,
+    ['headache', 'visual-aura', 'dizziness'],
+  );
+  assert.equal(recordsMatchClinicalProfile(historical, [
+    { track: 'Primary', disorder: 'Migraine', symptom: 'Dizziness' },
+    { track: 'Primary', disorder: 'Migraine', symptom: 'Visual aura' },
+    { track: 'Primary', disorder: 'Migraine', symptom: 'Headache' },
+  ]), true);
+  assert.throws(
+    () => normaliseClinicalProfile({
+      primaryDisorder: 'Migraine',
+      primarySymptoms: ['Headache', 'Visual aura', 'Dizziness'],
+    }),
+    /do not match/,
+  );
+});
+
 test('clinic profiles require exactly three supported symptoms per disorder', () => {
   assert.throws(
     () => normaliseClinicalProfile({

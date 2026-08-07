@@ -59,6 +59,11 @@ and analytics. Correcting a custom name preserves its ID and creates a new
 profile revision for every currently assigned patient. The previous revision
 and previous submitted labels remain auditable.
 
+The active Migraine vocabulary includes both `Vertigo` and `Dizziness`.
+`Visual aura` is retained as a historical-only canonical symptom so existing
+Build 7 profile revisions and submissions remain valid, but it cannot be
+selected for a new or edited profile.
+
 The backend creates `disorder_catalog.json` with an audit log. On first Build 8
 startup it also adds canonical disorder and symptom IDs to existing profiles
 and CSV rows. The original `identity_store.json` and CSV are backed up before
