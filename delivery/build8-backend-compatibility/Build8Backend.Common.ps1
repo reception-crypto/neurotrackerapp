@@ -214,24 +214,29 @@ function Set-NeuroSolDotEnvValues {
     }
 
     foreach ($key in ($Updates.Keys | Sort-Object)) {
-        $matches = New-Object System.Collections.Generic.List[int]
+        # Do not name this variable $matches. PowerShell variable names are
+        # case-insensitive and every -match expression replaces the automatic
+        # $Matches hash table.
+        $matchingIndexes = New-Object System.Collections.Generic.List[int]
         for ($index = 0; $index -lt $lines.Count; $index++) {
             if ($lines[$index] -match "^\s*$([regex]::Escape($key))\s*=") {
-                $matches.Add($index)
+                $matchingIndexes.Add($index)
             }
         }
-        if ($matches.Count -gt 1) {
+        if ($matchingIndexes.Count -gt 1) {
             throw "Environment file contains duplicate '$key' entries."
         }
         $replacement = "$key=$($Updates[$key])"
-        if ($matches.Count -eq 1) {
-            $lines[$matches[0]] = $replacement
+        if ($matchingIndexes.Count -eq 1) {
+            $lines[$matchingIndexes[0]] = $replacement
         } else {
             $lines.Add($replacement)
         }
     }
 
-    $temporaryPath = "$Path.build8-$([Guid]::NewGuid().ToString('N')).tmp"
+    $transactionId = [Guid]::NewGuid().ToString('N')
+    $temporaryPath = "$Path.build8-$transactionId.tmp"
+    $replacementBackupPath = "$Path.build8-$transactionId.bak"
     try {
         $encoding = New-Object Text.UTF8Encoding -ArgumentList $false
         [IO.File]::WriteAllText(
@@ -240,10 +245,17 @@ function Set-NeuroSolDotEnvValues {
             $encoding
         )
         Set-Acl -LiteralPath $temporaryPath -AclObject $originalAcl
-        [IO.File]::Replace($temporaryPath, $Path, $null, $true)
+        [IO.File]::Replace(
+            $temporaryPath,
+            $Path,
+            $replacementBackupPath,
+            $true
+        )
     } finally {
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            Remove-Item -LiteralPath $temporaryPath -Force
+        foreach ($cleanupPath in @($temporaryPath, $replacementBackupPath)) {
+            if (Test-Path -LiteralPath $cleanupPath -PathType Leaf) {
+                Remove-Item -LiteralPath $cleanupPath -Force
+            }
         }
     }
 }
