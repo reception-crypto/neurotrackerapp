@@ -420,7 +420,7 @@ function Assert-NeuroSolCompatibilityResponses {
 
     $health = Wait-NeuroSolHealth -BaseUri $BaseUri -TimeoutSeconds 30
     if (
-        [int]$health.disorderCatalogVersion -ne 2 -or
+        [int]$health.disorderCatalogVersion -ne 3 -or
         $health.customDisordersEnabled -ne $false
     ) {
         throw "Unexpected Build 8 health configuration at $BaseUri."
@@ -432,7 +432,7 @@ function Assert-NeuroSolCompatibilityResponses {
         [int]$build7.latestBuild -ne 7 -or
         $build7.build7Supported -ne $true -or
         $build7.clinicManagedProfiles -ne $true -or
-        [int]$build7.disorderCatalogVersion -ne 2 -or
+        [int]$build7.disorderCatalogVersion -ne 3 -or
         [int]$build7.preferredPayloadSchemaVersion -ne 1 -or
         $build7.customDisordersEnabled -ne $false
     ) {
@@ -446,7 +446,7 @@ function Assert-NeuroSolCompatibilityResponses {
     if (
         [int]$build8.minimumBuild -ne 7 -or
         [int]$build8.latestBuild -ne 7 -or
-        [int]$build8.disorderCatalogVersion -ne 2 -or
+        [int]$build8.disorderCatalogVersion -ne 3 -or
         [int]$build8.preferredPayloadSchemaVersion -ne 2 -or
         $build8.canonicalDisorders -ne $true -or
         $build8.customDisordersEnabled -ne $false

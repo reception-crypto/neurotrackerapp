@@ -105,6 +105,123 @@ test('catalogue version 1 upgrades additively before editable symptoms are used'
         .length,
       1,
     );
+    assert.equal(
+      fs.readdirSync(dataDir)
+        .filter(name => name.startsWith('disorder_catalog.json.backup-v2-'))
+        .length,
+      1,
+    );
+  });
+});
+
+test('catalogue version 2 migrates unused UUID symptom IDs to readable stable IDs', () => {
+  withCatalog(({ catalog, dataDir }) => {
+    const legacyId =
+      'custom-symptom-10000000-0000-4000-8000-000000000001';
+    const catalogPath = path.join(dataDir, 'disorder_catalog.json');
+    fs.writeFileSync(
+      catalogPath,
+      `${JSON.stringify({
+        version: 2,
+        customDisorders: {},
+        customSymptoms: {
+          [legacyId]: {
+            id: legacyId,
+            displayName: 'Electric shock sensation',
+            nameKey: symptomNameKey('Electric shock sensation'),
+            kind: 'custom',
+            active: true,
+            minimumAppBuild: 8,
+          },
+        },
+        builtInDisorderSymptomOverrides: {
+          migraine: ['headache', 'nausea', legacyId],
+        },
+        auditLog: [{
+          action: 'custom_symptom_created',
+          symptomId: legacyId,
+        }],
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const migrated = catalog.snapshot();
+    assert.equal(migrated.version, catalogVersion);
+    assert.equal(migrated.customSymptoms[legacyId], undefined);
+    assert.equal(
+      migrated.customSymptoms['electric-shock-sensation'].displayName,
+      'Electric shock sensation',
+    );
+    assert.equal(
+      migrated.symptomIdAliases[legacyId],
+      'electric-shock-sensation',
+    );
+    assert.deepEqual(
+      migrated.builtInDisorderSymptomOverrides.migraine,
+      ['headache', 'nausea', 'electric-shock-sensation'],
+    );
+    assert.equal(
+      migrated.auditLog.at(-1).action,
+      'custom_symptom_identifier_migrated',
+    );
+    assert.equal(
+      catalog.findGlobalSymptom({ id: legacyId }).id,
+      'electric-shock-sensation',
+    );
+    assert.equal(
+      fs.readdirSync(dataDir)
+        .filter(name => name.startsWith('disorder_catalog.json.backup-v2-'))
+        .length,
+      1,
+    );
+  });
+});
+
+test('UUID symptom ID migration refuses to rewrite an active clinical reference', () => {
+  withCatalog(({ catalog, dataDir }) => {
+    const legacyId =
+      'custom-symptom-10000000-0000-4000-8000-000000000001';
+    const catalogPath = path.join(dataDir, 'disorder_catalog.json');
+    const legacyStore = {
+      version: 2,
+      customDisorders: {},
+      customSymptoms: {
+        [legacyId]: {
+          id: legacyId,
+          displayName: 'Electric shock sensation',
+          nameKey: symptomNameKey('Electric shock sensation'),
+          kind: 'custom',
+          active: true,
+          minimumAppBuild: 8,
+        },
+      },
+      builtInDisorderSymptomOverrides: {},
+      auditLog: [],
+    };
+    fs.writeFileSync(
+      catalogPath,
+      `${JSON.stringify(legacyStore, null, 2)}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(dataDir, 'identity_store.json'),
+      JSON.stringify({ profileReference: legacyId }),
+      'utf8',
+    );
+
+    assert.throws(
+      () => catalog.snapshot(),
+      /already has an active clinical reference/,
+    );
+    assert.equal(
+      JSON.parse(fs.readFileSync(catalogPath, 'utf8')).version,
+      2,
+    );
+    assert.equal(
+      fs.readdirSync(dataDir)
+        .some(name => name.startsWith('disorder_catalog.json.backup-v2-')),
+      false,
+    );
   });
 });
 
@@ -130,7 +247,7 @@ test('custom symptoms use stable IDs, exact confirmation and explicit disorder a
       confirmation: 'Electric shock sensation',
       actor: 'test-admin',
     });
-    assert.match(custom.id, /^custom-symptom-[0-9a-f-]{36}$/);
+    assert.equal(custom.id, 'electric-shock-sensation');
     assert.equal(custom.minimumAppBuild, 8);
 
     const migraineBefore = catalog.findDisorder({ id: 'migraine' });
@@ -192,6 +309,22 @@ test('custom symptoms use stable IDs, exact confirmation and explicit disorder a
         'custom_symptom_reactivated',
       ],
     );
+  });
+});
+
+test('readable custom symptom IDs remain unique when display slugs collide', () => {
+  withCatalog(({ catalog }) => {
+    const first = catalog.createCustomSymptom({
+      displayName: 'Shock / sensation',
+      confirmation: 'Shock / sensation',
+    });
+    const second = catalog.createCustomSymptom({
+      displayName: 'Shock sensation',
+      confirmation: 'Shock sensation',
+    });
+    assert.equal(first.id, 'shock-sensation');
+    assert.match(second.id, /^shock-sensation-[0-9a-f]{8}$/);
+    assert.notEqual(second.id, first.id);
   });
 });
 

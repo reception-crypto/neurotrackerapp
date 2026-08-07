@@ -1786,8 +1786,8 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
       <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Available symptoms</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
     <section class="panel"><h2>Symptom vocabulary</h2>
-      <p class="muted">Create a symptom once, then add it to the relevant disorder lists above. Custom symptom names require exact double entry. Archiving prevents future selection but never deletes the stable ID or historical data.</p>
-      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${symptomRows}</tbody></table></div>
+      <p class="muted">Create a symptom once, then add it to the relevant disorder lists above. A custom symptom receives a readable canonical ID from its original approved name (for example, “Postural tremor” becomes <code>postural-tremor</code>). That ID remains fixed if the display name is later corrected, preserving historical joins. Custom symptom names require exact double entry. Archiving prevents future selection but never deletes the stable ID or historical data.</p>
+      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID (fixed)</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${symptomRows}</tbody></table></div>
       <h3>Create a custom symptom</h3>
       <form method="post" action="/admin/disorders/create-symptom" autocomplete="off">
         <input type="hidden" name="csrfToken" value="${csrfToken}">

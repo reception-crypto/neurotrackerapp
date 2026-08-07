@@ -21,6 +21,9 @@ const requiredCsvColumns = [
   'PayloadSchemaVersion',
 ];
 
+const legacyCustomSymptomIdPattern =
+  /^custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function parseCsv(text) {
   const rows = [];
   let row = [];
@@ -139,6 +142,14 @@ function snapshotData(dataDirectory) {
   if (fs.existsSync(catalogPath)) {
     catalog = readJson(catalogPath, 'The disorder catalogue');
   }
+  const customSymptomIds = catalog && catalog.customSymptoms &&
+    typeof catalog.customSymptoms === 'object'
+    ? Object.keys(catalog.customSymptoms)
+    : [];
+  const symptomIdAliases = catalog && catalog.symptomIdAliases &&
+    typeof catalog.symptomIdAliases === 'object'
+    ? Object.keys(catalog.symptomIdAliases)
+    : [];
 
   return {
     snapshotVersion: 1,
@@ -160,10 +171,11 @@ function snapshotData(dataDirectory) {
       typeof catalog.customDisorders === 'object'
       ? Object.keys(catalog.customDisorders).length
       : 0,
-    customSymptomCount: catalog && catalog.customSymptoms &&
-      typeof catalog.customSymptoms === 'object'
-      ? Object.keys(catalog.customSymptoms).length
-      : 0,
+    customSymptomCount: customSymptomIds.length,
+    legacyCustomSymptomIdCount: customSymptomIds.filter(
+      id => legacyCustomSymptomIdPattern.test(id),
+    ).length,
+    symptomIdAliasCount: symptomIdAliases.length,
     disorderAuditEventCount: catalog && Array.isArray(catalog.auditLog)
       ? catalog.auditLog.length
       : 0,
@@ -187,12 +199,26 @@ function compareAfterMigration(before, after) {
   assertEqual(before, after, 'csvDataRowCount', 'Symptom CSV row count');
   assertEqual(before, after, 'customDisorderCount', 'Custom-disorder count');
   assertEqual(before, after, 'customSymptomCount', 'Custom-symptom count');
-  assertEqual(
-    before,
-    after,
-    'disorderAuditEventCount',
-    'Disorder-catalogue audit-event count',
-  );
+  const migratedSymptomIds = Number(before.disorderCatalogVersion || 0) < 3
+    ? Number(before.legacyCustomSymptomIdCount || 0)
+    : 0;
+  const expectedAuditEvents = Number(before.disorderAuditEventCount || 0) +
+    migratedSymptomIds;
+  if (Number(after.disorderAuditEventCount || 0) !== expectedAuditEvents) {
+    throw new Error(
+      'Disorder-catalogue audit-event count changed unexpectedly from ' +
+      `${before.disorderAuditEventCount || 0} to ` +
+      `${after.disorderAuditEventCount || 0}.`,
+    );
+  }
+  const expectedAliases = Number(before.symptomIdAliasCount || 0) +
+    migratedSymptomIds;
+  if (Number(after.symptomIdAliasCount || 0) !== expectedAliases) {
+    throw new Error(
+      'Custom-symptom identifier alias count did not match the guarded ' +
+      'catalogue migration.',
+    );
+  }
 
   if (after.historicalProfileCount < before.historicalProfileCount) {
     throw new Error(
@@ -210,8 +236,11 @@ function compareAfterMigration(before, after) {
   if (after.canonicalHistoricalProfileCount !== after.historicalProfileCount) {
     throw new Error('At least one historical profile lacks canonical identifiers.');
   }
-  if (!after.disorderCatalogPresent || after.disorderCatalogVersion !== 2) {
+  if (!after.disorderCatalogPresent || after.disorderCatalogVersion !== 3) {
     throw new Error('The Build 8 disorder catalogue was not initialised safely.');
+  }
+  if (Number(after.legacyCustomSymptomIdCount || 0) !== 0) {
+    throw new Error('A UUID-style custom symptom identifier remains after migration.');
   }
   const missingColumns = requiredCsvColumns.filter(
     column => !after.csvColumns.includes(column),

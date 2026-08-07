@@ -4,7 +4,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const catalogVersion = 2;
+const catalogVersion = 3;
+const legacyCatalogVersion = 2;
 const customDisorderMinimumBuild = 8;
 const customSymptomMinimumBuild = 8;
 
@@ -349,6 +350,7 @@ function createDisorderCatalogStore({
       customDisorders: {},
       customSymptoms: {},
       builtInDisorderSymptomOverrides: {},
+      symptomIdAliases: {},
       auditLog: [],
     };
   }
@@ -415,7 +417,7 @@ function createDisorderCatalogStore({
     fs.copyFileSync(catalogPath, backupPath, fs.constants.COPYFILE_EXCL);
     const upgraded = {
       ...store,
-      version: catalogVersion,
+      version: legacyCatalogVersion,
       customSymptoms: {},
       builtInDisorderSymptomOverrides: {},
     };
@@ -424,12 +426,19 @@ function createDisorderCatalogStore({
   }
 
   function symptomLookupFor(store) {
-    return new Map([
+    const lookup = new Map([
       ...staticSymptomDefinitions.map(item => [item.id, publicSymptom(item)]),
       ...Object.values(store.customSymptoms || {}).map(
         item => [item.id, publicSymptom(item)],
       ),
     ]);
+    for (const [legacyId, currentId] of Object.entries(
+      store.symptomIdAliases || {},
+    )) {
+      const current = lookup.get(currentId);
+      if (current) lookup.set(legacyId, current);
+    }
+    return lookup;
   }
 
   function rawAllowedSymptomIds(store, disorder) {
@@ -461,11 +470,15 @@ function createDisorderCatalogStore({
     return [...builtIn, ...custom];
   }
 
-  function validateStoredSymptom(record, key) {
+  function validateStoredSymptom(record, key, { legacyIdentifier = false } = {}) {
     if (!record || typeof record !== 'object' || record.id !== key) {
       throw new Error('The symptom catalogue contains an invalid record.');
     }
-    if (!/^custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id)) {
+    const validIdentifier = legacyIdentifier
+      ? /^custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id)
+      : /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(record.id) &&
+        record.id.length <= 100;
+    if (!validIdentifier) {
       throw new Error('The symptom catalogue contains an invalid identifier.');
     }
     const displayName = normaliseSymptomName(record.displayName);
@@ -506,15 +519,22 @@ function createDisorderCatalogStore({
     }
   }
 
-  function validateV2Store(store) {
+  function validateStore(store, {
+    expectedVersion,
+    legacySymptomIdentifiers = false,
+  }) {
     if (
-      Number(store.version) !== catalogVersion ||
+      Number(store.version) !== expectedVersion ||
       !store.customDisorders ||
       typeof store.customDisorders !== 'object' ||
       !store.customSymptoms ||
       typeof store.customSymptoms !== 'object' ||
       !store.builtInDisorderSymptomOverrides ||
       typeof store.builtInDisorderSymptomOverrides !== 'object' ||
+      (!legacySymptomIdentifiers && (
+        !store.symptomIdAliases ||
+        typeof store.symptomIdAliases !== 'object'
+      )) ||
       !Array.isArray(store.auditLog)
     ) {
       throw new Error('The disorder catalogue schema is invalid.');
@@ -524,7 +544,12 @@ function createDisorderCatalogStore({
       staticSymptomDefinitions.map(item => symptomNameKey(item.displayName)),
     );
     for (const [key, record] of Object.entries(store.customSymptoms)) {
-      validateStoredSymptom(record, key);
+      if (!legacySymptomIdentifiers && staticSymptomsById.has(key)) {
+        throw new Error('A custom symptom identifier collides with a built-in identifier.');
+      }
+      validateStoredSymptom(record, key, {
+        legacyIdentifier: legacySymptomIdentifiers,
+      });
       if (symptomKeys.has(record.nameKey)) {
         throw new Error('The symptom catalogue contains a duplicate name.');
       }
@@ -560,6 +585,35 @@ function createDisorderCatalogStore({
       }
     }
 
+    if (!legacySymptomIdentifiers) {
+      for (const [legacyId, currentId] of Object.entries(
+        store.symptomIdAliases,
+      )) {
+        if (
+          !/^custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(legacyId) ||
+          typeof currentId !== 'string' ||
+          !store.customSymptoms[currentId] ||
+          store.customSymptoms[legacyId]
+        ) {
+          throw new Error('The symptom identifier alias catalogue is invalid.');
+        }
+      }
+
+      const legacyIds = new Set(Object.keys(store.symptomIdAliases));
+      for (const symptomIds of Object.values(
+        store.builtInDisorderSymptomOverrides,
+      )) {
+        if (symptomIds.some(id => legacyIds.has(id))) {
+          throw new Error('A disorder still uses a legacy symptom identifier.');
+        }
+      }
+      for (const disorder of Object.values(store.customDisorders)) {
+        if (disorder.allowedSymptomIds.some(id => legacyIds.has(id))) {
+          throw new Error('A disorder still uses a legacy symptom identifier.');
+        }
+      }
+    }
+
     for (const disorder of [
       ...builtInDisorders,
       ...Object.values(store.customDisorders),
@@ -578,11 +632,136 @@ function createDisorderCatalogStore({
     }
   }
 
+  function validateV2Store(store) {
+    validateStore(store, {
+      expectedVersion: legacyCatalogVersion,
+      legacySymptomIdentifiers: true,
+    });
+  }
+
+  function validateCurrentStore(store) {
+    validateStore(store, {
+      expectedVersion: catalogVersion,
+      legacySymptomIdentifiers: false,
+    });
+  }
+
+  function readableSymptomId(store, displayName, legacyId = '') {
+    const base = stableSlug(displayName) || 'symptom';
+    const occupied = new Set([
+      ...staticSymptomDefinitions.map(item => item.id),
+      ...Object.keys(store.customSymptoms || {})
+        .filter(id => id !== legacyId),
+    ]);
+    if (!occupied.has(base)) return base;
+
+    const legacySuffix = String(legacyId)
+      .replace(/^custom-symptom-/i, '')
+      .replace(/-/g, '')
+      .slice(0, 8)
+      .toLowerCase();
+    let suffix = legacySuffix || randomUUID().replace(/-/g, '').slice(0, 8);
+    let candidate = `${base}-${suffix}`;
+    while (occupied.has(candidate)) {
+      suffix = randomUUID().replace(/-/g, '').slice(0, 8).toLowerCase();
+      candidate = `${base}-${suffix}`;
+    }
+    return candidate;
+  }
+
+  function activeClinicalReference(legacyId) {
+    for (const filename of ['identity_store.json', 'symptom_entries.csv']) {
+      const filePath = path.join(dataDir, filename);
+      if (
+        fs.existsSync(filePath) &&
+        fs.readFileSync(filePath, 'utf8').includes(legacyId)
+      ) {
+        return filename;
+      }
+    }
+    return null;
+  }
+
+  function replaceSymptomIds(ids, mappings) {
+    return (ids || []).map(id => mappings.get(id) || id);
+  }
+
+  function upgradeV2Store(store) {
+    validateV2Store(store);
+    const mappings = new Map();
+    const reservedStore = {
+      ...store,
+      customSymptoms: { ...store.customSymptoms },
+    };
+    for (const record of Object.values(store.customSymptoms)) {
+      const reference = activeClinicalReference(record.id);
+      if (reference) {
+        throw new Error(
+          `Custom symptom ${record.displayName} already has an active ` +
+          `clinical reference in ${reference}; its canonical identifier ` +
+          'was not changed.',
+        );
+      }
+      const readableId = readableSymptomId(
+        reservedStore,
+        record.displayName,
+        record.id,
+      );
+      mappings.set(record.id, readableId);
+      delete reservedStore.customSymptoms[record.id];
+      reservedStore.customSymptoms[readableId] = {
+        ...record,
+        id: readableId,
+      };
+    }
+
+    const backupSuffix = now().toISOString().replace(/[^0-9]/g, '').slice(0, 14);
+    const backupPath = `${catalogPath}.backup-v2-${backupSuffix}-${randomUUID().slice(0, 8)}`;
+    fs.copyFileSync(catalogPath, backupPath, fs.constants.COPYFILE_EXCL);
+
+    const upgradedSymptoms = {};
+    for (const [legacyId, record] of Object.entries(store.customSymptoms)) {
+      const readableId = mappings.get(legacyId);
+      upgradedSymptoms[readableId] = { ...record, id: readableId };
+    }
+    store.customSymptoms = upgradedSymptoms;
+    for (const [disorderId, symptomIds] of Object.entries(
+      store.builtInDisorderSymptomOverrides,
+    )) {
+      store.builtInDisorderSymptomOverrides[disorderId] =
+        replaceSymptomIds(symptomIds, mappings);
+    }
+    for (const disorder of Object.values(store.customDisorders)) {
+      disorder.allowedSymptomIds = replaceSymptomIds(
+        disorder.allowedSymptomIds,
+        mappings,
+      );
+    }
+    store.symptomIdAliases = Object.fromEntries(mappings);
+    store.version = catalogVersion;
+    for (const [legacyId, readableId] of mappings) {
+      const record = store.customSymptoms[readableId];
+      audit(store, {
+        actor: 'system-catalogue-migration',
+        action: 'custom_symptom_identifier_migrated',
+        symptomId: readableId,
+        before: { id: legacyId, displayName: record.displayName },
+        after: { id: readableId, displayName: record.displayName },
+      });
+    }
+    validateCurrentStore(store);
+    writeStore(store);
+    return store;
+  }
+
   function readStore() {
     ensureStore();
     let parsed = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
     if (Number(parsed.version) === 1) parsed = upgradeV1Store(parsed);
-    validateV2Store(parsed);
+    if (Number(parsed.version) === legacyCatalogVersion) {
+      parsed = upgradeV2Store(parsed);
+    }
+    validateCurrentStore(parsed);
     return parsed;
   }
 
@@ -690,7 +869,7 @@ function createDisorderCatalogStore({
       before: null,
       after: disorderAuditSnapshot(record),
     });
-    validateV2Store(store);
+    validateCurrentStore(store);
     writeStore(store);
     return publicDisorder(record, record.allowedSymptomIds, symptomLookupFor(store));
   }
@@ -737,7 +916,7 @@ function createDisorderCatalogStore({
       before,
       after: disorderAuditSnapshot(record),
     });
-    validateV2Store(store);
+    validateCurrentStore(store);
     writeStore(store);
     return publicDisorder(record, record.allowedSymptomIds, symptomLookupFor(store));
   }
@@ -757,7 +936,7 @@ function createDisorderCatalogStore({
     if (allSymptomNameKeys(store).has(newNameKey)) {
       throw new Error('That symptom already exists in the catalogue.');
     }
-    const id = `custom-symptom-${randomUUID()}`;
+    const id = readableSymptomId(store, name);
     const timestamp = now().toISOString();
     const record = {
       id,
@@ -779,7 +958,7 @@ function createDisorderCatalogStore({
       before: null,
       after: symptomAuditSnapshot(record),
     });
-    validateV2Store(store);
+    validateCurrentStore(store);
     writeStore(store);
     return publicSymptom(record);
   }
@@ -826,7 +1005,7 @@ function createDisorderCatalogStore({
       before,
       after: symptomAuditSnapshot(record),
     });
-    validateV2Store(store);
+    validateCurrentStore(store);
     writeStore(store);
     return publicSymptom(record);
   }
@@ -873,7 +1052,7 @@ function createDisorderCatalogStore({
       before: { allowedSymptomIds: beforeIds },
       after: { allowedSymptomIds: selectedIds },
     });
-    validateV2Store(store);
+    validateCurrentStore(store);
     writeStore(store);
     return publicDisorder(source, selectedIds, symptomLookupFor(store));
   }

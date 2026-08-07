@@ -1,6 +1,6 @@
 # Build 8 compatible backend deployment
 
-This package deploys backend `0.8.1` before either Build 8 mobile app is
+This package deploys backend `0.8.2` before either Build 8 mobile app is
 released. It keeps the public Build 7 app fully supported:
 
 - `MIN_SUPPORTED_MOBILE_BUILD=7`
@@ -8,6 +8,9 @@ released. It keeps the public Build 7 app fully supported:
 - `ENABLE_CUSTOM_DISORDERS=false`
 - custom symptoms may be prepared in the catalogue, but Build 8-only profile
   assignments remain gated
+- new custom symptom IDs are readable, immutable slugs derived from the
+  original approved name; unused UUID-style IDs from backend 0.8.1 are
+  migrated with aliases and an audit event
 - payloads without `schemaVersion` remain Build 7/schema 1
 - `PatientId` and `ProfileRevision` remain authoritative
 

@@ -46,10 +46,11 @@ function writeFixture(directory, profile, columns = requiredCsvColumns) {
     `${columns.join(',')}\n${columns.map((_, index) => `value-${index}`).join(',')}\n`,
   );
   fs.writeFileSync(path.join(directory, 'disorder_catalog.json'), JSON.stringify({
-    version: 2,
+    version: 3,
     customDisorders: {},
     customSymptoms: {},
     builtInDisorderSymptomOverrides: {},
+    symptomIdAliases: {},
     auditLog: [],
   }));
 }
@@ -90,7 +91,7 @@ test('comparison rejects lost clinical rows or identities', () => {
     canonicalCurrentProfileCount: 1,
     canonicalHistoricalProfileCount: 1,
     disorderCatalogPresent: true,
-    disorderCatalogVersion: 2,
+    disorderCatalogVersion: 3,
     csvColumns: requiredCsvColumns,
   };
   assert.throws(
@@ -140,13 +141,13 @@ test('comparison permits a missing history entry to be recovered', () => {
     canonicalCurrentProfileCount: 1,
     canonicalHistoricalProfileCount: 1,
     disorderCatalogPresent: true,
-    disorderCatalogVersion: 2,
+    disorderCatalogVersion: 3,
     csvColumns: requiredCsvColumns,
   };
   assert.doesNotThrow(() => compareAfterMigration(before, after));
 });
 
-test('comparison permits catalogue schema 1 to migrate to schema 2 without losing catalogue records', () => {
+test('comparison permits catalogue schema 1 to migrate to schema 3 without losing catalogue records', () => {
   const before = {
     patientCount: 1,
     enrolmentCodeCount: 1,
@@ -166,7 +167,39 @@ test('comparison permits catalogue schema 1 to migrate to schema 2 without losin
     identityStoreVersion: 3,
     canonicalCurrentProfileCount: 1,
     canonicalHistoricalProfileCount: 1,
+    disorderCatalogVersion: 3,
+    csvColumns: requiredCsvColumns,
+  };
+
+  assert.doesNotThrow(() => compareAfterMigration(before, after));
+});
+
+test('comparison permits guarded UUID symptom ID migration with one alias and audit event per ID', () => {
+  const before = {
+    patientCount: 1,
+    enrolmentCodeCount: 1,
+    deviceCount: 1,
+    activeDeviceCount: 1,
+    currentProfileCount: 1,
+    historicalProfileCount: 1,
+    csvDataRowCount: 1,
+    customDisorderCount: 0,
+    customSymptomCount: 2,
+    legacyCustomSymptomIdCount: 2,
+    symptomIdAliasCount: 0,
+    disorderAuditEventCount: 4,
+    disorderCatalogPresent: true,
     disorderCatalogVersion: 2,
+  };
+  const after = {
+    ...before,
+    identityStoreVersion: 3,
+    canonicalCurrentProfileCount: 1,
+    canonicalHistoricalProfileCount: 1,
+    disorderCatalogVersion: 3,
+    legacyCustomSymptomIdCount: 0,
+    symptomIdAliasCount: 2,
+    disorderAuditEventCount: 6,
     csvColumns: requiredCsvColumns,
   };
 

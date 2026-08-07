@@ -57,11 +57,14 @@ assigned patient can continue submitting against the historical revision.
 
 Staff can also create a new symptom by typing its exact clinical name twice.
 Case, whitespace, punctuation-normalised, and dash variants of existing names
-are rejected. The new symptom receives an immutable `custom-symptom-*` ID and
-requires Build 8 when selected in a patient profile. It is not automatically
-added to any existing disorder; staff explicitly add it to the appropriate
-disorder symptom list. A custom disorder initially receives the active
-controlled symptom vocabulary and can then be narrowed in the same way.
+are rejected. The new symptom receives an immutable, readable canonical ID
+derived from its original approved name (for example, `Postural tremor`
+becomes `postural-tremor`) and requires Build 8 when selected in a patient
+profile. If two distinct names collapse to the same machine-safe slug, a short
+uniqueness suffix is added. It is not automatically added to any existing
+disorder; staff explicitly add it to the appropriate disorder symptom list. A
+custom disorder initially receives the active controlled symptom vocabulary
+and can then be narrowed in the same way.
 
 Custom symptoms and disorders are never hard-deleted. Archive them to prevent
 future selection. Reactivation restores their previous stable ID and disorder

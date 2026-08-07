@@ -825,10 +825,8 @@ test('admin can add a controlled symptom and change disorder availability withou
   });
   assert.equal(created.status, 201);
   const createdPage = await created.text();
-  const symptomId = createdPage.match(
-    /custom-symptom-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
-  )?.[0];
-  assert.ok(symptomId);
+  const symptomId = 'limb-heaviness';
+  assert.match(createdPage, /<code>limb-heaviness<\/code>/);
 
   const migraine = disorderCatalog.findDisorder({ id: 'migraine' });
   const availabilityForm = new URLSearchParams({
