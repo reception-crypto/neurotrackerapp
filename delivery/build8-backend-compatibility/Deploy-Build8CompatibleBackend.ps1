@@ -59,7 +59,8 @@ function Invoke-IsolatedPackageTests {
         'DATA_DIR',
         'MIN_SUPPORTED_MOBILE_BUILD',
         'LATEST_MOBILE_BUILD',
-        'ENABLE_CUSTOM_DISORDERS'
+        'ENABLE_CUSTOM_DISORDERS',
+        'ENABLE_INDEPENDENT_PROFILES'
     )
     $savedEnvironment = @{}
     foreach ($name in $environmentNames) {
@@ -74,7 +75,8 @@ function Invoke-IsolatedPackageTests {
             'DATA_DIR',
             'MIN_SUPPORTED_MOBILE_BUILD',
             'LATEST_MOBILE_BUILD',
-            'ENABLE_CUSTOM_DISORDERS'
+            'ENABLE_CUSTOM_DISORDERS',
+            'ENABLE_INDEPENDENT_PROFILES'
         )) {
             [Environment]::SetEnvironmentVariable($name, $null, 'Process')
         }
@@ -122,14 +124,22 @@ if (
     throw 'The deployment package is incomplete.'
 }
 $release = Get-Content -LiteralPath $releasePath -Raw | ConvertFrom-Json
-if ($release.backendVersion -ne '0.8.3') {
-    throw "Expected backend version 0.8.3, found $($release.backendVersion)."
+if ($release.backendVersion -ne '0.9.0') {
+    throw "Expected backend version 0.9.0, found $($release.backendVersion)."
 }
 if (
     [string]($release.sourceCommit) -notmatch '^[0-9a-f]{40}$' -or
     [string]($release.sourceCommit) -ne [string]($manifest.sourceCommit)
 ) {
     throw 'The release and package-manifest source commits do not match.'
+}
+if (
+    [int]($release.minimumMobileBuild) -ne 7 -or
+    [int]($release.latestMobileBuildDuringBackendPredeployment) -ne 7 -or
+    $release.customDisordersEnabledDuringBackendPredeployment -ne $false -or
+    $release.independentProfilesEnabledDuringBackendPredeployment -ne $false
+) {
+    throw 'The release metadata does not preserve the gated Build 7 rollout.'
 }
 
 $runtime = Resolve-NeuroSolRuntime `
@@ -326,6 +336,7 @@ try {
         MIN_SUPPORTED_MOBILE_BUILD = '7'
         LATEST_MOBILE_BUILD = '7'
         ENABLE_CUSTOM_DISORDERS = 'false'
+        ENABLE_INDEPENDENT_PROFILES = 'false'
     }
     $updatedSettings = Read-NeuroSolDotEnv -Path $environmentPath
     if (
@@ -380,6 +391,7 @@ try {
         minimumMobileBuild = 7
         latestMobileBuild = 7
         customDisordersEnabled = $false
+        independentProfilesEnabled = $false
         localVerification = $true
         publicVerification = (-not $SkipPublicVerification)
     }
@@ -393,6 +405,7 @@ try {
     Write-Host "Source commit: $($release.sourceCommit)"
     Write-Host 'Build 7 support: ACTIVE'
     Write-Host 'Custom disorders: DISABLED until both Build 8 stores are live'
+    Write-Host 'Independent profiles: DISABLED until both Build 8 stores are live'
     Write-Host "Recovery backup: $backupPath"
 } catch {
     $deploymentError = $_

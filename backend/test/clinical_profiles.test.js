@@ -268,3 +268,105 @@ test('retired symptoms migrate historically but cannot be newly assigned', () =>
     ['dizziness', 'sweating-changes', 'fatigue'],
   );
 });
+
+test('independent profiles select global symptoms without disorder nesting', () => {
+  const profile = normaliseClinicalProfile({
+    schemaVersion: 3,
+    disorderIds: ['migraine'],
+    // Weakness was not part of the Build 7 Migraine symptom mapping.
+    symptomIds: ['headache', 'weakness', 'pain'],
+  });
+
+  assert.equal(profile.schemaVersion, 3);
+  assert.deepEqual(profile.disorders, ['Migraine']);
+  assert.deepEqual(profile.symptoms, ['Headache', 'Weakness', 'Pain']);
+  assert.equal(profileMinimumBuild(profile), 8);
+
+  const canonical = canonicalRecordsForClinicalProfile(profile, [
+    { track: 'Independent', symptomId: 'weakness', score: 3 },
+    { track: 'Independent', symptomId: 'pain', score: 4 },
+    { track: 'Independent', symptomId: 'headache', score: 2 },
+  ]);
+  assert.deepEqual(
+    canonical.map(record => [
+      record.track,
+      record.disorderId,
+      record.symptomId,
+    ]),
+    [
+      ['Independent', '', 'weakness'],
+      ['Independent', '', 'pain'],
+      ['Independent', '', 'headache'],
+    ],
+  );
+});
+
+test('independent profiles allow one to six unique symptoms only', () => {
+  const disorderIds = ['migraine', 'dysautonomia'];
+  const six = [
+    'headache',
+    'nausea',
+    'vertigo',
+    'dizziness',
+    'pain',
+    'weakness',
+  ];
+  assert.equal(normaliseClinicalProfile({
+    schemaVersion: 3,
+    disorderIds,
+    symptomIds: ['vertigo'],
+  }).symptomIds.length, 1);
+  assert.equal(normaliseClinicalProfile({
+    schemaVersion: 3,
+    disorderIds,
+    symptomIds: six,
+  }).symptomIds.length, 6);
+  assert.throws(
+    () => normaliseClinicalProfile({
+      schemaVersion: 3,
+      disorderIds,
+      symptomIds: [],
+    }),
+    /between 1 and 6/,
+  );
+  assert.throws(
+    () => normaliseClinicalProfile({
+      schemaVersion: 3,
+      disorderIds,
+      symptomIds: [...six, 'fatigue'],
+    }),
+    /between 1 and 6/,
+  );
+  assert.throws(
+    () => normaliseClinicalProfile({
+      schemaVersion: 3,
+      disorderIds,
+      symptomIds: ['pain', 'pain'],
+    }),
+    /unique/,
+  );
+});
+
+test('independent records rate each symptom once and carry no disorder', () => {
+  const profile = normaliseClinicalProfile({
+    schemaVersion: 3,
+    disorderIds: ['migraine', 'dysautonomia'],
+    symptomIds: ['dizziness', 'pain'],
+  });
+  assert.equal(recordsMatchClinicalProfile(profile, [
+    { track: 'Independent', symptomId: 'dizziness' },
+    { track: 'Independent', symptomId: 'pain' },
+  ]), true);
+  assert.equal(recordsMatchClinicalProfile(profile, [
+    { track: 'Independent', symptomId: 'dizziness' },
+    { track: 'Independent', symptomId: 'dizziness' },
+  ]), false);
+  assert.equal(recordsMatchClinicalProfile(profile, [
+    {
+      track: 'Independent',
+      disorderId: 'migraine',
+      symptomId: 'dizziness',
+    },
+    { track: 'Independent', symptomId: 'pain' },
+  ]), false);
+});

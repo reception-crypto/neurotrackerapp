@@ -1,6 +1,6 @@
 {
   "name": "neurosol-symptom-diary-backend",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "description": "NeuroSol clinic backend with canonical disorder management, staff-managed profiles, secure enrolment, CSV storage, analytics, and PDF reports.",
   "main": "server.js",
   "scripts": {

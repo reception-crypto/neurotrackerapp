@@ -7,7 +7,7 @@ compatibility gates before either Build 8 mobile app is released.
 
 - [ ] Confirm the branch contains the public Build 7 source plus the additive
       Build 8 backend compatibility changes.
-- [ ] Confirm `pubspec.yaml` is `1.0.0+7`, backend is `0.8.0`, and both app IDs
+- [ ] Confirm `pubspec.yaml` is `1.0.0+7`, backend is `0.9.0`, and both app IDs
       remain `au.com.pascoeneurology.neurosol`.
 - [ ] Confirm no `.env`, keystore, `key.properties`, clinical CSV, identity
       store, real enrolment code, or patient screenshot is staged.
@@ -43,17 +43,18 @@ For the backend-first Build 8 compatibility deployment:
 LATEST_MOBILE_BUILD=7
 MIN_SUPPORTED_MOBILE_BUILD=7
 ENABLE_CUSTOM_DISORDERS=false
+ENABLE_INDEPENDENT_PROFILES=false
 PUBLIC_BASE_URL=https://tracker.melindapascoeneurology.com
 GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol
 ```
 
 - [ ] Keep the existing production `IDENTITY_SECRET`, `ADMIN_USER`, and
       `ADMIN_PASSWORD`; do not regenerate them.
-- [ ] Build and deploy the offline `0.8.0` package described in
+- [ ] Build and deploy the offline `0.9.0` package described in
       `delivery/build8-backend-compatibility/README.md`; do not download or
       replace dependencies on the terminal server.
-- [ ] Verify `/health` reports disorder catalogue version 1 with custom
-      disorders disabled.
+- [ ] Verify `/health` reports disorder catalogue version 3 with custom
+      disorders and independent profiles disabled.
 - [ ] Verify a Build 7 `/api/mobile-config` request reports minimum/latest 7,
       schema 1, and `build7Supported=true`.
 - [ ] Verify an existing Build 7 profile sync and synthetic submission retain
@@ -137,6 +138,7 @@ Keep this configuration while Build 7 remains public:
 LATEST_MOBILE_BUILD=7
 MIN_SUPPORTED_MOBILE_BUILD=7
 ENABLE_CUSTOM_DISORDERS=false
+ENABLE_INDEPENDENT_PROFILES=false
 ```
 
 - [ ] Verify the deployment script changed only these non-secret settings in
@@ -146,7 +148,31 @@ ENABLE_CUSTOM_DISORDERS=false
 - [ ] Leave minimum build at 7. Do not retire Build 7 based on a date or mobile
       release alone; use observed production traffic and an approved decision.
 
-## 9. Post-release
+## 9. Build 8 independent-profile activation
+
+Only after Build 8 is downloadable from both stores:
+
+```env
+LATEST_MOBILE_BUILD=8
+MIN_SUPPORTED_MOBILE_BUILD=7
+ENABLE_CUSTOM_DISORDERS=true
+ENABLE_INDEPENDENT_PROFILES=true
+```
+
+- [ ] Confirm `/admin/disorders` and `/admin/symptoms` are separate controlled
+      lists.
+- [ ] Confirm a new profile accepts one or more disorders and between one and
+      six unique symptoms, with no symptom-to-disorder nesting.
+- [ ] Confirm an active Build 7 or unconfirmed device blocks conversion to a
+      schema-3 profile.
+- [ ] Confirm **Maintain Build 7 profile** remains available for an existing
+      nested profile that still needs a compatibility edit.
+- [ ] Confirm a schema-3 submission creates one CSV row per symptom and stores
+      the profile disorder IDs/names in the additive snapshot columns.
+- [ ] Confirm Build 7 enrolment, profile sync, and schema-1 submission still
+      pass after activation.
+
+## 10. Post-release
 
 - [ ] Monitor service health, HTTP 401/409/426/5xx rates, pending-upload support
       reports, disk space, and backups.

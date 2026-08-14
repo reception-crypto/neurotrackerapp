@@ -71,14 +71,15 @@ DATA_DIR=C:\ProgramData\NeuroSol\data
 LATEST_MOBILE_BUILD=7
 MIN_SUPPORTED_MOBILE_BUILD=7
 ENABLE_CUSTOM_DISORDERS=false
+ENABLE_INDEPENDENT_PROFILES=false
 PUBLIC_BASE_URL=https://tracker.melindapascoeneurology.com
 GOOGLE_PLAY_URL=https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol
 ```
 
 Build 7 is publicly available and remains supported during the Build 8
 rollout. Keep `MIN_SUPPORTED_MOBILE_BUILD=7`. Deploy the Build 8-compatible
-backend with `LATEST_MOBILE_BUILD=7` and `ENABLE_CUSTOM_DISORDERS=false` before
-either Build 8 app is released.
+backend with `LATEST_MOBILE_BUILD=7`, `ENABLE_CUSTOM_DISORDERS=false`, and
+`ENABLE_INDEPENDENT_PROFILES=false` before either Build 8 app is released.
 
 Generate a strong identity secret in PowerShell, save it in the clinic's
 password manager, and paste it into `.env`:
@@ -170,19 +171,20 @@ address.
 
 ## 8. Build 7 compatibility during the Build 8 rollout
 
-Deploy backend `0.8.0` before distributing Build 8. Initially set:
+Deploy backend `0.9.0` before distributing Build 8. Initially set:
 
 ```env
 LATEST_MOBILE_BUILD=7
 MIN_SUPPORTED_MOBILE_BUILD=7
 ENABLE_CUSTOM_DISORDERS=false
+ENABLE_INDEPENDENT_PROFILES=false
 ```
 
 Build 7 payloads omit `schemaVersion`; the backend interprets them as schema 1
 and maps their validated labels into canonical IDs. Keep PatientId and
-ProfileRevision unchanged. Do not enable custom disorders until Build 8 is
-downloadable from both stores, and do not raise the minimum build during this
-compatibility window.
+ProfileRevision unchanged. Do not enable custom definitions or independent
+profiles until Build 8 is downloadable from both stores, and do not raise the
+minimum build during this compatibility window.
 
 ## 9. Backup and access control
 

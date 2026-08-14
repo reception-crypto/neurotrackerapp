@@ -14,6 +14,8 @@ const {
 } = require('./identity_store');
 const {
   canonicalRecordsForClinicalProfile,
+  isIndependentClinicalProfile,
+  maximumIndependentSymptoms,
   normaliseClinicalProfile,
   profileMinimumBuild,
   values,
@@ -57,6 +59,9 @@ const appStoreUrl = String(process.env.APP_STORE_URL || '').trim();
 const customDisordersEnabled = /^(1|true|yes)$/i.test(
   String(process.env.ENABLE_CUSTOM_DISORDERS || '').trim(),
 );
+const independentProfilesEnabled = /^(1|true|yes)$/i.test(
+  String(process.env.ENABLE_INDEPENDENT_PROFILES || '').trim(),
+);
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
 const disorderCatalog = createDisorderCatalogStore({ dataDir });
@@ -66,7 +71,7 @@ const identityStore = createIdentityStore({
   disorderCatalog,
 });
 
-const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision','DisorderId','SymptomId','PayloadSchemaVersion'];
+const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision','DisorderId','SymptomId','PayloadSchemaVersion','ProfileDisorderIds','ProfileDisorders'];
 
 const reviewConfigurationPresent = Boolean(
   reviewEnrolmentCode || reviewPatientIdPrefix || reviewDisplayName,
@@ -243,8 +248,16 @@ function recordIdentifiers(disorder, symptom, disorderId = '', symptomId = '') {
   };
 }
 
-function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '', profileRevision = '', disorderId = '', symptomId = '', payloadSchemaVersion = 1) {
-  if (!looksLikeDate(date) || !patient || !disorder || !symptom || !validScore(score)) return null;
+function normalisedRecord(receivedAt, date, time, patient, track, disorder, symptom, score, wellness, submissionId = '', patientId = '', profileRevision = '', disorderId = '', symptomId = '', payloadSchemaVersion = 1, profileDisorderIds = '', profileDisorders = '') {
+  const schemaVersion = Number(payloadSchemaVersion);
+  const independentRecord = schemaVersion === 3;
+  if (
+    !looksLikeDate(date) ||
+    !patient ||
+    (!independentRecord && !disorder) ||
+    !symptom ||
+    !validScore(score)
+  ) return null;
   const identifiers = recordIdentifiers(
     disorder,
     symptom,
@@ -266,9 +279,15 @@ function normalisedRecord(receivedAt, date, time, patient, track, disorder, symp
     ProfileRevision: String(profileRevision || ''),
     DisorderId: identifiers.disorderId,
     SymptomId: identifiers.symptomId,
-    PayloadSchemaVersion: [1, 2].includes(Number(payloadSchemaVersion))
-      ? String(Number(payloadSchemaVersion))
+    PayloadSchemaVersion: [1, 2, 3].includes(schemaVersion)
+      ? String(schemaVersion)
       : '1',
+    ProfileDisorderIds: independentRecord
+      ? String(profileDisorderIds || '')
+      : '',
+    ProfileDisorders: independentRecord
+      ? String(profileDisorders || '')
+      : '',
   };
 }
 
@@ -349,7 +368,14 @@ function normaliseCsvRows(parsed) {
   for (const values of dataRows) {
     if (!values.some(v => String(v || '').trim())) continue;
 
-    // Additive Build 8 schema with the originating payload schema retained.
+    // Independent Build 8 schema with profile-level disorder snapshots.
+    if (values.length === 17 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
+      const record = normalisedRecord(...values.slice(0, 17));
+      if (record) normalised.push(record);
+      continue;
+    }
+
+    // Additive Build 8 canonical schema with payload schema retained.
     if (values.length === 15 && looksLikeTimestamp(values[0]) && looksLikeDate(values[1])) {
       const record = normalisedRecord(...values.slice(0, 15));
       if (record) normalised.push(record);
@@ -409,6 +435,7 @@ function normaliseCsvRows(parsed) {
         get('Disorder'), get('Symptom'), get('Score'), get('WellnessPercent'),
         get('SubmissionId'), get('PatientId'), get('ProfileRevision'),
         get('DisorderId'), get('SymptomId'), get('PayloadSchemaVersion') || 1,
+        get('ProfileDisorderIds'), get('ProfileDisorders'),
       );
       if (record) normalised.push(record);
       continue;
@@ -475,21 +502,51 @@ function disorderKey(row) {
   return id || `legacy:${String(row?.Disorder || '').trim()}`;
 }
 
+function splitProfileValues(value) {
+  return String(value || '')
+    .split('|')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function rowDisorderIds(row) {
+  const profileIds = splitProfileValues(row?.ProfileDisorderIds);
+  if (profileIds.length) return [...new Set(profileIds)];
+  const legacyId = disorderKey(row);
+  return legacyId && legacyId !== 'legacy:' ? [legacyId] : [];
+}
+
+function rowHasDisorder(row, disorderId) {
+  const id = String(disorderId || '').trim();
+  return !id || rowDisorderIds(row).includes(id);
+}
+
+function rowDisorderLabel(row) {
+  const profileNames = splitProfileValues(row?.ProfileDisorders);
+  return profileNames.length
+    ? profileNames.join(', ')
+    : String(row?.Disorder || '');
+}
+
 function disorderChoices(rows) {
   const choices = new Map();
   for (const row of rows) {
-    const id = disorderKey(row);
-    if (!id || id === 'legacy:') continue;
-    const existing = choices.get(id);
-    if (
-      !existing ||
-      String(row.ReceivedAt || '').localeCompare(existing.receivedAt) > 0
-    ) {
-      choices.set(id, {
-        id,
-        displayName: row.Disorder,
-        receivedAt: String(row.ReceivedAt || ''),
-      });
+    const ids = rowDisorderIds(row);
+    const profileNames = splitProfileValues(row.ProfileDisorders);
+    for (let index = 0; index < ids.length; index++) {
+      const id = ids[index];
+      if (!id || id === 'legacy:') continue;
+      const existing = choices.get(id);
+      if (
+        !existing ||
+        String(row.ReceivedAt || '').localeCompare(existing.receivedAt) > 0
+      ) {
+        choices.set(id, {
+          id,
+          displayName: profileNames[index] || row.Disorder || id,
+          receivedAt: String(row.ReceivedAt || ''),
+        });
+      }
     }
   }
   for (const choice of choices.values()) {
@@ -541,7 +598,7 @@ function payloadSchemaVersion(body = {}) {
     return 1;
   }
   const supplied = Number(body.schemaVersion);
-  return Number.isInteger(supplied) && [1, 2].includes(supplied)
+  return Number.isInteger(supplied) && [1, 2, 3].includes(supplied)
     ? supplied
     : null;
 }
@@ -568,6 +625,11 @@ function supportsClinicManagedProfile(req) {
 function supportsCanonicalDisorders(req) {
   return mobileBuild(req) >= 8 &&
     req.header('x-neurosol-disorders') === 'canonical-v1';
+}
+
+function supportsIndependentProfiles(req) {
+  return supportsCanonicalDisorders(req) &&
+    req.header('x-neurosol-profile-model') === 'independent-v1';
 }
 
 function sendUpdateRequired(res, requiredBuild = minimumMobileBuild) {
@@ -603,6 +665,7 @@ function requireDeviceIdentity(req, res, next) {
     mobileBuild: mobileBuild(req),
     supportsClinicManagedProfile: supportsClinicManagedProfile(req),
     supportsCanonicalDisorders: supportsCanonicalDisorders(req),
+    supportsIndependentProfiles: supportsIndependentProfiles(req),
   });
   if (identity) {
     req.deviceIdentity = identity;
@@ -920,7 +983,7 @@ function patientSeries(
   const symptomMetric = metric.startsWith('symptom:') ? metric.slice('symptom:'.length) : '';
   const directory = patientNames || patientDirectory(rows);
   const filtered = rows.filter(r =>
-    (!disorderId || disorderKey(r) === disorderId) &&
+    rowHasDisorder(r, disorderId) &&
     (!selectedPatients.length || selectedPatients.includes(patientKey(r))) &&
     (!symptomMetric || r.Symptom === symptomMetric)
   );
@@ -1031,7 +1094,7 @@ function pageShell(title, body) {
     .calendar-date{top:4px;left:5px;font-size:9px}
     .calendar-dot{transform:scale(.75)}
   }
-  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/disorders">Disorders</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
+  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/disorders">Disorders</a><a href="/admin/symptoms">Symptoms</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
 }
 
 // Validate the catalogue before any profile or CSV migration can write data.
@@ -1060,6 +1123,7 @@ app.get('/health',(req,res)=>res.json({
   storage:'csv',
   disorderCatalogVersion: catalogVersion,
   customDisordersEnabled,
+  independentProfilesEnabled,
 }));
 app.get('/api/mobile-config',(req,res)=>{
   res.set('Cache-Control', 'no-store');
@@ -1070,8 +1134,16 @@ app.get('/api/mobile-config',(req,res)=>{
     appStoreUrl: appStoreUrl || undefined,
     clinicManagedProfiles: true,
     canonicalDisorders: true,
+    independentProfileModel: true,
+    independentProfilesEnabled,
+    maximumProfileSymptoms: maximumIndependentSymptoms,
     disorderCatalogVersion: catalogVersion,
-    preferredPayloadSchemaVersion: supportsCanonicalDisorders(req) ? 2 : 1,
+    preferredPayloadSchemaVersion: independentProfilesEnabled &&
+      supportsIndependentProfiles(req)
+      ? 3
+      : supportsCanonicalDisorders(req)
+      ? 2
+      : 1,
     build7Supported: minimumMobileBuild <= 7,
     customDisordersEnabled,
   });
@@ -1163,6 +1235,7 @@ app.post(
       supportedMobileBuild: mobileBuild(req),
       supportsClinicManagedProfile: supportsClinicManagedProfile(req),
       supportsCanonicalDisorders: supportsCanonicalDisorders(req),
+      supportsIndependentProfiles: supportsIndependentProfiles(req),
     });
     return res.status(200).json({
       patientId: reviewIdentity.patientId,
@@ -1176,6 +1249,7 @@ app.post(
     expectedPatientId: req.body?.expectedPatientId,
     supportsClinicManagedProfile: supportsClinicManagedProfile(req),
     supportsCanonicalDisorders: supportsCanonicalDisorders(req),
+    supportsIndependentProfiles: supportsIndependentProfiles(req),
     supportedMobileBuild: mobileBuild(req),
   });
   if (result.status === 'ok') {
@@ -1229,6 +1303,12 @@ app.get(
     ) {
       return sendUpdateRequired(res, requiredBuild);
     }
+    if (
+      isIndependentClinicalProfile(patient.clinicalProfile) &&
+      !supportsIndependentProfiles(req)
+    ) {
+      return sendUpdateRequired(res, 8);
+    }
     return res.json({
       patientId: req.deviceIdentity.patientId,
       displayName: patient.displayName,
@@ -1252,6 +1332,9 @@ app.post(
     });
   }
   if (schemaVersion===2 && !supportsCanonicalDisorders(req)) {
+    return sendUpdateRequired(res,8);
+  }
+  if (schemaVersion===3 && !supportsIndependentProfiles(req)) {
     return sendUpdateRequired(res,8);
   }
   const submissionId=typeof b.submissionId==='string'?b.submissionId.trim():'';
@@ -1287,38 +1370,56 @@ app.post(
     track:typeof record?.track==='string'?record.track.trim():'',
     disorderId:schemaVersion===2&&typeof record?.disorderId==='string'?record.disorderId.trim():'',
     disorder:typeof record?.disorder==='string'?record.disorder.trim():'',
-    symptomId:schemaVersion===2&&typeof record?.symptomId==='string'?record.symptomId.trim():'',
+    symptomId:schemaVersion>=2&&typeof record?.symptomId==='string'?record.symptomId.trim():'',
     symptom:typeof record?.symptom==='string'?record.symptom.trim():'',
     score:record?.score,
   }));
-  if (![3,6].includes(records.length) || records.some(r =>
-    !['Primary','Second'].includes(r.track) ||
-    (schemaVersion===1
-      ? !validClinicalLabel(r.disorder,120) ||
-        !validClinicalLabel(r.symptom,120)
-      : !validClinicalLabel(r.disorderId,120) ||
-        !validClinicalLabel(r.symptomId,120)) ||
-    !validSubmittedScore(r.score)
-  )) {
-    return res.status(400).json({error:'Exactly three valid symptom scores per disorder are required.'});
-  }
-  const tracks=new Set(records.map(record=>record.track));
-  if (!tracks.has('Primary') ||
-      (records.length===3 && tracks.size!==1) ||
-      (records.length===6 && (tracks.size!==2 || !tracks.has('Second')))) {
-    return res.status(400).json({error:'Primary and second symptom tracks are invalid.'});
-  }
-  const disorderCounts=records.reduce((counts,r)=>{
-    const key=`${r.track}|${r.disorderId||r.disorder}`;
-    counts[key]=(counts[key]||0)+1;
-    return counts;
-  },{});
-  if (Object.values(disorderCounts).some(count=>count!==3) || Object.keys(disorderCounts).length!==records.length/3) {
-    return res.status(400).json({error:'Each tracked disorder must contain exactly three symptom scores.'});
+  if (schemaVersion === 3) {
+    if (
+      records.length < 1 ||
+      records.length > maximumIndependentSymptoms ||
+      records.some(record =>
+        record.track !== 'Independent' ||
+        record.disorderId ||
+        record.disorder ||
+        !validClinicalLabel(record.symptomId, 120) ||
+        !validSubmittedScore(record.score)
+      )
+    ) {
+      return res.status(400).json({
+        error:`Between one and ${maximumIndependentSymptoms} valid independent symptom scores are required.`,
+      });
+    }
+  } else {
+    if (![3,6].includes(records.length) || records.some(r =>
+      !['Primary','Second'].includes(r.track) ||
+      (schemaVersion===1
+        ? !validClinicalLabel(r.disorder,120) ||
+          !validClinicalLabel(r.symptom,120)
+        : !validClinicalLabel(r.disorderId,120) ||
+          !validClinicalLabel(r.symptomId,120)) ||
+      !validSubmittedScore(r.score)
+    )) {
+      return res.status(400).json({error:'Exactly three valid symptom scores per disorder are required.'});
+    }
+    const tracks=new Set(records.map(record=>record.track));
+    if (!tracks.has('Primary') ||
+        (records.length===3 && tracks.size!==1) ||
+        (records.length===6 && (tracks.size!==2 || !tracks.has('Second')))) {
+      return res.status(400).json({error:'Primary and second symptom tracks are invalid.'});
+    }
+    const disorderCounts=records.reduce((counts,r)=>{
+      const key=`${r.track}|${r.disorderId||r.disorder}`;
+      counts[key]=(counts[key]||0)+1;
+      return counts;
+    },{});
+    if (Object.values(disorderCounts).some(count=>count!==3) || Object.keys(disorderCounts).length!==records.length/3) {
+      return res.status(400).json({error:'Each tracked disorder must contain exactly three symptom scores.'});
+    }
   }
   const duplicateSymptoms=records.some((record,index)=>records.some((other,otherIndex)=>
     otherIndex<index &&
-    other.track===record.track &&
+    (schemaVersion === 3 || other.track===record.track) &&
     (other.disorderId||other.disorder)===(record.disorderId||record.disorder) &&
     (other.symptomId||other.symptom)===(record.symptomId||record.symptom)
   ));
@@ -1326,8 +1427,9 @@ app.post(
     return res.status(400).json({error:'Each tracked symptom must be unique.'});
   }
   let acceptedRecords=records;
+  let assignedProfile=null;
   if (mobileBuild(req)>=7 || hasClinicProfile) {
-    const assignedProfile=Number.isInteger(profileRevision) &&
+    assignedProfile=Number.isInteger(profileRevision) &&
       profileRevision>=1
       ? identityStore.patientClinicalProfile(patientId,profileRevision)
       : identityStore.patientClinicalProfile(patientId);
@@ -1345,6 +1447,12 @@ app.post(
       (!supportsCanonicalDisorders(req)||mobileBuild(req)<requiredBuild)
     ) {
       return sendUpdateRequired(res,requiredBuild);
+    }
+    if (
+      isIndependentClinicalProfile(assignedProfile) &&
+      !supportsIndependentProfiles(req)
+    ) {
+      return sendUpdateRequired(res,8);
     }
     const canonicalRecords=canonicalRecordsForClinicalProfile(
       assignedProfile,
@@ -1396,6 +1504,12 @@ app.post(
     });
   }
   const receivedAt=new Date().toISOString();
+  const profileDisorderIds=isIndependentClinicalProfile(assignedProfile)
+    ? assignedProfile.disorderIds.join('|')
+    : '';
+  const profileDisorders=isIndependentClinicalProfile(assignedProfile)
+    ? assignedProfile.disorders.join('|')
+    : '';
   const lines=acceptedRecords.map(r=>{
     const row=normalisedRecord(
       receivedAt,
@@ -1413,6 +1527,8 @@ app.post(
       r.disorderId||'',
       r.symptomId||'',
       schemaVersion,
+      profileDisorderIds,
+      profileDisorders,
     );
     return csvColumns.map(column=>escapeCsv(row[column]||'')).join(',')+'\n';
   });
@@ -1479,6 +1595,26 @@ function suggestedClinicalProfile(rows, patientId) {
     : patientRows.filter(row =>
         row.Date === latest.Date && row.Time === latest.Time
       );
+  if (
+    Number(latest.PayloadSchemaVersion) === 3 ||
+    String(latest.ProfileDisorderIds || '').trim()
+  ) {
+    try {
+      return normaliseClinicalProfile({
+        schemaVersion: 3,
+        disorderIds: splitProfileValues(latest.ProfileDisorderIds),
+        disorders: splitProfileValues(latest.ProfileDisorders),
+        symptomIds: submissionRows.map(row => row.SymptomId).filter(Boolean),
+        symptoms: submissionRows.map(row => row.Symptom),
+      }, {
+        disorderCatalog,
+        includeInactive: true,
+        allowHistoricalSymptoms: true,
+      });
+    } catch (_) {
+      return null;
+    }
+  }
   const primaryRows = submissionRows.filter(row => row.Track === 'Primary');
   const secondaryRows = submissionRows.filter(row => row.Track === 'Second');
   try {
@@ -1503,6 +1639,9 @@ function suggestedClinicalProfile(rows, patientId) {
 
 function profileDescription(profile) {
   if (!profile) return 'Not configured';
+  if (isIndependentClinicalProfile(profile)) {
+    return `${profile.disorders.join(', ')} · ${profile.symptoms.join(', ')}`;
+  }
   const tracks = [
     `${profile.primaryDisorder}: ${profile.primarySymptoms.join(', ')}`,
   ];
@@ -1557,7 +1696,7 @@ function symptomSelectors(
   ).join('');
 }
 
-function profileEditor(patient = null) {
+function legacyProfileEditor(patient = null) {
   const profile = patient?.clinicalProfile ||
     patient?.suggestedProfile || {
       primaryDisorder: 'Migraine',
@@ -1571,11 +1710,12 @@ function profileEditor(patient = null) {
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
   return `<section class="panel"><h2>${patient ? 'Edit clinic-assigned profile' : 'Create patient profile'}</h2>
-    <p class="muted">Clinic staff control the patient name, disorders, and exactly three symptoms per disorder. Patients can change only their reminder time.</p>
+    <p class="muted">Build 7 compatibility editor: clinic staff control the patient name, disorders, and exactly three symptoms per disorder. Saving retains the nested schema for this patient.</p>
     ${suggested ? '<div class="notice"><strong>Suggested from the latest accepted check-in.</strong> Review all fields before saving.</div>' : ''}
     <form method="post" action="/admin/enrolments/save-profile" autocomplete="off" id="profileForm">
       <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
       <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
+      <input type="hidden" name="profileModel" value="legacy-v1">
       <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient?.displayName || '')}"></div>
       <h3>Primary disorder</h3>
       <div class="field"><label>Disorder</label><select name="primaryDisorderId" id="primaryDisorder" required>${disorderOptions(profile.primaryDisorderId || 'migraine')}</select></div>
@@ -1620,11 +1760,124 @@ function profileEditor(patient = null) {
   </section>`;
 }
 
+function independentProfileSelections(profile = null) {
+  if (!profile) {
+    return {
+      disorderIds: ['migraine'],
+      symptomIds: [],
+    };
+  }
+  if (isIndependentClinicalProfile(profile)) {
+    return {
+      disorderIds: [...(profile.disorderIds || [])],
+      symptomIds: [...(profile.symptomIds || [])],
+    };
+  }
+  return {
+    disorderIds: [
+      profile.primaryDisorderId,
+      profile.secondaryDisorderId,
+    ].filter(Boolean),
+    symptomIds: [...new Set([
+      ...(profile.primarySymptomIds || []),
+      ...(profile.secondarySymptomIds || []),
+    ])],
+  };
+}
+
+function availableSymptoms(selectedIds = []) {
+  const selected = new Set(selectedIds.filter(Boolean));
+  const active = disorderCatalog.symptomDefinitions();
+  const visible = customDisordersEnabled
+    ? active
+    : active.filter(symptom => symptom.kind !== 'custom');
+  for (const id of selected) {
+    if (visible.some(symptom => symptom.id === id)) continue;
+    const existing = disorderCatalog.findGlobalSymptom({ id });
+    if (existing) visible.push(existing);
+  }
+  return visible.sort((left, right) =>
+    left.displayName.localeCompare(right.displayName, 'en-AU')
+  );
+}
+
+function independentProfileEditor(patient = null) {
+  const sourceProfile = patient?.clinicalProfile || patient?.suggestedProfile;
+  const selected = independentProfileSelections(sourceProfile);
+  const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
+  const migrating = Boolean(
+    patient?.clinicalProfile &&
+    !isIndependentClinicalProfile(patient.clinicalProfile),
+  );
+  const disorderChoices = availableDisorders(selected.disorderIds);
+  const symptomChoices = availableSymptoms(selected.symptomIds);
+  return `<section class="panel"><h2>${patient ? 'Edit clinic-assigned profile' : 'Create patient profile'}</h2>
+    <p class="muted">Clinic staff independently select the patient’s disorders and between 1 and ${maximumIndependentSymptoms} symptoms. A symptom is rated once regardless of how many disorders are selected.</p>
+    ${suggested ? '<div class="notice"><strong>Suggested from the latest accepted check-in.</strong> Review all fields before saving.</div>' : ''}
+    ${migrating ? '<div class="notice"><strong>Build 7 profile migration.</strong> Saving creates a new schema-3 profile revision. The previous nested revision and all historical check-ins remain unchanged.</div>' : ''}
+    <form method="post" action="/admin/enrolments/save-profile" autocomplete="off" id="profileForm">
+      <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
+      <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
+      <input type="hidden" name="schemaVersion" value="3">
+      <input type="hidden" name="profileModel" value="independent-v1">
+      <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient?.displayName || '')}"></div>
+      <h3>Disorders</h3>
+      <p class="muted">Select at least one. Disorders classify the patient; they do not constrain the symptom list.</p>
+      <div class="patient-list" id="disorderChoices">
+        ${disorderChoices.map(disorder => `<label><input type="checkbox" name="disorderIds" value="${html(disorder.id)}" ${selected.disorderIds.includes(disorder.id) ? 'checked' : ''}>${html(disorder.displayName)}${disorder.active ? '' : ' (archived)'}</label>`).join('')}
+      </div>
+      <h3>Symptoms</h3>
+      <p class="muted"><span id="symptomCount">0</span>/${maximumIndependentSymptoms} selected · minimum 1</p>
+      <div class="patient-list" id="symptomChoices">
+        ${symptomChoices.map(symptom => `<label><input type="checkbox" name="symptomIds" value="${html(symptom.id)}" ${selected.symptomIds.includes(symptom.id) ? 'checked' : ''}>${html(symptom.displayName)}${symptom.active ? '' : ' (archived)'}</label>`).join('')}
+      </div>
+      <div class="toolbar" style="margin-top:18px">
+        <button type="submit" name="action" value="save">Save profile</button>
+        <button type="submit" name="action" value="save-and-issue">Save and create enrolment code</button>
+      </div>
+    </form>
+    <script>
+      const symptomInputs = [...document.querySelectorAll('#symptomChoices input')];
+      const disorderInputs = [...document.querySelectorAll('#disorderChoices input')];
+      function updateIndependentCounts(event) {
+        const checked = symptomInputs.filter(input => input.checked);
+        if (checked.length > ${maximumIndependentSymptoms} && event) {
+          event.target.checked = false;
+        }
+        document.getElementById('symptomCount').textContent =
+          symptomInputs.filter(input => input.checked).length;
+      }
+      symptomInputs.forEach(input => input.addEventListener('change', updateIndependentCounts));
+      updateIndependentCounts();
+      document.getElementById('profileForm').addEventListener('submit', event => {
+        const symptomCount = symptomInputs.filter(input => input.checked).length;
+        const disorderCount = disorderInputs.filter(input => input.checked).length;
+        if (disorderCount < 1 || symptomCount < 1 || symptomCount > ${maximumIndependentSymptoms}) {
+          event.preventDefault();
+          alert('Select at least one disorder and between 1 and ${maximumIndependentSymptoms} symptoms.');
+        }
+      });
+    </script>
+  </section>`;
+}
+
+function profileEditor(patient = null, requestedMode = '') {
+  if (!independentProfilesEnabled) return legacyProfileEditor(patient);
+  const canMaintainLegacy = Boolean(
+    patient?.clinicalProfile &&
+    !isIndependentClinicalProfile(patient.clinicalProfile),
+  );
+  return requestedMode === 'legacy' && canMaintainLegacy
+    ? legacyProfileEditor(patient)
+    : independentProfileEditor(patient);
+}
+
 function enrolmentPage({
   issued = null,
   error = '',
   message = '',
   editPatientId = '',
+  profileMode = '',
 } = {}) {
   const patients = enrolmentPatients(readRows());
   const csrfToken = adminCsrfToken();
@@ -1647,6 +1900,7 @@ function enrolmentPage({
     <td>${patient.activeDevices}${patient.observedBuilds ? `<br><span class="muted">${html(patient.observedBuilds)}</span>` : ''}</td>
     <td>
       <a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}">Edit profile</a>
+      ${independentProfilesEnabled && patient.clinicalProfile && !isIndependentClinicalProfile(patient.clinicalProfile) ? `<a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}&profileMode=legacy">Maintain Build 7 profile</a>` : ''}
       ${patient.clinicalProfile ? `<form class="inline-form" method="post" action="/admin/enrolments/issue">
         <input type="hidden" name="csrfToken" value="${csrfToken}">
         <input type="hidden" name="patientId" value="${html(patient.patientId)}">
@@ -1659,7 +1913,7 @@ function enrolmentPage({
       </form>
     </td>
   </tr>`).join('');
-  const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient)}
+  const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient, profileMode)}
   <section class="panel"><h2>Existing clinic identities</h2>
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
     <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
@@ -1671,10 +1925,6 @@ function enrolmentPage({
 function disorderManagementPage({ error = '', message = '' } = {}) {
   const csrfToken = adminCsrfToken();
   const definitions = disorderCatalog.definitions({ includeInactive: true });
-  const symptoms = disorderCatalog.symptomDefinitions({
-    includeInactive: true,
-  });
-  const activeSymptoms = symptoms.filter(symptom => symptom.active);
   const compatibility = identityStore.compatibilitySummary();
   const buildTraffic = Object.entries(compatibility.builds)
     .sort(([left], [right]) => left.localeCompare(right, 'en-AU', {
@@ -1718,30 +1968,54 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
             <button class="${disorder.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${disorder.active ? 'archive' : 'reactivate'}">${disorder.active ? 'Archive' : 'Reactivate'}</button>
           </form>
         </details>`;
-    const symptomChoices = activeSymptoms.map(symptom =>
-      `<label><input type="checkbox" name="symptomIds" value="${html(symptom.id)}" ${disorder.allowedSymptomIds.includes(symptom.id) ? 'checked' : ''}>${html(symptom.displayName)}${symptom.kind === 'custom' ? ' <span class="muted">(custom)</span>' : ''}</label>`
-    ).join('');
-    const availabilityActions = disorder.active
-      ? `<details><summary>Change available symptoms</summary>
-          <form method="post" action="/admin/disorders/set-symptoms" style="min-width:420px;margin-top:10px">
-            <input type="hidden" name="csrfToken" value="${csrfToken}">
-            <input type="hidden" name="disorderId" value="${html(disorder.id)}">
-            <p class="muted">Select at least three. Existing patient profile revisions are not rewritten when this list changes.</p>
-            <div class="patient-list">${symptomChoices}</div>
-            <button type="submit" style="margin-top:10px">Save available symptoms</button>
-          </form>
-        </details>`
-      : '<span class="muted">Archive is not assignable</span>';
     return `<tr>
       <td>${html(disorder.displayName)}</td>
       <td><code>${html(disorder.id)}</code></td>
       <td>${status}</td>
-      <td>${disorder.allowedSymptoms.length}</td>
       <td>Build ${disorder.minimumAppBuild}+</td>
-      <td>${identityActions}<br>${availabilityActions}</td>
+      <td>${identityActions}</td>
     </tr>`;
   }).join('');
-  const symptomRows = symptoms.map(symptom => {
+  const activation = customDisordersEnabled
+    ? '<strong class="good">Build 8-only disorder and symptom assignment is enabled.</strong>'
+    : '<strong class="flag">Build 8-only disorder and symptom assignment remains disabled until Build 8 is available on both stores.</strong>';
+  const body = `${errorNotice}${messageNotice}
+    <section class="panel"><h2>Compatibility traffic</h2>
+      <p><strong>${html(buildTraffic)}</strong></p>
+      <p class="muted">${html(schemaTraffic)}${schemaTraffic ? ' · ' : ''}Canonical-capable active devices: ${compatibility.canonicalDevices}/${compatibility.activeDevices}.</p>
+      <p class="muted">Build 7 and schema 1 remain supported. These observations are evidence for a later compatibility review; they do not automatically retire older handling.</p>
+    </section>
+    <section class="panel"><h2>Disorder catalogue</h2>
+      <p>${activation}</p>
+      <p class="muted">Disorders are maintained independently from symptoms. Build 7 profile revisions retain their historical nested mappings, but Build 8 profiles select disorders and symptoms from separate controlled lists.</p>
+      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section>
+    <section class="panel"><h2>Create a custom disorder</h2>
+      <p class="muted">Use the clinically correct name and retype it independently. Case and spacing variants of existing disorders are rejected.</p>
+      <form method="post" action="/admin/disorders/create" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <div class="toolbar">
+          <div class="field"><label>Exact disorder name</label><input name="displayName" required minlength="3" maxlength="120"></div>
+          <div class="field"><label>Retype exact disorder name</label><input name="confirmation" required minlength="3" maxlength="120"></div>
+          <div class="field"><label>&nbsp;</label><button type="submit">Create catalogue entry</button></div>
+        </div>
+      </form>
+    </section>`;
+  return pageShell('Disorders', body);
+}
+
+function symptomManagementPage({ error = '', message = '' } = {}) {
+  const csrfToken = adminCsrfToken();
+  const symptoms = disorderCatalog.symptomDefinitions({
+    includeInactive: true,
+  });
+  const errorNotice = error
+    ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>`
+    : '';
+  const messageNotice = message
+    ? `<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>${html(message)}</strong></div>`
+    : '';
+  const rows = symptoms.map(symptom => {
     const status = symptom.kind === 'built-in'
       ? 'Built in'
       : symptom.active
@@ -1762,7 +2036,7 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
             <button class="${symptom.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${symptom.active ? 'archive' : 'reactivate'}">${symptom.active ? 'Archive' : 'Reactivate'}</button>
           </form>
         </details>`
-      : '<span class="muted">Remove from individual disorder lists as required</span>';
+      : '<span class="muted">Stable built-in definition</span>';
     return `<tr>
       <td>${html(symptom.displayName)}</td>
       <td><code>${html(symptom.id)}</code></td>
@@ -1771,24 +2045,17 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
       <td>${actions}</td>
     </tr>`;
   }).join('');
-  const activation = customDisordersEnabled
-    ? '<strong class="good">Build 8-only disorder and symptom assignment is enabled.</strong>'
-    : '<strong class="flag">Build 8-only disorder and symptom assignment remains disabled until Build 8 is available on both stores.</strong>';
+  const activation = independentProfilesEnabled
+    ? `<strong class="good">Independent profiles are enabled. Staff may assign between 1 and ${maximumIndependentSymptoms} symptoms.</strong>`
+    : '<strong class="flag">Independent profiles remain disabled during the backend-first Build 8 rollout.</strong>';
   const body = `${errorNotice}${messageNotice}
-    <section class="panel"><h2>Compatibility traffic</h2>
-      <p><strong>${html(buildTraffic)}</strong></p>
-      <p class="muted">${html(schemaTraffic)}${schemaTraffic ? ' · ' : ''}Canonical-capable active devices: ${compatibility.canonicalDevices}/${compatibility.activeDevices}.</p>
-      <p class="muted">Build 7 and schema 1 remain supported. These observations are evidence for a later compatibility review; they do not automatically retire older handling.</p>
-    </section>
-    <section class="panel"><h2>Disorder catalogue</h2>
+    <section class="panel"><h2>Symptom catalogue</h2>
       <p>${activation}</p>
-      <p class="muted">Disorders and symptoms use stable IDs. Changing availability affects future profile edits only; existing profile revisions and submitted records are preserved. A profile still selects exactly three symptoms per disorder.</p>
-      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID</th><th>Status</th><th>Available symptoms</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted">Symptoms are independent clinical definitions and are not nested beneath disorders. A readable canonical ID is created from the original approved name and remains fixed after later display-name corrections. Archiving prevents future assignment without deleting historical references.</p>
+      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID (fixed)</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
-    <section class="panel"><h2>Symptom vocabulary</h2>
-      <p class="muted">Create a symptom once, then add it to the relevant disorder lists above. A custom symptom receives a readable canonical ID from its original approved name (for example, “Postural tremor” becomes <code>postural-tremor</code>). That ID remains fixed if the display name is later corrected, preserving historical joins. Custom symptom names require exact double entry. Archiving prevents future selection but never deletes the stable ID or historical data.</p>
-      <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID (fixed)</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${symptomRows}</tbody></table></div>
-      <h3>Create a custom symptom</h3>
+    <section class="panel"><h2>Create a custom symptom</h2>
+      <p class="muted">Use the clinically correct name and enter it twice. Case, spacing and punctuation variants of existing symptoms are rejected.</p>
       <form method="post" action="/admin/disorders/create-symptom" autocomplete="off">
         <input type="hidden" name="csrfToken" value="${csrfToken}">
         <div class="toolbar">
@@ -1797,23 +2064,16 @@ function disorderManagementPage({ error = '', message = '' } = {}) {
           <div class="field"><label>&nbsp;</label><button type="submit">Create symptom</button></div>
         </div>
       </form>
-    </section>
-    <section class="panel"><h2>Create a custom disorder</h2>
-      <p class="muted">Use the clinically correct name and retype it independently. Case and spacing variants of existing disorders are rejected.</p>
-      <form method="post" action="/admin/disorders/create" autocomplete="off">
-        <input type="hidden" name="csrfToken" value="${csrfToken}">
-        <div class="toolbar">
-          <div class="field"><label>Exact disorder name</label><input name="displayName" required minlength="3" maxlength="120"></div>
-          <div class="field"><label>Retype exact disorder name</label><input name="confirmation" required minlength="3" maxlength="120"></div>
-          <div class="field"><label>&nbsp;</label><button type="submit">Create catalogue entry</button></div>
-        </div>
-      </form>
     </section>`;
-  return pageShell('Disorder catalogue', body);
+  return pageShell('Symptoms', body);
 }
 
 app.get('/admin/disorders',requireAdmin,(req,res)=>{
   res.send(disorderManagementPage());
+});
+
+app.get('/admin/symptoms',requireAdmin,(req,res)=>{
+  res.send(symptomManagementPage());
 });
 
 app.post('/admin/disorders/create',requireAdmin,requireAdminCsrf,(req,res)=>{
@@ -1871,11 +2131,11 @@ app.post('/admin/disorders/create-symptom',requireAdmin,requireAdminCsrf,(req,re
       confirmation: req.body.confirmation,
       actor: adminUser,
     });
-    return res.status(201).send(disorderManagementPage({
-      message: `${created.displayName} was created. Add it to the appropriate disorder symptom list before assigning it to a profile.`,
+    return res.status(201).send(symptomManagementPage({
+      message: `${created.displayName} was created with canonical ID ${created.id}.`,
     }));
   } catch (error) {
-    return res.status(400).send(disorderManagementPage({
+    return res.status(400).send(symptomManagementPage({
       error: error.message,
     }));
   }
@@ -1902,11 +2162,11 @@ app.post('/admin/disorders/update-symptom',requireAdmin,requireAdminCsrf,(req,re
     const refreshedProfiles = action === 'rename'
       ? identityStore.refreshProfilesForSymptom(updated.id)
       : 0;
-    return res.send(disorderManagementPage({
+    return res.send(symptomManagementPage({
       message: `${updated.displayName} was updated.${refreshedProfiles ? ` ${refreshedProfiles} assigned profile(s) received a new revision.` : ''}`,
     }));
   } catch (error) {
-    return res.status(400).send(disorderManagementPage({
+    return res.status(400).send(symptomManagementPage({
       error: error.message,
     }));
   }
@@ -1934,24 +2194,75 @@ app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neuros
 app.get('/admin/enrolments',requireAdmin,(req,res)=>{
   res.send(enrolmentPage({
     editPatientId: String(req.query.editPatientId || '').trim(),
+    profileMode: String(req.query.profileMode || '').trim(),
   }));
 });
 
 app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res)=>{
+  const requestedIndependent =
+    String(req.body.profileModel || '') === 'independent-v1' ||
+    Number(req.body.schemaVersion) === 3;
   try {
     const patientId = String(req.body.patientId || '').trim();
-    const clinicalProfile = normaliseClinicalProfile({
-      primaryDisorderId: req.body.primaryDisorderId,
-      primarySymptomIds: values(req.body.primarySymptomIds),
-      secondaryDisorderId: req.body.secondaryDisorderId,
-      secondarySymptomIds: values(req.body.secondarySymptomIds),
-      // Build 7 form compatibility during the backend-first rollout.
-      primaryDisorder: req.body.primaryDisorder,
-      primarySymptoms: values(req.body.primarySymptoms),
-      secondaryDisorder: req.body.secondaryDisorder,
-      secondarySymptoms: values(req.body.secondarySymptoms),
-    }, { disorderCatalog });
-    if (profileMinimumBuild(clinicalProfile) >= 8 && !customDisordersEnabled) {
+    const existingPatient = patientId
+      ? identityStore.snapshot().patients[patientId]
+      : null;
+    if (requestedIndependent && !independentProfilesEnabled) {
+      throw new Error(
+        'Independent Build 8 profiles are not enabled in production yet.',
+      );
+    }
+    if (
+      independentProfilesEnabled &&
+      !requestedIndependent &&
+      (!existingPatient?.clinicalProfile ||
+        isIndependentClinicalProfile(existingPatient.clinicalProfile))
+    ) {
+      throw new Error(
+        'New Build 8 profiles must use independent disorder and symptom lists.',
+      );
+    }
+    const clinicalProfile = normaliseClinicalProfile(
+      requestedIndependent
+        ? {
+            schemaVersion: 3,
+            disorderIds: values(req.body.disorderIds),
+            symptomIds: values(req.body.symptomIds),
+          }
+        : {
+            primaryDisorderId: req.body.primaryDisorderId,
+            primarySymptomIds: values(req.body.primarySymptomIds),
+            secondaryDisorderId: req.body.secondaryDisorderId,
+            secondarySymptomIds: values(req.body.secondarySymptomIds),
+            // Build 7 form compatibility during the backend-first rollout.
+            primaryDisorder: req.body.primaryDisorder,
+            primarySymptoms: values(req.body.primarySymptoms),
+            secondaryDisorder: req.body.secondaryDisorder,
+            secondarySymptoms: values(req.body.secondarySymptoms),
+          },
+      { disorderCatalog },
+    );
+    const assignedDisorderIds = isIndependentClinicalProfile(clinicalProfile)
+      ? clinicalProfile.disorderIds
+      : [
+          clinicalProfile.primaryDisorderId,
+          clinicalProfile.secondaryDisorderId,
+        ].filter(Boolean);
+    const assignedSymptomIds = isIndependentClinicalProfile(clinicalProfile)
+      ? clinicalProfile.symptomIds
+      : [
+          ...clinicalProfile.primarySymptomIds,
+          ...clinicalProfile.secondarySymptomIds,
+        ];
+    const includesCustomContent =
+      assignedDisorderIds.some(id =>
+        disorderCatalog.findDisorder({ id, includeInactive: true })?.kind ===
+          'custom'
+      ) ||
+      assignedSymptomIds.some(id =>
+        disorderCatalog.findGlobalSymptom({ id })?.kind === 'custom'
+      );
+    if (includesCustomContent && !customDisordersEnabled) {
       throw new Error(
         'Build 8-only disorder or symptom assignment is disabled until Build 8 is available.',
       );
@@ -1959,12 +2270,14 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
     if (profileMinimumBuild(clinicalProfile) >= 8 && patientId) {
       const activeDevices = Object.values(identityStore.snapshot().devices)
         .filter(device =>
-          device.patientId === patientId && !device.revokedAt
+        device.patientId === patientId && !device.revokedAt
         );
       const incompatibleDevices = activeDevices.filter(device =>
         !Number.isInteger(device.lastMobileBuild) ||
         device.lastMobileBuild < 8 ||
-        device.supportsCanonicalDisorders !== true
+        device.supportsCanonicalDisorders !== true ||
+        (isIndependentClinicalProfile(clinicalProfile) &&
+          device.supportsIndependentProfiles !== true)
       );
       if (incompatibleDevices.length) {
         throw new Error(
@@ -1988,16 +2301,19 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
       return res.status(201).send(enrolmentPage({
         issued,
         editPatientId: saved.patientId,
+        profileMode: requestedIndependent ? '' : 'legacy',
       }));
     }
     return res.send(enrolmentPage({
       message: `Profile saved for ${saved.displayName}. Enrolled phones will receive revision ${saved.clinicalProfile.revision}.`,
       editPatientId: saved.patientId,
+      profileMode: requestedIndependent ? '' : 'legacy',
     }));
   } catch (error) {
     return res.status(400).send(enrolmentPage({
       error: error.message,
       editPatientId: String(req.body.patientId || '').trim(),
+      profileMode: requestedIndependent ? '' : 'legacy',
     }));
   }
 });
@@ -2145,7 +2461,7 @@ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
   );
   const rows=allRows.filter(r=>
     (!selectedId||patientKey(r)===selectedId)&&
-    (!selectedDisorderId||disorderKey(r)===selectedDisorderId)
+    rowHasDisorder(r,selectedDisorderId)
   );
   const doc=new PDFDocument({margin:48});
   res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurosol-clinical-report.pdf"');doc.pipe(res);
@@ -2173,7 +2489,7 @@ app.get('/admin',requireAdmin,(req,res)=>{
   const calendarDays=[30,60,90].includes(Number(req.query.calendarDays))?Number(req.query.calendarDays):30;
   const requestedMetric=String(req.query.metric||'wellness');
   const metric=requestedMetric==='symptom'||requestedMetric==='wellness'||requestedMetric.startsWith('symptom:')?requestedMetric:'wellness';
-  const filtered=rows.filter(r=>(!patientId||patientKey(r)===patientId)&&(!disorderId||disorderKey(r)===disorderId));
+  const filtered=rows.filter(r=>(!patientId||patientKey(r)===patientId)&&rowHasDisorder(r,disorderId));
   const series=patientSeries(filtered,disorderId,metric,aggregation,patientId?[patientId]:[],directory);
   const dates=unique(filtered,'Date'), symptoms=unique(filtered,'Symptom');
   const avgSym=round1(mean(filtered.map(r=>r.ScoreNumber)));
@@ -2185,7 +2501,7 @@ app.get('/admin',requireAdmin,(req,res)=>{
   <form class="panel toolbar"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Calendar range</label><select name="calendarDays">${[30,60,90].map(days=>`<option value="${days}" ${days===calendarDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
   <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Weekly aggregation is the default to reduce day-to-day noise. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
   <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,calendarDays)}</section>
-  <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div><a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(r.Disorder)}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join('')}</tbody></table></div></section>`;
+  <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div><a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(rowDisorderLabel(r))}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join('')}</tbody></table></div></section>`;
   res.send(pageShell('Patient review',body));
 });
 
@@ -2194,7 +2510,7 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
   const disorderId=resolveDisorderKey(rows,req.query.disorderId,req.query.disorder)||disorders[0]?.id||'', metric=req.query.metric==='symptom'?'symptom':'wellness';
   const disorder=disorderLabel(rows,disorderId);
   const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'weekly';
-  const allPatients=[...new Set(rows.filter(r=>disorderKey(r)===disorderId).map(patientKey).filter(Boolean))]
+  const allPatients=[...new Set(rows.filter(r=>rowHasDisorder(r,disorderId)).map(patientKey).filter(Boolean))]
     .sort((a,b)=>(directory.get(a)?.label||a).localeCompare(directory.get(b)?.label||b));
   const selected=String(req.query.patients||'').split('|').filter(x=>allPatients.includes(x)).slice(0,10);
   const cohort=patientSeries(rows,disorderId,metric,aggregation,[],directory);

@@ -14,6 +14,7 @@ process.env.REVIEW_ENROLMENT_CODE = 'R3VW4CC3SS99';
 process.env.REVIEW_PATIENT_ID_PREFIX = 'pt-review-google-play';
 process.env.REVIEW_DISPLAY_NAME = 'Google Play Review';
 process.env.ENABLE_CUSTOM_DISORDERS = 'true';
+process.env.ENABLE_INDEPENDENT_PROFILES = 'false';
 // The main suite lowers this only to preserve regression coverage for queued
 // historical Build 6 data. Production startup separately enforces Build 7.
 process.env.MIN_SUPPORTED_MOBILE_BUILD = '6';
@@ -314,10 +315,13 @@ test('Build 7 CSV migration backs up and appends canonical IDs', () => {
     );
     assert.equal(result.status, 0, result.stderr);
     const migrated = fs.readFileSync(csvPath, 'utf8').trim().split('\n');
-    assert.match(migrated[0], /,DisorderId,SymptomId,PayloadSchemaVersion$/);
-    assert.match(migrated[1], /,migraine,headache,1$/);
-    assert.match(migrated[2], /,dysautonomia,sweating-changes,1$/);
-    assert.match(migrated[3], /,migraine,visual-aura,1$/);
+    assert.match(
+      migrated[0],
+      /,DisorderId,SymptomId,PayloadSchemaVersion,ProfileDisorderIds,ProfileDisorders$/,
+    );
+    assert.match(migrated[1], /,migraine,headache,1,,$/);
+    assert.match(migrated[2], /,dysautonomia,sweating-changes,1,,$/);
+    assert.match(migrated[3], /,migraine,visual-aura,1,,$/);
     assert.equal(
       fs.readdirSync(migrationDir)
         .filter(name => name.startsWith('symptom_entries.backup-')).length,
@@ -480,6 +484,46 @@ test('Build 8-only disorder and symptom assignment remains gated until explicitl
   } finally {
     fs.rmSync(gateDir, { recursive: true, force: true });
   }
+});
+
+test('independent profile assignment remains gated during predeployment', async () => {
+  const page = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  const csrfToken = (await page.text())
+    .match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+  const form = new URLSearchParams({
+    csrfToken,
+    displayName: 'Premature Independent Profile',
+    schemaVersion: '3',
+    profileModel: 'independent-v1',
+    action: 'save',
+  });
+  form.append('disorderIds', 'migraine');
+  form.append('symptomIds', 'headache');
+  const response = await fetch(
+    `${baseUrl}/admin/enrolments/save-profile`,
+    {
+      method: 'POST',
+      headers: {
+        ...adminHeaders(),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: form,
+    },
+  );
+  assert.equal(response.status, 400);
+  assert.match(
+    await response.text(),
+    /Independent Build 8 profiles are not enabled in production yet/,
+  );
+  assert.equal(
+    Object.values(identityStore.snapshot().patients).some(
+      patient => patient.displayName === 'Premature Independent Profile',
+    ),
+    false,
+  );
 });
 
 test('rejects uploads from a device that is not enrolled', async () => {
@@ -1108,7 +1152,7 @@ test('custom profiles require Build 8 and submissions receive canonical IDs', as
   );
   assert.match(
     csv.split('\n')[0],
-    /,DisorderId,SymptomId,PayloadSchemaVersion$/,
+    /,DisorderId,SymptomId,PayloadSchemaVersion,ProfileDisorderIds,ProfileDisorders$/,
   );
   assert.equal(
     csv.split('\n').filter(line => line.includes('NS-custom-canonical'))
@@ -1193,7 +1237,10 @@ test('clinic profile synchronises and controls Build 7 submissions', async () =>
     line.includes('NS-clinic-profile-accepted')
   );
   assert.equal(build7Rows.length, 3);
-  assert.equal(build7Rows.every(line => /,migraine,[^,]+,1$/.test(line)), true);
+  assert.equal(
+    build7Rows.every(line => /,migraine,[^,]+,1,,$/.test(line)),
+    true,
+  );
   const observedDevice = Object.values(identityStore.snapshot().devices)
     .find(device => device.patientId === identity.patientId);
   assert.equal(observedDevice.lastMobileBuild, 7);
@@ -1232,7 +1279,7 @@ test('schema 2 is additive and requires a canonical-capable Build 8 client', asy
   assert.equal((await build7Rejected.json()).minimumBuild, 8);
 
   const invalidSchema = structuredClone(body);
-  invalidSchema.schemaVersion = 3;
+  invalidSchema.schemaVersion = 4;
   const invalidResponse = await post(
     invalidSchema,
     identity.accessToken,

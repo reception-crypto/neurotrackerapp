@@ -327,7 +327,162 @@ test('device compatibility observations retain Build 7 traffic evidence', () => 
       builds: { 7: 1 },
       payloadSchemas: { 1: 1 },
       canonicalDevices: 0,
+      independentProfileDevices: 0,
     });
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('independent profiles require an explicitly capable Build 8 device', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+    });
+    const saved = identityStore.saveClinicalProfile({
+      patientId: 'pt-independent-profile',
+      displayName: 'Independent Profile',
+      clinicalProfile: {
+        schemaVersion: 3,
+        disorderIds: ['migraine', 'dysautonomia'],
+        symptomIds: ['headache', 'weakness', 'pain'],
+      },
+    });
+    assert.equal(saved.clinicalProfile.schemaVersion, 3);
+    assert.equal(saved.clinicalProfile.revision, 1);
+
+    const issued = identityStore.issueEnrolmentCode({
+      patientId: saved.patientId,
+      displayName: saved.displayName,
+      requireClinicalProfile: true,
+    });
+    const missingCapability = identityStore.redeemEnrolmentCode(issued.code, {
+      supportedMobileBuild: 8,
+      supportsClinicManagedProfile: true,
+      supportsCanonicalDisorders: true,
+      supportsIndependentProfiles: false,
+    });
+    assert.deepEqual(missingCapability, {
+      status: 'upgrade_required',
+      requiredBuild: 8,
+    });
+
+    const enrolled = identityStore.redeemEnrolmentCode(issued.code, {
+      supportedMobileBuild: 8,
+      supportsClinicManagedProfile: true,
+      supportsCanonicalDisorders: true,
+      supportsIndependentProfiles: true,
+    });
+    assert.equal(enrolled.status, 'ok');
+    assert.equal(enrolled.clinicalProfile.schemaVersion, 3);
+    assert.equal(
+      identityStore.recordPayloadSchema(enrolled.accessToken, 3),
+      true,
+    );
+    assert.equal(
+      identityStore.compatibilitySummary().independentProfileDevices,
+      1,
+    );
+    assert.equal(identityStore.compatibilitySummary().payloadSchemas[3], 1);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('independent profile edits create revisions without rewriting history', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+    });
+    const first = identityStore.saveClinicalProfile({
+      patientId: 'pt-independent-revision',
+      displayName: 'Independent Revision',
+      clinicalProfile: {
+        schemaVersion: 3,
+        disorderIds: ['migraine'],
+        symptomIds: ['headache', 'nausea'],
+      },
+    });
+    const second = identityStore.saveClinicalProfile({
+      patientId: first.patientId,
+      displayName: first.displayName,
+      clinicalProfile: {
+        schemaVersion: 3,
+        disorderIds: ['migraine', 'dysautonomia'],
+        symptomIds: ['headache', 'nausea', 'weakness'],
+      },
+    });
+    assert.equal(second.clinicalProfile.revision, 2);
+    const patient = identityStore.snapshot().patients[first.patientId];
+    assert.equal(patient.clinicalProfileHistory.length, 2);
+    assert.deepEqual(
+      patient.clinicalProfileHistory[0].disorderIds,
+      ['migraine'],
+    );
+    assert.deepEqual(
+      patient.clinicalProfileHistory[0].symptomIds,
+      ['headache', 'nausea'],
+    );
+    assert.deepEqual(
+      patient.clinicalProfile.disorderIds,
+      ['migraine', 'dysautonomia'],
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('independent profile renames preserve old labels across migration', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const customSymptom = disorderCatalog.createCustomSymptom({
+      displayName: 'Limb heaviness',
+      confirmation: 'Limb heaviness',
+    });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+    });
+    const saved = identityStore.saveClinicalProfile({
+      patientId: 'pt-independent-rename',
+      displayName: 'Independent Rename',
+      clinicalProfile: {
+        schemaVersion: 3,
+        disorderIds: ['migraine'],
+        // Schema 3 deliberately does not require adding the symptom to the
+        // legacy Migraine availability map.
+        symptomIds: ['headache', customSymptom.id],
+      },
+    });
+    disorderCatalog.updateCustomSymptom({
+      id: customSymptom.id,
+      displayName: 'Heavy limb sensation',
+      confirmation: 'Heavy limb sensation',
+    });
+    assert.equal(identityStore.refreshProfilesForSymptom(customSymptom.id), 1);
+    assert.equal(identityStore.migrateCanonicalProfiles().migrated, false);
+
+    const patient = identityStore.snapshot().patients[saved.patientId];
+    assert.deepEqual(
+      patient.clinicalProfile.symptoms,
+      ['Headache', 'Heavy limb sensation'],
+    );
+    assert.deepEqual(
+      patient.clinicalProfileHistory[0].symptoms,
+      ['Headache', 'Limb heaviness'],
+    );
+    assert.equal(patient.clinicalProfileHistory[0].revision, 1);
+    assert.equal(patient.clinicalProfile.revision, 2);
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }

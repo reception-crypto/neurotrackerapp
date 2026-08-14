@@ -28,6 +28,7 @@ $expectedSettings = @{
     MIN_SUPPORTED_MOBILE_BUILD = '7'
     LATEST_MOBILE_BUILD = '7'
     ENABLE_CUSTOM_DISORDERS = 'false'
+    ENABLE_INDEPENDENT_PROFILES = 'false'
 }
 foreach ($expected in $expectedSettings.GetEnumerator()) {
     if (
@@ -93,6 +94,7 @@ try {
         LatestBuild = 7
         Build7Supported = $true
         CustomDisordersEnabled = $false
+        IndependentProfilesEnabled = $false
         PatientCount = [int]$snapshot.patientCount
         ActiveDeviceCount = [int]$snapshot.activeDeviceCount
         SymptomCsvRows = [int]$snapshot.csvDataRowCount

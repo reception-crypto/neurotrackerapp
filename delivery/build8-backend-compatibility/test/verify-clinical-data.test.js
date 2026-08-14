@@ -26,6 +26,18 @@ function canonicalProfile() {
   };
 }
 
+function independentProfile() {
+  return {
+    schemaVersion: 3,
+    disorderIds: ['migraine', 'dysautonomia'],
+    disorders: ['Migraine', 'Dysautonomia'],
+    symptomIds: ['headache', 'vertigo', 'weakness', 'pain'],
+    symptoms: ['Headache', 'Vertigo', 'Weakness', 'Pain'],
+    minimumAppBuild: 8,
+    revision: 2,
+  };
+}
+
 function writeFixture(directory, profile, columns = requiredCsvColumns) {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, 'identity_store.json'), JSON.stringify({
@@ -66,6 +78,36 @@ test('snapshot contains counts but no patient identity fields', () => {
     assert.equal(snapshot.canonicalCurrentProfileCount, 1);
     assert.equal(JSON.stringify(snapshot).includes('Synthetic Patient'), false);
     assert.equal(JSON.stringify(snapshot).includes('pt-test'), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('snapshot accepts an independent profile with at most six symptoms', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-probe-'));
+  try {
+    writeFixture(directory, independentProfile());
+    const snapshot = snapshotData(directory);
+    assert.equal(snapshot.currentProfileCount, 1);
+    assert.equal(snapshot.canonicalCurrentProfileCount, 1);
+    assert.doesNotThrow(() => compareAfterMigration(snapshot, snapshot));
+
+    const invalid = independentProfile();
+    invalid.symptomIds = [
+      'headache',
+      'nausea',
+      'vertigo',
+      'dizziness',
+      'pain',
+      'weakness',
+      'fatigue',
+    ];
+    writeFixture(directory, invalid);
+    const invalidSnapshot = snapshotData(directory);
+    assert.throws(
+      () => compareAfterMigration(invalidSnapshot, invalidSnapshot),
+      /current profile lacks canonical identifiers/,
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

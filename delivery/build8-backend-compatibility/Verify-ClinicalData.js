@@ -19,6 +19,8 @@ const requiredCsvColumns = [
   'DisorderId',
   'SymptomId',
   'PayloadSchemaVersion',
+  'ProfileDisorderIds',
+  'ProfileDisorders',
 ];
 
 const legacyCustomSymptomIdPattern =
@@ -73,6 +75,26 @@ function readJson(filePath, label) {
 
 function canonicalProfile(profile) {
   if (!profile || typeof profile !== 'object') return false;
+  if (Number(profile.schemaVersion) === 3) {
+    return Array.isArray(profile.disorderIds) &&
+      profile.disorderIds.length >= 1 &&
+      new Set(profile.disorderIds).size === profile.disorderIds.length &&
+      profile.disorderIds.every(id =>
+        String(id || '').trim() && !String(id).startsWith('legacy:')) &&
+      Array.isArray(profile.disorders) &&
+      profile.disorders.length === profile.disorderIds.length &&
+      profile.disorders.every(name => String(name || '').trim()) &&
+      Array.isArray(profile.symptomIds) &&
+      profile.symptomIds.length >= 1 &&
+      profile.symptomIds.length <= 6 &&
+      new Set(profile.symptomIds).size === profile.symptomIds.length &&
+      profile.symptomIds.every(id =>
+        String(id || '').trim() && !String(id).startsWith('legacy:')) &&
+      Array.isArray(profile.symptoms) &&
+      profile.symptoms.length === profile.symptomIds.length &&
+      profile.symptoms.every(name => String(name || '').trim()) &&
+      Number(profile.minimumAppBuild) >= 8;
+  }
   if (Number(profile.schemaVersion) < 2) return false;
   if (!String(profile.primaryDisorderId || '').trim()) return false;
   if (String(profile.primaryDisorderId).startsWith('legacy:')) return false;

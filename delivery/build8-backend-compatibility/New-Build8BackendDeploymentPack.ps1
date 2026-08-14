@@ -75,8 +75,8 @@ if ($sourceStatus.Count -ne 0) {
 $packageJson = Get-Content `
     -LiteralPath (Join-Path $backendRoot 'package.json') `
     -Raw | ConvertFrom-Json
-if ($packageJson.version -ne '0.8.3') {
-    throw "Expected backend version 0.8.3, found $($packageJson.version)."
+if ($packageJson.version -ne '0.9.0') {
+    throw "Expected backend version 0.9.0, found $($packageJson.version)."
 }
 
 if (-not $SkipTests) {
@@ -182,12 +182,13 @@ try {
     $release = [ordered]@{
         releaseFormat = 1
         product = 'NeuroSol Symptom Diary'
-        backendVersion = '0.8.3'
+        backendVersion = '0.9.0'
         sourceCommit = $sourceCommit
         generatedAt = (Get-Date).ToUniversalTime().ToString('o')
         minimumMobileBuild = 7
         latestMobileBuildDuringBackendPredeployment = 7
         customDisordersEnabledDuringBackendPredeployment = $false
+        independentProfilesEnabledDuringBackendPredeployment = $false
     }
     $release | ConvertTo-Json -Depth 5 |
         Set-Content `

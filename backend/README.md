@@ -25,16 +25,24 @@ Production must use:
 - `ENABLE_CUSTOM_DISORDERS=false` until Build 8 is available from both stores.
   This gate also prevents a Build 8-only custom symptom from being assigned to
   a patient profile during the compatibility rollout.
+- `ENABLE_INDEPENDENT_PROFILES=false` during backend predeployment. Enable it
+  only after Build 8 is downloadable from both stores.
 
 Do not replace the existing production `IDENTITY_SECRET`: doing so invalidates
 every device credential and unused enrolment code.
 
 ## Create and maintain a patient
 
+While `ENABLE_INDEPENDENT_PROFILES=false`, the portal intentionally retains the
+legacy Build 7 editor. The following workflow becomes active only after the
+Build 8 mobile releases are live and the gate is enabled.
+
 1. Open `/admin/enrolments`.
 2. Enter the clinic display name.
-3. Select a primary disorder and exactly three symptoms.
-4. Optionally select a distinct second disorder and exactly three symptoms.
+3. Select one or more disorders from the controlled disorder list.
+4. Select between one and six symptoms independently from the controlled
+   symptom list. A symptom is rated once even when several disorders are
+   selected.
 5. Choose **Save and create enrolment code**.
 6. Copy the one-time HTTPS link or code and send it through the clinic’s
    existing communication system.
@@ -45,15 +53,18 @@ name or clinical details.
 
 Use **Edit profile** for later clinical changes. The revision increments only
 when disorders or symptoms change; a name-only correction keeps the same
-clinical revision. Enrolled Build 7 phones fetch the latest profile.
+clinical revision. Converting a nested Build 7 profile to the independent model
+creates a new schema-3 revision and retains every earlier revision unchanged.
+The portal blocks that conversion while the patient still has an active device
+that has not reported the Build 8 independent-profile capability.
 
 ## Build 8 disorder and symptom catalogue
 
-Disorder definitions and the controlled symptom vocabulary are managed at
-`/admin/disorders`. Staff can change which active symptoms are offered for
-each disorder without rewriting existing patient profile revisions. A removed
-choice therefore disappears from future profile edits while an already
-assigned patient can continue submitting against the historical revision.
+Disorder definitions are managed at `/admin/disorders`; symptom definitions are
+managed separately at `/admin/symptoms`. Schema-3 profiles can combine any
+active disorders with any one to six active symptoms. There is no
+symptom-to-disorder mapping in the new model. The former nested mappings remain
+stored and interpreted only for Build 7 profiles and historical revisions.
 
 Staff can also create a new symptom by typing its exact clinical name twice.
 Case, whitespace, punctuation-normalised, and dash variants of existing names
@@ -61,10 +72,8 @@ are rejected. The new symptom receives an immutable, readable canonical ID
 derived from its original approved name (for example, `Postural tremor`
 becomes `postural-tremor`) and requires Build 8 when selected in a patient
 profile. If two distinct names collapse to the same machine-safe slug, a short
-uniqueness suffix is added. It is not automatically added to any existing
-disorder; staff explicitly add it to the appropriate disorder symptom list. A
-custom disorder initially receives the active controlled symptom vocabulary
-and can then be narrowed in the same way.
+uniqueness suffix is added. It immediately becomes an independent catalogue
+choice; it is not nested under a disorder.
 
 Custom symptoms and disorders are never hard-deleted. Archive them to prevent
 future selection. Reactivation restores their previous stable ID and disorder
@@ -94,13 +103,14 @@ overwriting the source file.
 Safe rollout order:
 
 1. Deploy this backend with `LATEST_MOBILE_BUILD=7`,
-   `MIN_SUPPORTED_MOBILE_BUILD=7`, and `ENABLE_CUSTOM_DISORDERS=false`.
+   `MIN_SUPPORTED_MOBILE_BUILD=7`, `ENABLE_CUSTOM_DISORDERS=false`, and
+   `ENABLE_INDEPENDENT_PROFILES=false`.
 2. Confirm health, existing Build 7 profile sync, submissions, portal reports,
    and migration backups.
 3. Release Build 8 on Google Play and the App Store.
-4. After both releases are downloadable, set `LATEST_MOBILE_BUILD=8` and then
-   `ENABLE_CUSTOM_DISORDERS=true`. Keep
-   `MIN_SUPPORTED_MOBILE_BUILD=7`.
+4. After both releases are downloadable, set `LATEST_MOBILE_BUILD=8`, then
+   enable `ENABLE_INDEPENDENT_PROFILES=true` and
+   `ENABLE_CUSTOM_DISORDERS=true`. Keep `MIN_SUPPORTED_MOBILE_BUILD=7`.
 
 Build 7 remains a supported production client. The mobile configuration route
 advertises Build 7 as the latest compatible build to Build 7 because that app
@@ -108,13 +118,13 @@ treats `latestBuild` as a mandatory update. Build 8 clients see Build 8. This
 prevents a nominal “latest” value from accidentally disabling the public Build
 7 app.
 
-A profile containing a custom disorder or custom symptom requires Build 8 and the
-`X-NeuroSol-Disorders: canonical-v1` capability header. An older client receives
-HTTP `426` without consuming the one-time code. Existing Build 7 patients using
-built-in disorders continue normally. Do not assign a custom disorder to an
-existing patient until the portal shows that patient’s active device has been
-observed on Build 8. The profile editor enforces this: any active Build 7 or
-unconfirmed device blocks a custom assignment. Revoke a genuinely obsolete
+A profile containing a custom disorder or custom symptom requires Build 8 and
+the `X-NeuroSol-Disorders: canonical-v1` capability header. A schema-3 profile
+also requires `X-NeuroSol-Profile-Model: independent-v1`. An older client
+receives HTTP `426` without consuming the one-time code. Existing Build 7
+patients continue normally. Do not convert an existing profile until every
+active device for that patient has been observed with the required Build 8
+capabilities. The profile editor enforces this. Revoke a genuinely obsolete
 device rather than bypassing the safeguard.
 
 For a reinstall or replacement phone, use **New device code** on the existing
@@ -147,6 +157,21 @@ symptom IDs. Missing schema-version data always follows the Build 7/schema 1
 path, including when sent by a newer client. Unknown schema versions are
 rejected.
 
+Build 8 independent profiles use:
+
+```text
+X-NeuroSol-Build: 8
+X-NeuroSol-Profile: clinic-managed-v1
+X-NeuroSol-Disorders: canonical-v1
+X-NeuroSol-Profile-Model: independent-v1
+```
+
+Schema 3 payloads declare `schemaVersion: 3` and contain between one and six
+unique `Independent` symptom records. The records carry canonical symptom IDs
+and no per-row disorder. The assigned profile’s disorder IDs and display-name
+snapshots are stored once per row in the additive `ProfileDisorderIds` and
+`ProfileDisorders` columns for filtering and auditability.
+
 Unsupported global requests receive HTTP `426` with `app_update_required`.
 Production refuses to start if `MIN_SUPPORTED_MOBILE_BUILD` is anything other
 than 7. A patient-specific profile containing a custom disorder may still
@@ -163,6 +188,8 @@ automatically.
 - Patient review: `/admin`
 - Population analytics: `/admin/population`
 - Profile and enrolment administration: `/admin/enrolments`
+- Controlled disorder list: `/admin/disorders`
+- Controlled symptom list: `/admin/symptoms`
 - Backed-up patient deletion: `/admin/patients`
 - CSV export: `/admin/export.csv`
 - Health: `/health`
@@ -171,9 +198,10 @@ automatically.
 PatientId is the patient grouping, filtering, daily uniqueness, and deletion
 key. The clinic-stored name is only a display label. `DisorderId` and
 `SymptomId` are the canonical clinical grouping keys; `Disorder` and `Symptom`
-remain human-readable snapshots. `ProfileRevision`, `DisorderId`, and
-`SymptomId` remain present, and `PayloadSchemaVersion` records whether the
-accepted payload used the Build 7/schema 1 or Build 8/schema 2 contract.
+remain human-readable snapshots for legacy rows. `ProfileRevision`,
+`DisorderId`, and `SymptomId` remain present. `PayloadSchemaVersion` records
+whether the accepted payload used schema 1, 2, or 3; schema-3 rows additionally
+carry `ProfileDisorderIds` and `ProfileDisorders`.
 
 The runtime directory contains `symptom_entries.csv`,
 `identity_store.json`, `disorder_catalog.json`, migration backups, and deletion

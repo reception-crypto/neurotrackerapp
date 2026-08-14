@@ -397,7 +397,8 @@ function Get-NeuroSolMobileConfig {
     param(
         [Parameter(Mandatory = $true)][string]$BaseUri,
         [Parameter(Mandatory = $true)][int]$Build,
-        [switch]$Canonical
+        [switch]$Canonical,
+        [switch]$Independent
     )
 
     $headers = @{
@@ -407,6 +408,10 @@ function Get-NeuroSolMobileConfig {
     }
     if ($Canonical) {
         $headers['X-NeuroSol-Disorders'] = 'canonical-v1'
+    }
+    if ($Independent) {
+        $headers['X-NeuroSol-Disorders'] = 'canonical-v1'
+        $headers['X-NeuroSol-Profile-Model'] = 'independent-v1'
     }
     return Invoke-RestMethod `
         -Uri "$($BaseUri.TrimEnd('/'))/api/mobile-config" `
@@ -421,7 +426,8 @@ function Assert-NeuroSolCompatibilityResponses {
     $health = Wait-NeuroSolHealth -BaseUri $BaseUri -TimeoutSeconds 30
     if (
         [int]$health.disorderCatalogVersion -ne 3 -or
-        $health.customDisordersEnabled -ne $false
+        $health.customDisordersEnabled -ne $false -or
+        $health.independentProfilesEnabled -ne $false
     ) {
         throw "Unexpected Build 8 health configuration at $BaseUri."
     }
@@ -434,7 +440,10 @@ function Assert-NeuroSolCompatibilityResponses {
         $build7.clinicManagedProfiles -ne $true -or
         [int]$build7.disorderCatalogVersion -ne 3 -or
         [int]$build7.preferredPayloadSchemaVersion -ne 1 -or
-        $build7.customDisordersEnabled -ne $false
+        $build7.independentProfileModel -ne $true -or
+        $build7.customDisordersEnabled -ne $false -or
+        $build7.independentProfilesEnabled -ne $false -or
+        [int]$build7.maximumProfileSymptoms -ne 6
     ) {
         throw "Build 7 compatibility verification failed at $BaseUri."
     }
@@ -449,9 +458,27 @@ function Assert-NeuroSolCompatibilityResponses {
         [int]$build8.disorderCatalogVersion -ne 3 -or
         [int]$build8.preferredPayloadSchemaVersion -ne 2 -or
         $build8.canonicalDisorders -ne $true -or
+        $build8.independentProfileModel -ne $true -or
+        $build8.independentProfilesEnabled -ne $false -or
+        [int]$build8.maximumProfileSymptoms -ne 6 -or
         $build8.customDisordersEnabled -ne $false
     ) {
         throw "Build 8 compatibility-layer verification failed at $BaseUri."
+    }
+
+    $independentBuild8 = Get-NeuroSolMobileConfig `
+        -BaseUri $BaseUri `
+        -Build 8 `
+        -Independent
+    if (
+        [int]$independentBuild8.minimumBuild -ne 7 -or
+        [int]$independentBuild8.latestBuild -ne 7 -or
+        [int]$independentBuild8.preferredPayloadSchemaVersion -ne 2 -or
+        $independentBuild8.independentProfileModel -ne $true -or
+        $independentBuild8.independentProfilesEnabled -ne $false -or
+        [int]$independentBuild8.maximumProfileSymptoms -ne 6
+    ) {
+        throw "Independent-profile predeployment gate failed at $BaseUri."
     }
 }
 

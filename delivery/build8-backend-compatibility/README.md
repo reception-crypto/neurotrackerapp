@@ -1,11 +1,12 @@
 # Build 8 compatible backend deployment
 
-This package deploys backend `0.8.3` before either Build 8 mobile app is
+This package deploys backend `0.9.0` before either Build 8 mobile app is
 released. It keeps the public Build 7 app fully supported:
 
 - `MIN_SUPPORTED_MOBILE_BUILD=7`
 - `LATEST_MOBILE_BUILD=7`
 - `ENABLE_CUSTOM_DISORDERS=false`
+- `ENABLE_INDEPENDENT_PROFILES=false`
 - custom symptoms may be prepared in the catalogue, but Build 8-only profile
   assignments remain gated
 - new custom symptom IDs are readable, immutable slugs derived from the
@@ -13,6 +14,8 @@ released. It keeps the public Build 7 app fully supported:
   migrated with aliases and an audit event
 - payloads without `schemaVersion` remain Build 7/schema 1
 - `PatientId` and `ProfileRevision` remain authoritative
+- the new schema-3 model supports independently selected disorders and between
+  one and six unique symptoms, but cannot be assigned while its gate is off
 
 It does not contain `.env`, credentials, patient data, `node_modules`, or any
 mobile binary. It does not download packages on the terminal server.
@@ -73,8 +76,8 @@ The deployment:
 4. stops `NeuroSolBackend` for a consistent snapshot;
 5. backs up source, `.env`, and the complete clinical data directory;
 6. preserves `IDENTITY_SECRET`, `ADMIN_PASSWORD`, and all other settings;
-7. locks minimum/latest mobile build to 7 and Build 8-only catalogue
-   assignments off;
+7. locks minimum/latest mobile build to 7 and both Build 8-only profile gates
+   off;
 8. starts the new backend and runs the canonical migrations;
 9. proves patient, device, profile-history, and CSV row counts did not change;
 10. verifies local and public HTTPS responses for Build 7 and Build 8 headers.
@@ -111,7 +114,8 @@ Before any Build 8 mobile release:
    submission for the same PatientId/date is rejected.
 5. Confirm built-in disorder filters, patient history, CSV export, and PDF
    output still work.
-6. Leave Build 8-only custom disorder/symptom assignments disabled.
+6. Leave Build 8-only custom disorder/symptom assignments and independent
+   profiles disabled.
 
 Record the backup path printed by deployment and keep it until Build 7 and
 Build 8 traffic has been observed safely in production.

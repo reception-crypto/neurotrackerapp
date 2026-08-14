@@ -6,6 +6,9 @@ const {
 } = require('./disorder_catalog');
 
 const symptomCatalog = builtInSymptomCatalog;
+const independentProfileSchemaVersion = 3;
+const minimumIndependentSymptoms = 1;
+const maximumIndependentSymptoms = 6;
 
 const reviewClinicalProfile = Object.freeze({
   primaryDisorder: 'Migraine',
@@ -112,6 +115,109 @@ function normaliseTrack({
   };
 }
 
+function isIndependentClinicalProfile(profile = {}) {
+  return Boolean(profile) &&
+    Number(profile.schemaVersion) === independentProfileSchemaVersion;
+}
+
+function normaliseIndependentClinicalProfile(
+  input = {},
+  {
+    disorderCatalog = staticDisorderCatalog,
+    includeInactive = false,
+    allowHistoricalSymptoms = false,
+  } = {},
+) {
+  const submittedDisorderIds = normaliseStrings(input.disorderIds);
+  const submittedDisorderNames = normaliseStrings(input.disorders);
+  if (!submittedDisorderIds.length && !submittedDisorderNames.length) {
+    throw new Error('Select at least one disorder.');
+  }
+  if (
+    submittedDisorderIds.length &&
+    submittedDisorderNames.length &&
+    submittedDisorderIds.length !== submittedDisorderNames.length
+  ) {
+    throw new Error('Disorder identifiers and names do not match.');
+  }
+
+  const disorderCount = submittedDisorderIds.length ||
+    submittedDisorderNames.length;
+  const selectedDisorders = [];
+  for (let index = 0; index < disorderCount; index++) {
+    const disorder = disorderCatalog.findDisorder({
+      id: submittedDisorderIds[index] || '',
+      displayName: submittedDisorderNames[index] || '',
+      includeInactive,
+    });
+    if (!disorder || (!includeInactive && disorder.active === false)) {
+      throw new Error('A selected disorder is not available.');
+    }
+    selectedDisorders.push(disorder);
+  }
+  if (
+    new Set(selectedDisorders.map(item => item.id)).size !==
+    selectedDisorders.length
+  ) {
+    throw new Error('Each selected disorder must be unique.');
+  }
+
+  const submittedSymptomIds = normaliseStrings(input.symptomIds);
+  const submittedSymptomNames = normaliseStrings(input.symptoms);
+  const symptomCount = submittedSymptomIds.length || submittedSymptomNames.length;
+  if (
+    symptomCount < minimumIndependentSymptoms ||
+    symptomCount > maximumIndependentSymptoms
+  ) {
+    throw new Error(
+      `Select between ${minimumIndependentSymptoms} and ` +
+      `${maximumIndependentSymptoms} symptoms.`,
+    );
+  }
+  if (
+    submittedSymptomIds.length &&
+    submittedSymptomNames.length &&
+    submittedSymptomIds.length !== submittedSymptomNames.length
+  ) {
+    throw new Error('Symptom identifiers and names do not match.');
+  }
+
+  const selectedSymptoms = [];
+  for (let index = 0; index < symptomCount; index++) {
+    const symptom = disorderCatalog.findGlobalSymptom({
+      id: submittedSymptomIds[index] || '',
+      displayName: submittedSymptomNames[index] || '',
+    });
+    const available = symptom && (
+      symptom.active !== false && symptom.kind !== 'historical' ||
+      allowHistoricalSymptoms || includeInactive
+    );
+    if (!available) {
+      throw new Error('A selected symptom is not available.');
+    }
+    selectedSymptoms.push(symptom);
+  }
+  if (
+    new Set(selectedSymptoms.map(item => item.id)).size !==
+    selectedSymptoms.length
+  ) {
+    throw new Error('Each selected symptom must be unique.');
+  }
+
+  return {
+    schemaVersion: independentProfileSchemaVersion,
+    disorderIds: selectedDisorders.map(item => item.id),
+    disorders: selectedDisorders.map(item => item.displayName),
+    symptomIds: selectedSymptoms.map(item => item.id),
+    symptoms: selectedSymptoms.map(item => item.displayName),
+    minimumAppBuild: Math.max(
+      8,
+      ...selectedDisorders.map(item => Number(item.minimumAppBuild || 7)),
+      ...selectedSymptoms.map(item => Number(item.minimumAppBuild || 7)),
+    ),
+  };
+}
+
 function normaliseClinicalProfile(
   input = {},
   {
@@ -120,6 +226,18 @@ function normaliseClinicalProfile(
     allowHistoricalSymptoms = false,
   } = {},
 ) {
+  if (
+    Number(input.schemaVersion) === independentProfileSchemaVersion ||
+    Array.isArray(input.disorderIds) ||
+    Array.isArray(input.symptomIds)
+  ) {
+    return normaliseIndependentClinicalProfile(input, {
+      disorderCatalog,
+      includeInactive,
+      allowHistoricalSymptoms,
+    });
+  }
+
   const primary = normaliseTrack({
     disorderId: input.primaryDisorderId,
     disorder: input.primaryDisorder,
@@ -191,6 +309,15 @@ function canonicalSymptomIds(disorderId, disorderName, ids, labels) {
 }
 
 function comparableProfile(profile = {}) {
+  if (isIndependentClinicalProfile(profile)) {
+    return {
+      schemaVersion: independentProfileSchemaVersion,
+      disorderIds: [...(profile.disorderIds || [])],
+      disorders: [...(profile.disorders || [])],
+      symptomIds: [...(profile.symptomIds || [])],
+      symptoms: [...(profile.symptoms || [])],
+    };
+  }
   const primaryDisorderId = canonicalDisorderId(
     profile.primaryDisorderId,
     profile.primaryDisorder,
@@ -236,6 +363,15 @@ function sameClinicalProfile(left, right) {
 }
 
 function expectedProfileRecords(profile = {}) {
+  if (isIndependentClinicalProfile(profile)) {
+    return (profile.symptoms || []).map((symptom, index) => ({
+      track: 'Independent',
+      disorderId: '',
+      disorder: '',
+      symptomId: profile.symptomIds[index],
+      symptom,
+    }));
+  }
   const comparable = comparableProfile(profile);
   const records = (profile.primarySymptoms || []).map((symptom, index) => ({
     track: 'Primary',
@@ -262,6 +398,14 @@ function recordMatchesExpected(record, expected) {
   const suppliedDisorder = String(record?.disorder || '').trim();
   const suppliedSymptomId = String(record?.symptomId || '').trim();
   const suppliedSymptom = String(record?.symptom || '').trim();
+  if (expected.track === 'Independent') {
+    if (suppliedDisorderId || suppliedDisorder) return false;
+    if (suppliedSymptomId && suppliedSymptomId !== expected.symptomId) {
+      return false;
+    }
+    if (suppliedSymptom && suppliedSymptom !== expected.symptom) return false;
+    return Boolean(suppliedSymptomId || suppliedSymptom);
+  }
   if (suppliedDisorderId && suppliedDisorderId !== expected.disorderId) {
     return false;
   }
@@ -310,7 +454,12 @@ function profileMinimumBuild(profile = {}) {
 
 module.exports = {
   canonicalRecordsForClinicalProfile,
+  independentProfileSchemaVersion,
+  isIndependentClinicalProfile,
+  maximumIndependentSymptoms,
+  minimumIndependentSymptoms,
   normaliseClinicalProfile,
+  normaliseIndependentClinicalProfile,
   profileMinimumBuild,
   recordsMatchClinicalProfile,
   reviewClinicalProfile,

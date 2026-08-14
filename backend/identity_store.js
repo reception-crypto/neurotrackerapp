@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
+  isIndependentClinicalProfile,
   normaliseClinicalProfile,
   profileMinimumBuild,
   reviewClinicalProfile,
@@ -108,14 +109,19 @@ function createIdentityStore({
       device.supportsCanonicalDisorders =
         compatibility.supportsCanonicalDisorders;
     }
-    if ([1, 2].includes(payloadSchema)) {
+    if (typeof compatibility?.supportsIndependentProfiles === 'boolean') {
+      device.supportsIndependentProfiles =
+        compatibility.supportsIndependentProfiles;
+    }
+    if ([1, 2, 3].includes(payloadSchema)) {
       device.lastPayloadSchemaVersion = payloadSchema;
     }
     if (
       (Number.isInteger(build) && build > 0) ||
-      [1, 2].includes(payloadSchema) ||
+      [1, 2, 3].includes(payloadSchema) ||
       typeof compatibility?.supportsClinicManagedProfile === 'boolean' ||
-      typeof compatibility?.supportsCanonicalDisorders === 'boolean'
+      typeof compatibility?.supportsCanonicalDisorders === 'boolean' ||
+      typeof compatibility?.supportsIndependentProfiles === 'boolean'
     ) {
       device.lastCompatibilityAt = observedAt;
     }
@@ -245,6 +251,7 @@ function createIdentityStore({
       expectedPatientId = '',
       supportsClinicManagedProfile = false,
       supportsCanonicalDisorders = false,
+      supportsIndependentProfiles = false,
       supportedMobileBuild = null,
     } = {},
   ) {
@@ -276,7 +283,9 @@ function createIdentityStore({
       if (
         !supportsClinicManagedProfile ||
         effectiveSupportedBuild < requiredBuild ||
-        (requiredBuild >= 8 && !supportsCanonicalDisorders)
+        (requiredBuild >= 8 && !supportsCanonicalDisorders) ||
+        (isIndependentClinicalProfile(patient.clinicalProfile) &&
+          !supportsIndependentProfiles)
       ) {
         return { status: 'upgrade_required', requiredBuild };
       }
@@ -298,6 +307,7 @@ function createIdentityStore({
       mobileBuild: effectiveSupportedBuild,
       supportsClinicManagedProfile,
       supportsCanonicalDisorders,
+      supportsIndependentProfiles,
     }, redeemedAt);
     store.devices[tokenHash] = device;
     writeStore(store);
@@ -319,6 +329,7 @@ function createIdentityStore({
     supportedMobileBuild = null,
     supportsClinicManagedProfile = false,
     supportsCanonicalDisorders = false,
+    supportsIndependentProfiles = false,
   } = {}) {
     const id = String(patientId || '').trim();
     const name = String(displayName || '').trim();
@@ -378,6 +389,7 @@ function createIdentityStore({
       mobileBuild: supportedMobileBuild,
       supportsClinicManagedProfile,
       supportsCanonicalDisorders,
+      supportsIndependentProfiles,
     }, enrolledAt);
     store.devices[tokenHash] = device;
     writeStore(store);
@@ -414,7 +426,7 @@ function createIdentityStore({
   function recordPayloadSchema(accessToken, schemaVersion) {
     const token = String(accessToken || '').trim();
     const schema = Number(schemaVersion);
-    if (!token || ![1, 2].includes(schema)) return false;
+    if (!token || ![1, 2, 3].includes(schema)) return false;
     const store = readStore();
     const tokenHash = digest('device-token', token);
     const device = store.devices[tokenHash];
@@ -472,6 +484,23 @@ function createIdentityStore({
     ) || null;
   }
 
+  function profileIdentifiers(profile) {
+    if (isIndependentClinicalProfile(profile)) {
+      return {
+        schemaVersion: 3,
+        disorderIds: [...(profile.disorderIds || [])],
+        symptomIds: [...(profile.symptomIds || [])],
+      };
+    }
+    return {
+      schemaVersion: Number(profile?.schemaVersion) || 2,
+      primaryDisorderId: profile?.primaryDisorderId,
+      primarySymptomIds: [...(profile?.primarySymptomIds || [])],
+      secondaryDisorderId: profile?.secondaryDisorderId,
+      secondarySymptomIds: [...(profile?.secondarySymptomIds || [])],
+    };
+  }
+
   function refreshProfilesWhere(matches) {
     const store = readStore();
     const refreshedAt = now().toISOString();
@@ -479,16 +508,14 @@ function createIdentityStore({
     for (const patient of Object.values(store.patients)) {
       const previousProfile = patient?.clinicalProfile;
       if (!previousProfile || !matches(previousProfile)) continue;
-      const refreshedProfile = normaliseClinicalProfile({
-        primaryDisorderId: previousProfile.primaryDisorderId,
-        primarySymptomIds: previousProfile.primarySymptomIds,
-        secondaryDisorderId: previousProfile.secondaryDisorderId,
-        secondarySymptomIds: previousProfile.secondarySymptomIds,
-      }, {
-        disorderCatalog,
-        includeInactive: true,
-        allowHistoricalSymptoms: true,
-      });
+      const refreshedProfile = normaliseClinicalProfile(
+        profileIdentifiers(previousProfile),
+        {
+          disorderCatalog,
+          includeInactive: true,
+          allowHistoricalSymptoms: true,
+        },
+      );
       if (sameClinicalProfile(previousProfile, refreshedProfile)) continue;
       const savedProfile = {
         ...refreshedProfile,
@@ -513,7 +540,8 @@ function createIdentityStore({
     if (!id) throw new Error('A disorder identifier is required.');
     return refreshProfilesWhere(profile =>
       profile.primaryDisorderId === id ||
-      profile.secondaryDisorderId === id
+      profile.secondaryDisorderId === id ||
+      (profile.disorderIds || []).includes(id)
     );
   }
 
@@ -522,7 +550,8 @@ function createIdentityStore({
     if (!id) throw new Error('A symptom identifier is required.');
     return refreshProfilesWhere(profile =>
       (profile.primarySymptomIds || []).includes(id) ||
-      (profile.secondarySymptomIds || []).includes(id)
+      (profile.secondarySymptomIds || []).includes(id) ||
+      (profile.symptomIds || []).includes(id)
     );
   }
 
@@ -533,16 +562,14 @@ function createIdentityStore({
     for (const patient of Object.values(store.patients)) {
       const previousProfile = patient?.clinicalProfile;
       if (!previousProfile) continue;
-      const refreshedProfile = normaliseClinicalProfile({
-        primaryDisorderId: previousProfile.primaryDisorderId,
-        primarySymptomIds: previousProfile.primarySymptomIds,
-        secondaryDisorderId: previousProfile.secondaryDisorderId,
-        secondarySymptomIds: previousProfile.secondarySymptomIds,
-      }, {
-        disorderCatalog,
-        includeInactive: true,
-        allowHistoricalSymptoms: true,
-      });
+      const refreshedProfile = normaliseClinicalProfile(
+        profileIdentifiers(previousProfile),
+        {
+          disorderCatalog,
+          includeInactive: true,
+          allowHistoricalSymptoms: true,
+        },
+      );
       if (sameClinicalProfile(previousProfile, refreshedProfile)) continue;
       const savedProfile = {
         ...refreshedProfile,
@@ -578,6 +605,26 @@ function createIdentityStore({
 
     function canonicalise(profile) {
       if (!profile) return null;
+      if (isIndependentClinicalProfile(profile)) {
+        const validated = normaliseClinicalProfile(profileIdentifiers(profile), {
+          disorderCatalog,
+          includeInactive: true,
+          allowHistoricalSymptoms: true,
+        });
+        return {
+          ...validated,
+          disorders: Array.isArray(profile.disorders) &&
+            profile.disorders.length === validated.disorders.length
+            ? [...profile.disorders]
+            : validated.disorders,
+          symptoms: Array.isArray(profile.symptoms) &&
+            profile.symptoms.length === validated.symptoms.length
+            ? [...profile.symptoms]
+            : validated.symptoms,
+          revision: Number(profile.revision || 0),
+          updatedAt: profile.updatedAt,
+        };
+      }
       const hasCanonicalIdentifiers =
         Number(profile.schemaVersion) >= 2 &&
         String(profile.primaryDisorderId || '').trim() &&
@@ -704,7 +751,7 @@ function createIdentityStore({
       const buildKey = Number.isInteger(device.lastMobileBuild)
         ? String(device.lastMobileBuild)
         : 'unknown';
-      const schemaKey = [1, 2].includes(device.lastPayloadSchemaVersion)
+      const schemaKey = [1, 2, 3].includes(device.lastPayloadSchemaVersion)
         ? String(device.lastPayloadSchemaVersion)
         : 'unknown';
       builds[buildKey] = (builds[buildKey] || 0) + 1;
@@ -716,6 +763,9 @@ function createIdentityStore({
       payloadSchemas,
       canonicalDevices: activeDevices.filter(
         device => device.supportsCanonicalDisorders === true,
+      ).length,
+      independentProfileDevices: activeDevices.filter(
+        device => device.supportsIndependentProfiles === true,
       ).length,
     };
   }

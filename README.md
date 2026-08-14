@@ -6,7 +6,7 @@ with a CSV-backed clinician portal.
 ## Current release
 
 - Public mobile version: `1.0.0+7` (remains supported)
-- Compatible backend source: `0.8.0` (deploy before Build 8 mobile)
+- Compatible backend source: `0.9.0` (deploy before Build 8 mobile)
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
 - Production API: `https://tracker.melindapascoeneurology.com`
@@ -33,19 +33,27 @@ support ID, and emergency/medical disclaimers.
 
 Every mobile API request identifies its build. Build 7 is public and its
 support floor must remain locked at 7 throughout the Build 8 rollout. Deploy
-backend `0.8.0` before releasing either Build 8 app with:
+backend `0.9.0` before releasing either Build 8 app with:
 
 ```env
 LATEST_MOBILE_BUILD=7
 MIN_SUPPORTED_MOBILE_BUILD=7
 ENABLE_CUSTOM_DISORDERS=false
+ENABLE_INDEPENDENT_PROFILES=false
 ```
 
 Missing payload `schemaVersion` remains the Build 7/schema 1 contract. The
 backend maps validated Build 7 labels to canonical disorder and symptom IDs
 without changing `PatientId` or `ProfileRevision`. After Build 8 is
-downloadable from both stores, `LATEST_MOBILE_BUILD` can become 8 and custom
-disorders can be enabled; `MIN_SUPPORTED_MOBILE_BUILD` remains 7.
+downloadable from both stores, `LATEST_MOBILE_BUILD` can become 8 and the
+custom-catalogue and independent-profile gates can be enabled;
+`MIN_SUPPORTED_MOBILE_BUILD` remains 7.
+
+Build 8 schema 3 replaces disorder-nested symptom selection for new profile
+revisions. Staff select one or more disorders and then independently select
+between one and six unique symptoms. Each symptom is rated once. Existing
+Build 7 nested profiles, profile revisions, payloads, and check-ins remain
+supported unchanged.
 
 ## Development checks
 
