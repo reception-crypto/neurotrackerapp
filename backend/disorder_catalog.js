@@ -441,6 +441,14 @@ function createDisorderCatalogStore({
     return lookup;
   }
 
+  function uniqueSymptomsFromLookup(lookup) {
+    const byCanonicalId = new Map();
+    for (const symptom of lookup.values()) {
+      byCanonicalId.set(symptom.id, symptom);
+    }
+    return [...byCanonicalId.values()];
+  }
+
   function rawAllowedSymptomIds(store, disorder) {
     if (disorder.kind === 'built-in') {
       return store.builtInDisorderSymptomOverrides[disorder.id] ||
@@ -823,7 +831,7 @@ function createDisorderCatalogStore({
   }
 
   function activeAssignableSymptoms(store) {
-    return [...symptomLookupFor(store).values()]
+    return uniqueSymptomsFromLookup(symptomLookupFor(store))
       .filter(item => item.active !== false && item.kind !== 'historical')
       .sort((left, right) => left.displayName.localeCompare(
         right.displayName,
@@ -1019,20 +1027,28 @@ function createDisorderCatalogStore({
     const id = String(disorderId || '').trim();
     const source = builtInDisordersById.get(id) || store.customDisorders[id];
     if (!source) throw new Error('The disorder was not found.');
-    const selectedIds = [...new Set(
+    const submittedIds = [...new Set(
       (Array.isArray(symptomIds) ? symptomIds : [symptomIds])
         .map(value => String(value || '').trim())
         .filter(Boolean),
     )];
-    if (selectedIds.length < 3) {
+    if (submittedIds.length < 3) {
       throw new Error('Each disorder must offer at least three symptoms.');
     }
     const symptomLookup = symptomLookupFor(store);
-    for (const symptomId of selectedIds) {
+    const selectedIds = [];
+    for (const symptomId of submittedIds) {
       const symptom = symptomLookup.get(symptomId);
       if (!symptom || symptom.active === false || symptom.kind === 'historical') {
         throw new Error('Only active catalogue symptoms can be made available.');
       }
+      selectedIds.push(symptom.id);
+    }
+    if (new Set(selectedIds).size !== selectedIds.length) {
+      throw new Error(
+        'The same symptom cannot be selected through both a current and ' +
+        'legacy identifier.',
+      );
     }
     const beforeIds = rawAllowedSymptomIds(store, source);
     if (JSON.stringify(beforeIds) === JSON.stringify(selectedIds)) {
@@ -1084,7 +1100,7 @@ function createDisorderCatalogStore({
     includeHistorical = false,
   } = {}) {
     const store = readStore();
-    return [...symptomLookupFor(store).values()]
+    return uniqueSymptomsFromLookup(symptomLookupFor(store))
       .filter(item => includeInactive || item.active !== false)
       .filter(item => includeHistorical || item.kind !== 'historical')
       .sort((left, right) => left.displayName.localeCompare(

@@ -1,6 +1,6 @@
 # Build 8 compatible backend deployment
 
-This package deploys backend `0.8.2` before either Build 8 mobile app is
+This package deploys backend `0.8.3` before either Build 8 mobile app is
 released. It keeps the public Build 7 app fully supported:
 
 - `MIN_SUPPORTED_MOBILE_BUILD=7`

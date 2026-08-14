@@ -169,6 +169,43 @@ test('catalogue version 2 migrates unused UUID symptom IDs to readable stable ID
       'electric-shock-sensation',
     );
     assert.equal(
+      catalog.symptomDefinitions({ includeInactive: true })
+        .filter(item => item.id === 'electric-shock-sensation').length,
+      1,
+    );
+    assert.doesNotThrow(() => catalog.setDisorderSymptoms({
+      disorderId: 'migraine',
+      symptomIds: ['headache', 'nausea', legacyId],
+      actor: 'stale-admin-form',
+    }));
+    assert.throws(
+      () => catalog.setDisorderSymptoms({
+        disorderId: 'migraine',
+        symptomIds: [
+          'headache',
+          'nausea',
+          legacyId,
+          'electric-shock-sensation',
+        ],
+        actor: 'stale-admin-form',
+      }),
+      /same symptom cannot be selected/,
+    );
+    const customDisorder = catalog.createCustomDisorder({
+      displayName: 'Synthetic neurological condition',
+      confirmation: 'Synthetic neurological condition',
+      actor: 'test-admin',
+    });
+    assert.equal(
+      customDisorder.allowedSymptomIds
+        .filter(id => id === 'electric-shock-sensation').length,
+      1,
+    );
+    assert.equal(
+      new Set(customDisorder.allowedSymptomIds).size,
+      customDisorder.allowedSymptomIds.length,
+    );
+    assert.equal(
       fs.readdirSync(dataDir)
         .filter(name => name.startsWith('disorder_catalog.json.backup-v2-'))
         .length,
