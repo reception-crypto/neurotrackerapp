@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/clinic_profile_service.dart';
 import '../services/notification_service.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
+import '../widgets/brand_identity.dart';
 import 'consent_screen.dart';
 import 'daily_symptom_screen.dart';
 import 'enrolment_screen.dart';
@@ -164,13 +164,11 @@ class _StartupScreenState extends State<StartupScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset('assets/icon/app_icon.png', width: 112, height: 112),
-            const SizedBox(height: 18),
-            Text(
-              appDisplayName,
-              style: Theme.of(context).textTheme.headlineMedium,
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 28),
+              child: BrandBanner(),
             ),
-            const SizedBox(height: 22),
+            const SizedBox(height: 28),
             const CircularProgressIndicator(),
           ],
         ),

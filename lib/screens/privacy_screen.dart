@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 class PrivacyScreen extends StatelessWidget {
   const PrivacyScreen({super.key});
 
@@ -49,7 +51,7 @@ class PrivacyScreen extends StatelessWidget {
           ),
           Text(
             'Policy version: $policyVersion',
-            style: TextStyle(color: Colors.white70),
+            style: TextStyle(color: AppTheme.secondaryText),
           ),
         ],
       ),

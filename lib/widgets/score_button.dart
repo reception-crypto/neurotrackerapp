@@ -26,9 +26,9 @@ class ScoreButton extends StatelessWidget {
           backgroundColor: selected
               ? AppTheme.primaryBlue
               : AppTheme.unselectedButton,
-          foregroundColor: selected ? Colors.black : AppTheme.bodyText,
+          foregroundColor: selected ? AppTheme.deepInk : AppTheme.bodyText,
           side: BorderSide(
-            color: selected ? AppTheme.headingBlue : const Color(0xFF4B5563),
+            color: selected ? AppTheme.warmIvory : AppTheme.outline,
             width: selected ? 2 : 1,
           ),
           shape: RoundedRectangleBorder(

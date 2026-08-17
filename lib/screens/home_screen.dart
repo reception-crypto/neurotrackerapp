@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/clinic_profile_service.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/brand_identity.dart';
 import 'daily_symptom_screen.dart';
 import 'enrolment_screen.dart';
 import 'history_screen.dart';
@@ -223,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(appShortName),
+        title: const BrandAppBarTitle(),
         actions: [
           IconButton(
             tooltip: 'Settings',
@@ -238,14 +238,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
           children: [
+            const BrandBanner(compact: true),
+            const SizedBox(height: 24),
             Text(greeting, style: Theme.of(context).textTheme.headlineLarge),
-            const SizedBox(height: 6),
-            Text(
-              appDisplayName,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(color: AppTheme.secondaryText),
-            ),
             const SizedBox(height: 24),
             Card(
               child: Padding(
@@ -262,7 +257,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               : Icons.today_outlined,
                           size: 34,
                           color: _completedToday
-                              ? Colors.greenAccent
+                              ? AppTheme.successGreen
                               : AppTheme.primaryBlue,
                         ),
                         const SizedBox(width: 14),

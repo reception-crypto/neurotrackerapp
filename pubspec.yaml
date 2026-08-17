@@ -58,6 +58,7 @@ flutter:
 
   assets:
     - assets/icon/app_icon.png
+    - assets/branding/neurosol_wordmark.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

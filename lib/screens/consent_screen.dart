@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/patient_profile.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/brand_identity.dart';
 import 'enrolment_screen.dart';
 import 'privacy_screen.dart';
 import 'startup_screen.dart';
@@ -45,7 +46,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('NeuroSol')),
+      appBar: AppBar(title: const BrandAppBarTitle()),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),

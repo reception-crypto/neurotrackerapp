@@ -6,6 +6,8 @@ import '../services/identity_service.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/brand_identity.dart';
 import 'home_screen.dart';
 
 class EnrolmentScreen extends StatefulWidget {
@@ -106,7 +108,9 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
     final replacing = widget.existingProfile != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Clinic Enrolment')),
+      appBar: AppBar(
+        title: const BrandAppBarTitle(label: 'Clinic Enrolment'),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
@@ -150,7 +154,10 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
             ),
             if (_error != null) ...[
               const SizedBox(height: 14),
-              Text(_error!, style: const TextStyle(color: Colors.orangeAccent)),
+              Text(
+                _error!,
+                style: const TextStyle(color: AppTheme.warningOrange),
+              ),
             ],
             const SizedBox(height: 24),
             FilledButton(

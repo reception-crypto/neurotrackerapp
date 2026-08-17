@@ -50,7 +50,8 @@ void main() {
     await tester.pumpWidget(const NeuroSolApp());
     await tester.pump();
 
-    expect(find.text('NeuroSol Symptom Diary'), findsWidgets);
+    expect(find.byKey(const Key('neurosol-brand-banner')), findsOneWidget);
+    expect(find.text('SYMPTOM DIARY'), findsOneWidget);
   });
 
   testWidgets('settings exposes the clinic profile as read-only', (
