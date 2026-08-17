@@ -58,7 +58,7 @@ class _HistoryCard extends StatelessWidget {
               (record) => ListTile(
                 dense: true,
                 title: Text(record.symptom),
-                subtitle: Text('${record.track}: ${record.disorder}'),
+                subtitle: Text(_recordContext(record)),
                 trailing: Text(
                   '${record.score}/10',
                   style: Theme.of(context).textTheme.titleMedium,
@@ -74,5 +74,13 @@ class _HistoryCard extends StatelessWidget {
     final date = DateTime.tryParse(value);
     if (date == null) return value;
     return '${date.day}/${date.month}/${date.year}';
+  }
+
+  String _recordContext(SymptomScoreRecord record) {
+    if (record.track != 'Independent') {
+      return '${record.track}: ${record.disorder}';
+    }
+    if (entry.profileDisorders.isEmpty) return 'Clinic-assigned symptom';
+    return 'Disorders: ${entry.profileDisorders.join(', ')}';
   }
 }

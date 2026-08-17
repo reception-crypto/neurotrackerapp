@@ -37,12 +37,22 @@ class MobileConfiguration {
   final int latestBuild;
   final String googlePlayUrl;
   final String appStoreUrl;
+  final bool canonicalDisorders;
+  final bool independentProfileModel;
+  final bool independentProfilesEnabled;
+  final int maximumProfileSymptoms;
+  final int preferredPayloadSchemaVersion;
 
   const MobileConfiguration({
     required this.minimumBuild,
     required this.latestBuild,
     required this.googlePlayUrl,
     required this.appStoreUrl,
+    this.canonicalDisorders = true,
+    this.independentProfileModel = true,
+    this.independentProfilesEnabled = false,
+    this.maximumProfileSymptoms = 6,
+    this.preferredPayloadSchemaVersion = 2,
   });
 
   bool get updateRequired =>
@@ -76,6 +86,8 @@ class ClinicProfileService {
         latestBuild: appBuildNumber,
         googlePlayUrl: '',
         appStoreUrl: '',
+        independentProfilesEnabled: true,
+        preferredPayloadSchemaVersion: 3,
       );
     }
     if (ApiConfig.baseUrl.trim().isEmpty) {
@@ -101,9 +113,20 @@ class ClinicProfileService {
       final body = _jsonBody(response);
       final minimumBuild = (body['minimumBuild'] as num?)?.toInt() ?? 0;
       final latestBuild = (body['latestBuild'] as num?)?.toInt() ?? 0;
+      final maximumProfileSymptoms =
+          (body['maximumProfileSymptoms'] as num?)?.toInt() ?? 0;
+      final preferredPayloadSchemaVersion =
+          (body['preferredPayloadSchemaVersion'] as num?)?.toInt() ?? 0;
+      final independentProfilesEnabled =
+          body['independentProfilesEnabled'] == true;
       if (minimumBuild < 1 ||
           latestBuild < minimumBuild ||
-          body['clinicManagedProfiles'] != true) {
+          body['clinicManagedProfiles'] != true ||
+          body['canonicalDisorders'] != true ||
+          body['independentProfileModel'] != true ||
+          maximumProfileSymptoms != 6 ||
+          preferredPayloadSchemaVersion !=
+              (independentProfilesEnabled ? 3 : 2)) {
         throw const ClinicProfileException(
           ClinicProfileFailure.invalidResponse,
           'The clinic returned an invalid app configuration.',
@@ -114,6 +137,11 @@ class ClinicProfileService {
         latestBuild: latestBuild,
         googlePlayUrl: (body['googlePlayUrl'] as String?)?.trim() ?? '',
         appStoreUrl: (body['appStoreUrl'] as String?)?.trim() ?? '',
+        canonicalDisorders: true,
+        independentProfileModel: true,
+        independentProfilesEnabled: independentProfilesEnabled,
+        maximumProfileSymptoms: maximumProfileSymptoms,
+        preferredPayloadSchemaVersion: preferredPayloadSchemaVersion,
       );
     } on ClinicProfileException {
       rethrow;

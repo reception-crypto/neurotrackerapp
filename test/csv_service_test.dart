@@ -18,8 +18,9 @@ void main() {
     expect(profile.supportId, 'NS-5678-ABCD-90EF');
   });
 
-  test('local CSV includes PatientId on every new row', () {
+  test('local CSV retains identity and additive schema columns', () {
     const entry = DailyEntry(
+      schemaVersion: 2,
       submissionId: 'NS-test',
       patientId: 'pt-clinic-123',
       date: '2026-07-27',
@@ -29,7 +30,9 @@ void main() {
       records: [
         SymptomScoreRecord(
           track: 'Primary',
+          disorderId: 'migraine',
           disorder: 'Migraine',
+          symptomId: 'headache',
           symptom: 'Headache',
           score: 3,
         ),
@@ -38,18 +41,28 @@ void main() {
     );
 
     final csv = CsvService.buildCsv(CsvService.rowsFromEntry(entry));
+    final header = csv.split('\n').first;
+    final row = csv.split('\n').last;
 
-    expect(csv.split('\n').first, endsWith(',PatientId,ProfileRevision'));
-    expect(csv.split('\n').last, endsWith(',pt-clinic-123,4'));
+    expect(header, contains('PatientId,ProfileRevision'));
+    expect(
+      header,
+      endsWith(
+        'DisorderId,SymptomId,PayloadSchemaVersion,ProfileDisorderIds,ProfileDisorders',
+      ),
+    );
+    expect(row, contains(',pt-clinic-123,4,migraine,headache,2,,'));
   });
 
-  test('legacy Build 5 CSV rows remain aligned with a blank PatientId', () {
+  test('legacy Build 5 CSV rows gain blank additive columns', () {
     const legacyRow =
-        'NS-old,2026-07-26,19:00,"Patient, Synthetic",Primary,Migraine,Headache,4,80';
+        'NS-old,2026-07-26,19:00,Synthetic Patient,Primary,Migraine,Headache,4,80';
 
     final csv = CsvService.buildCsv([legacyRow]);
+    final row = csv.split('\n').last;
 
-    expect(csv.split('\n').last, endsWith(',80,,'));
+    expect(row.split(',').length, 16);
+    expect(row, endsWith(',80,,,,,,,'));
   });
 
   test('a check-in cannot be generated before clinic enrolment', () {
@@ -98,7 +111,7 @@ void main() {
     );
   });
 
-  test('clinic response becomes a versioned local profile', () {
+  test('missing profile schema is interpreted as the Build 7 model', () {
     final profile = PatientProfile.fromClinicResponse({
       'patientId': 'pt-clinic-profile',
       'displayName': 'Clinic Name',
@@ -111,10 +124,103 @@ void main() {
       },
     }, reminderTime: const TimeOfDay(hour: 18, minute: 30));
 
-    expect(profile.fullName, 'Clinic Name');
+    expect(profile.schemaVersion, 1);
+    expect(profile.payloadSchemaVersion, 1);
     expect(profile.primarySymptoms, ['Dizziness', 'Pain', 'Weakness']);
-    expect(profile.profileRevision, 3);
-    expect(profile.reminderTime, const TimeOfDay(hour: 18, minute: 30));
-    expect(profile.isClinicManaged, isTrue);
+    expect(profile.isIndependent, isFalse);
+  });
+
+  test('canonical nested profile produces a schema 2 payload', () {
+    final profile = PatientProfile.fromClinicResponse({
+      'patientId': 'pt-canonical-profile',
+      'displayName': 'Canonical Patient',
+      'clinicalProfile': {
+        'schemaVersion': 2,
+        'primaryDisorderId': 'migraine',
+        'primaryDisorder': 'Migraine',
+        'primarySymptomIds': ['headache', 'nausea', 'vertigo'],
+        'primarySymptoms': ['Headache', 'Nausea', 'Vertigo'],
+        'secondaryDisorderId': null,
+        'secondaryDisorder': null,
+        'secondarySymptomIds': <String>[],
+        'secondarySymptoms': <String>[],
+        'revision': 5,
+      },
+    }, reminderTime: const TimeOfDay(hour: 19, minute: 0));
+
+    final entry = CsvService.generateDailyEntry(
+      profile: profile,
+      symptomScores: const {
+        'Primary|Migraine|Headache': 2,
+        'Primary|Migraine|Nausea': 3,
+        'Primary|Migraine|Vertigo': 4,
+      },
+      wellnessPercent: 70,
+    );
+
+    expect(entry.schemaVersion, 2);
+    expect(entry.records.first.disorderId, 'migraine');
+    expect(entry.records.last.symptomId, 'vertigo');
+  });
+
+  test('independent profile rates every assigned symptom exactly once', () {
+    final profile = PatientProfile.fromClinicResponse({
+      'patientId': 'pt-independent-profile',
+      'displayName': 'Independent Patient',
+      'clinicalProfile': {
+        'schemaVersion': 3,
+        'disorderIds': ['migraine', 'dysautonomia'],
+        'disorders': ['Migraine', 'Dysautonomia'],
+        'symptomIds': ['headache', 'weakness', 'pain', 'vertigo'],
+        'symptoms': ['Headache', 'Weakness', 'Pain', 'Vertigo'],
+        'minimumAppBuild': 8,
+        'revision': 6,
+      },
+    }, reminderTime: const TimeOfDay(hour: 19, minute: 0));
+
+    final entry = CsvService.generateDailyEntry(
+      profile: profile,
+      symptomScores: const {
+        'Independent||headache': 1,
+        'Independent||weakness': 2,
+        'Independent||pain': 3,
+        'Independent||vertigo': 4,
+      },
+      wellnessPercent: 80,
+    );
+    final payload = entry.toApiJson();
+
+    expect(profile.assignedDisorders, ['Migraine', 'Dysautonomia']);
+    expect(entry.schemaVersion, 3);
+    expect(entry.profileDisorderIds, ['migraine', 'dysautonomia']);
+    expect(entry.records, hasLength(4));
+    expect(entry.records.map((record) => record.track).toSet(), {
+      'Independent',
+    });
+    expect(entry.records.map((record) => record.disorder).toSet(), {''});
+    expect(
+      (payload['records'] as List)
+          .map((record) => (record as Map)['symptomId'])
+          .toList(),
+      ['headache', 'weakness', 'pain', 'vertigo'],
+    );
+  });
+
+  test('independent profile rejects more than six symptoms', () {
+    expect(
+      () => PatientProfile.fromClinicResponse({
+        'patientId': 'pt-too-many',
+        'displayName': 'Too Many',
+        'clinicalProfile': {
+          'schemaVersion': 3,
+          'disorderIds': ['migraine'],
+          'disorders': ['Migraine'],
+          'symptomIds': ['s1', 's2', 's3', 's4', 's5', 's6', 's7'],
+          'symptoms': ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'],
+          'revision': 1,
+        },
+      }, reminderTime: const TimeOfDay(hour: 19, minute: 0)),
+      throwsFormatException,
+    );
   });
 }

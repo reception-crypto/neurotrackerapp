@@ -3,7 +3,8 @@ import '../models/patient_profile.dart';
 
 class CsvService {
   static const header =
-      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,PatientId,ProfileRevision';
+      'SubmissionId,Date,Time,Patient,Track,Disorder,Symptom,Score,WellnessPercent,PatientId,ProfileRevision,DisorderId,SymptomId,PayloadSchemaVersion,ProfileDisorderIds,ProfileDisorders';
+  static const _columnCountForHeader = 16;
 
   static DailyEntry generateDailyEntry({
     required PatientProfile profile,
@@ -20,6 +21,15 @@ class CsvService {
         'The clinic-assigned profile must be synchronised before recording a check-in.',
       );
     }
+    final assignments = profile.symptomAssignments;
+    final validCount = profile.isIndependent
+        ? assignments.isNotEmpty &&
+              assignments.length <= maximumIndependentProfileSymptoms
+        : assignments.length == 3 || assignments.length == 6;
+    if (!validCount) {
+      throw StateError('The clinic-assigned symptom list is invalid.');
+    }
+
     final now = DateTime.now();
     final date =
         '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -30,41 +40,37 @@ class CsvService {
         : profile.patientId.substring(0, 8);
     final submissionId = 'NS-${now.microsecondsSinceEpoch}-$idFragment';
 
-    final records = <SymptomScoreRecord>[];
-
-    for (final symptom in profile.primarySymptoms) {
-      final key = 'Primary|${profile.primaryDisorder}|$symptom';
-      records.add(
-        SymptomScoreRecord(
-          track: 'Primary',
-          disorder: profile.primaryDisorder,
-          symptom: symptom,
-          score: _requiredScore(symptomScores, key, symptom),
-        ),
-      );
-    }
-
-    if (profile.hasSecondaryDisorder) {
-      for (final symptom in profile.secondarySymptoms) {
-        final key = 'Second|${profile.secondaryDisorder}|$symptom';
-        records.add(
-          SymptomScoreRecord(
-            track: 'Second',
-            disorder: profile.secondaryDisorder!,
-            symptom: symptom,
-            score: _requiredScore(symptomScores, key, symptom),
+    final records = assignments
+        .map(
+          (assignment) => SymptomScoreRecord(
+            track: assignment.track,
+            disorderId: assignment.disorderId,
+            disorder: assignment.disorder,
+            symptomId: assignment.symptomId,
+            symptom: assignment.symptom,
+            score: _requiredScore(
+              symptomScores,
+              assignment.scoreKey,
+              assignment.symptom,
+            ),
           ),
-        );
-      }
-    }
+        )
+        .toList(growable: false);
 
     return DailyEntry(
+      schemaVersion: profile.payloadSchemaVersion,
       submissionId: submissionId,
       date: date,
       time: time,
       patientName: profile.fullName,
       patientId: profile.patientId,
       profileRevision: profile.profileRevision,
+      profileDisorderIds: profile.isIndependent
+          ? profile.assignedDisorderIds
+          : const [],
+      profileDisorders: profile.isIndependent
+          ? profile.assignedDisorders
+          : const [],
       records: records,
       wellnessPercent: wellnessPercent,
     );
@@ -84,16 +90,20 @@ class CsvService {
         entry.wellnessPercent,
         _escape(entry.patientId),
         entry.profileRevision,
+        _escape(record.disorderId),
+        _escape(record.symptomId),
+        entry.schemaVersion,
+        _escape(entry.profileDisorderIds.join('|')),
+        _escape(entry.profileDisorders.join('|')),
       ].join(',');
     }).toList();
   }
 
   static String buildCsv(List<String> rows) {
     final normalisedRows = rows.map((row) {
-      final columns = _columnCount(row);
-      if (columns == 9) return '$row,,';
-      if (columns == 10) return '$row,';
-      return row;
+      final columns = _countColumns(row);
+      if (columns >= _columnCountForHeader) return row;
+      return '$row${List.filled(_columnCountForHeader - columns, ',').join()}';
     });
     return [header, ...normalisedRows].join('\n');
   }
@@ -117,7 +127,7 @@ class CsvService {
     return value;
   }
 
-  static int _columnCount(String row) {
+  static int _countColumns(String row) {
     var columns = 1;
     var quoted = false;
     for (var index = 0; index < row.length; index++) {

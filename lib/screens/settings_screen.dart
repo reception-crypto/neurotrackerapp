@@ -199,17 +199,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.assignment_ind_outlined),
-              title: const Text('Clinic-assigned profile'),
-              subtitle: Text(
-                profile == null
-                    ? 'Profile unavailable'
-                    : '${profile!.primaryDisorder}: ${profile!.primarySymptoms.join(', ')}'
-                          '${profile!.hasSecondaryDisorder ? '\n${profile!.secondaryDisorder}: ${profile!.secondarySymptoms.join(', ')}' : ''}'
-                          '\nProfile revision ${profile!.profileRevision}. Contact the clinic to request changes.',
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.assignment_ind_outlined),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Clinic-assigned profile',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          profile == null
+                              ? 'Profile unavailable'
+                              : '${profile!.settingsSummary}'
+                                    '\nProfile revision ${profile!.profileRevision}. Contact the clinic to request changes.',
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              isThreeLine: true,
             ),
           ),
           const SizedBox(height: 12),

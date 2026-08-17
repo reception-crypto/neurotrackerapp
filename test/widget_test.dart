@@ -19,6 +19,18 @@ const testProfile = PatientProfile(
   profileRevision: 1,
 );
 
+const independentTestProfile = PatientProfile(
+  patientId: 'synthetic-independent-patient',
+  fullName: 'Independent Patient',
+  schemaVersion: 3,
+  disorderIds: ['migraine', 'dysautonomia'],
+  disorders: ['Migraine', 'Dysautonomia'],
+  symptomIds: ['headache', 'weakness', 'pain', 'vertigo'],
+  symptoms: ['Headache', 'Weakness', 'Pain', 'Vertigo'],
+  reminderTime: TimeOfDay(hour: 19, minute: 0),
+  profileRevision: 2,
+);
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -52,6 +64,23 @@ void main() {
     expect(find.text('Edit patient profile'), findsNothing);
     expect(
       find.textContaining('Contact the clinic to request changes'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('settings separates assigned disorders from symptoms', (
+    WidgetTester tester,
+  ) async {
+    await StorageService.saveProfile(independentTestProfile);
+    await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Disorders: Migraine, Dysautonomia'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Symptoms: Headache, Weakness, Pain, Vertigo'),
       findsOneWidget,
     );
   });
@@ -132,6 +161,32 @@ void main() {
       find.text('Your next check-in will be available tomorrow.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('independent check-in rates each symptom once', (
+    WidgetTester tester,
+  ) async {
+    await StorageService.saveProfile(independentTestProfile);
+
+    await tester.pumpWidget(
+      const MaterialApp(home: HomeScreen(profile: independentTestProfile)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('start-daily-check-in')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Clinic-assigned disorders'), findsOneWidget);
+    expect(find.text('Migraine, Dysautonomia'), findsOneWidget);
+    expect(find.text('Each assigned symptom is rated once.'), findsOneWidget);
+    expect(find.text('HEADACHE'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('VERTIGO'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('VERTIGO'), findsOneWidget);
+    expect(find.textContaining('Primary:'), findsNothing);
+    expect(find.textContaining('Second:'), findsNothing);
   });
 
   testWidgets('ordinary app launch with a profile opens home', (

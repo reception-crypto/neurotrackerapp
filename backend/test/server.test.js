@@ -624,7 +624,7 @@ test('public enrolment links disclose no patient details and do not consume code
 test('Google Play reviewer access is reusable and synthetic-only', async () => {
   const enrolReviewer = () => fetch(`${baseUrl}/api/enrol`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: build7Headers(),
     body: JSON.stringify({ code: 'R3VW-4CC3-SS99' }),
   });
 
@@ -636,6 +636,11 @@ test('Google Play reviewer access is reusable and synthetic-only', async () => {
     /^pt-review-google-play-[0-9a-f-]{36}$/,
   );
   assert.equal(firstIdentity.displayName, 'Google Play Review');
+  assert.equal(firstIdentity.clinicalProfile.primaryDisorder, 'Migraine');
+  assert.deepEqual(
+    firstIdentity.clinicalProfile.primarySymptoms,
+    ['Headache', 'Nausea', 'Vomiting'],
+  );
 
   const second = await enrolReviewer();
   assert.equal(second.status, 200);
@@ -649,7 +654,7 @@ test('Google Play reviewer access is reusable and synthetic-only', async () => {
 
   const reconnect = await fetch(`${baseUrl}/api/enrol`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: build7Headers(),
     body: JSON.stringify({
       code: 'R3VW-4CC3-SS99',
       expectedPatientId: firstIdentity.patientId,
@@ -680,7 +685,7 @@ test('Google Play reviewer access is reusable and synthetic-only', async () => {
 test('reviewer access cannot replace another clinic identity', async () => {
   const response = await fetch(`${baseUrl}/api/enrol`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: build7Headers(),
     body: JSON.stringify({
       code: 'R3VW-4CC3-SS99',
       expectedPatientId: 'pt-real-patient',

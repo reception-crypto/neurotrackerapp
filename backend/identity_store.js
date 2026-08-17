@@ -345,7 +345,7 @@ function createIdentityStore({
     const existing = store.patients[id];
     const normalisedReviewProfile = normaliseClinicalProfile(
       reviewClinicalProfile,
-      { disorderCatalog },
+      { disorderCatalog: staticDisorderCatalog },
     );
     const previousProfile = existing?.clinicalProfile;
     const changed = !previousProfile ||

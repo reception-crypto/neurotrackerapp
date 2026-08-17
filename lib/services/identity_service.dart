@@ -45,6 +45,8 @@ class IdentityService {
     if (json) 'Content-Type': 'application/json',
     'X-NeuroSol-Build': '$appBuildNumber',
     'X-NeuroSol-Profile': clinicProfileProtocol,
+    'X-NeuroSol-Disorders': canonicalDisorderProtocol,
+    'X-NeuroSol-Profile-Model': independentProfileProtocol,
     if (accessToken?.trim().isNotEmpty == true)
       'Authorization': 'Bearer ${accessToken!.trim()}',
   };
