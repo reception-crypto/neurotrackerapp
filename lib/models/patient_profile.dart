@@ -96,7 +96,8 @@ class PatientProfile {
       ? disorderIds
       : [
           if (primaryDisorderId.isNotEmpty) primaryDisorderId,
-          if (hasSecondaryDisorder && secondaryDisorderId?.isNotEmpty == true)
+          if (hasSecondaryDisorder &&
+              secondaryDisorderId?.isNotEmpty == true)
             secondaryDisorderId!,
         ];
 
@@ -344,7 +345,9 @@ class PatientProfile {
     }
     final primaryDisorderId = _text(clinicalProfile['primaryDisorderId']);
     final primaryDisorder = _text(clinicalProfile['primaryDisorder']);
-    final primarySymptomIds = _textList(clinicalProfile['primarySymptomIds']);
+    final primarySymptomIds = _textList(
+      clinicalProfile['primarySymptomIds'],
+    );
     final primarySymptoms = _textList(clinicalProfile['primarySymptoms']);
     final secondaryDisorderId = _nullableText(
       clinicalProfile['secondaryDisorderId'],
@@ -355,7 +358,9 @@ class PatientProfile {
     final secondarySymptomIds = _textList(
       clinicalProfile['secondarySymptomIds'],
     );
-    final secondarySymptoms = _textList(clinicalProfile['secondarySymptoms']);
+    final secondarySymptoms = _textList(
+      clinicalProfile['secondarySymptoms'],
+    );
     final hasSecond = secondaryDisorder?.isNotEmpty == true;
     final canonicalPrimaryValid =
         schemaVersion == 1 ||
