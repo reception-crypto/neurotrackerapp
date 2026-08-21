@@ -94,6 +94,7 @@ function independentForm({
   const form = new URLSearchParams({
     csrfToken: token,
     patientId,
+    formMode: patientId ? 'edit' : 'create',
     displayName,
     schemaVersion: '3',
     profileModel: 'independent-v1',
@@ -422,6 +423,7 @@ test('Build 7 nested profiles remain usable while independent mode is enabled', 
   const legacyForm = new URLSearchParams({
     csrfToken: token,
     patientId: saved.patientId,
+    formMode: 'edit',
     displayName: saved.displayName,
     profileModel: 'legacy-v1',
     primaryDisorderId: 'migraine',

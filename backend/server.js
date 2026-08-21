@@ -62,6 +62,9 @@ const customDisordersEnabled = /^(1|true|yes)$/i.test(
 const independentProfilesEnabled = /^(1|true|yes)$/i.test(
   String(process.env.ENABLE_INDEPENDENT_PROFILES || '').trim(),
 );
+const enrolmentIncidentLockdown = /^(1|true|yes)$/i.test(
+  String(process.env.ENROLMENT_INCIDENT_LOCKDOWN || '').trim(),
+);
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
 const disorderCatalog = createDisorderCatalogStore({ dataDir });
@@ -651,6 +654,18 @@ function requireSupportedMobileBuild(req, res, next) {
   next();
 }
 
+function requireIncidentClear(req, res, next) {
+  if (!enrolmentIncidentLockdown) return next();
+  res.set({
+    'Cache-Control': 'no-store',
+    'Retry-After': '3600',
+  });
+  return res.status(503).json({
+    error: 'Clinic syncing is temporarily paused while enrolment identities are repaired.',
+    code: 'clinic_identity_recovery',
+  });
+}
+
 function matchesReviewEnrolmentCode(value) {
   if (!reviewEnrolmentCode) return false;
   const supplied = Buffer.from(normaliseCode(value), 'utf8');
@@ -765,7 +780,10 @@ function patientDirectory(rows) {
       ...current,
       displayName: patient.displayName,
       supportId: shortId,
-      label: `${patient.displayName} (${shortId})`,
+      quarantined: Boolean(patient.quarantinedAt),
+      label: patient.quarantinedAt
+        ? `[QUARANTINED COLLISION] ${patient.displayName} (${shortId})`
+        : `${patient.displayName} (${shortId})`,
     });
   }
   return directory;
@@ -780,7 +798,8 @@ function resolvePatientKey(rows, requestedPatientId, legacyName = '') {
     const match = [...directory.values()].find(patient => patient.displayName === oldName);
     if (match) return match.patientId;
   }
-  return [...directory.keys()][0] || '';
+  return [...directory.values()].find(patient => !patient.quarantined)
+    ?.patientId || [...directory.keys()][0] || '';
 }
 
 function unique(rows, key) { return [...new Set(rows.map(r => r[key]).filter(Boolean))].sort(); }
@@ -985,6 +1004,7 @@ function patientSeries(
   const filtered = rows.filter(r =>
     rowHasDisorder(r, disorderId) &&
     (!selectedPatients.length || selectedPatients.includes(patientKey(r))) &&
+    (selectedPatients.length > 0 || !directory.get(patientKey(r))?.quarantined) &&
     (!symptomMetric || r.Symptom === symptomMetric)
   );
   const byPatient = new Map();
@@ -1075,6 +1095,9 @@ function svgChart(series, metric, aggregation, mode='summary', selectedPatient='
 }
 
 function pageShell(title, body) {
+  const incidentNotice = enrolmentIncidentLockdown
+    ? '<div class="incident-lock"><strong>IDENTITY RECOVERY LOCKDOWN ACTIVE</strong> — mobile enrolment, profile sync, and symptom uploads are paused. Complete identity recovery before reopening mobile access.</div>'
+    : '';
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${html(title)}</title><style>
   :root{--bg:#f3f4f6;--panel:#fff;--ink:#111827;--muted:#6b7280;--blue:#2563eb;--line:#e5e7eb;--danger:#b91c1c;--good:#047857}
   *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}header{background:#111827;color:#fff;padding:20px 30px;display:flex;justify-content:space-between;align-items:center}header h1{font-size:24px;margin:0}nav a{color:#bfdbfe;margin-left:18px;text-decoration:none;font-weight:600}main{max-width:1500px;margin:auto;padding:24px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}.field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}select,input,button,.button{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#111827;font-size:14px}button,.button{background:var(--blue);color:white;border:none;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;display:inline-block}.button.secondary{background:#374151}.button.danger,button.danger{background:var(--danger)}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}.stat .label{font-size:12px;text-transform:uppercase;color:var(--muted);font-weight:700}.stat .value{font-size:27px;font-weight:800;margin-top:5px}.notice{border:2px solid #2563eb;background:#eff6ff;border-radius:12px;padding:18px;margin-bottom:20px}.code{font:800 28px Consolas,monospace;letter-spacing:.08em;margin:10px 0}.inline-form{display:inline}.inline-form button{width:auto;padding:7px 10px}.chart{width:100%;min-height:420px}.axis{font-size:12px;fill:#4b5563}.axis-title{font-size:13px;fill:#374151;font-weight:700}.patient-faint{fill:none;stroke:#64748b;stroke-width:1;stroke-opacity:.16}.cohort{fill:none;stroke:#1d4ed8;stroke-width:4}.median{fill:none;stroke:#7c3aed;stroke-width:2;stroke-dasharray:7 5}.legend{display:flex;gap:20px;flex-wrap:wrap;color:var(--muted);font-size:13px}.swatch{display:inline-block;width:24px;height:4px;margin-right:7px;vertical-align:middle}.table-wrap{overflow:auto;max-height:480px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#f8fafc;color:#475569}.flag{color:var(--danger);font-weight:700}.good{color:var(--good);font-weight:700}.muted{color:var(--muted)}.empty{padding:70px;text-align:center;color:var(--muted)}.patient-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:210px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:9px}.patient-list label{font-size:13px}.patient-list input{width:auto;margin-right:7px}.calendar-range{color:var(--muted);font-size:13px;margin:-4px 0 16px}.calendar-scroll{overflow-x:auto;padding-bottom:4px}.calendar-frame{min-width:560px;max-width:560px}.calendar-weekdays,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(66px,1fr));gap:8px}.calendar-weekdays{margin-bottom:8px}.calendar-weekday{text-align:center;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.calendar-day{position:relative;aspect-ratio:1;min-height:66px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;display:grid;place-items:center;overflow:hidden}.calendar-day.no-entry{border-style:dashed;background:#f8fafc;color:#94a3b8}.calendar-day.full.symptom{background:#dc2626;border-color:#dc2626;color:#fff}.calendar-day.full.wellness{background:#059669;border-color:#059669;color:#fff}.calendar-date{position:absolute;top:7px;left:8px;z-index:2;font-size:11px;font-weight:800}.calendar-dot{display:block;border-radius:50%}.calendar-day.symptom .calendar-dot{background:#dc2626}.calendar-day.wellness .calendar-dot{background:#059669}.calendar-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:12px;margin-top:16px}.calendar-legend span{display:flex;align-items:center;gap:7px}.calendar-key{display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;position:relative}.calendar-key.dot::after{content:"";display:block;border-radius:50%}.calendar-key.dot.symptom::after{background:#dc2626}.calendar-key.dot.wellness::after{background:#059669}.calendar-key.dot.small::after{width:10px;height:10px}.calendar-key.dot.medium::after{width:17px;height:17px}.calendar-key.full.symptom{background:#dc2626;border-color:#dc2626}.calendar-key.full.wellness{background:#059669;border-color:#059669}.calendar-key.missing{border-style:dashed;background:#f8fafc}@media(max-width:700px){
@@ -1094,7 +1117,8 @@ function pageShell(title, body) {
     .calendar-date{top:4px;left:5px;font-size:9px}
     .calendar-dot{transform:scale(.75)}
   }
-  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/disorders">Disorders</a><a href="/admin/symptoms">Symptoms</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header><main>${body}</main></body></html>`;
+  .incident-lock{background:#7f1d1d;color:#fff;padding:14px 24px;text-align:center;border-bottom:4px solid #fca5a5}
+  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/enrolments/recovery">Identity recovery</a><a href="/admin/disorders">Disorders</a><a href="/admin/symptoms">Symptoms</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header>${incidentNotice}<main>${body}</main></body></html>`;
 }
 
 // Validate the catalogue before any profile or CSV migration can write data.
@@ -1121,6 +1145,7 @@ app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 app.get('/health',(req,res)=>res.json({
   ok:true,
   storage:'csv',
+  enrolmentIncidentLockdown,
   disorderCatalogVersion: catalogVersion,
   customDisordersEnabled,
   independentProfilesEnabled,
@@ -1146,6 +1171,7 @@ app.get('/api/mobile-config',(req,res)=>{
       : 1,
     build7Supported: minimumMobileBuild <= 7,
     customDisordersEnabled,
+    enrolmentIncidentLockdown,
   });
 });
 
@@ -1209,6 +1235,7 @@ function recordFailedEnrolment(req) {
 
 app.post(
   '/api/enrol',
+  requireIncidentClear,
   limitEnrolmentAttempts,
   requireSupportedMobileBuild,
   (req,res)=>{
@@ -1271,7 +1298,11 @@ app.post(
       code: 'enrolment_patient_mismatch',
     });
   }
-  if (result.status === 'expired' || result.status === 'used') {
+  if (
+    result.status === 'expired' ||
+    result.status === 'used' ||
+    result.status === 'invalidated'
+  ) {
     return res.status(410).json({
       error: 'The enrolment code has expired or has already been used.',
       code: 'enrolment_code_unavailable',
@@ -1285,6 +1316,7 @@ app.post(
 
 app.get(
   '/api/profile',
+  requireIncidentClear,
   requireDeviceIdentity,
   requireSupportedMobileBuild,
   (req,res)=>{
@@ -1320,6 +1352,7 @@ app.get(
 
 app.post(
   '/api/symptom-entry',
+  requireIncidentClear,
   requireDeviceIdentity,
   requireSupportedMobileBuild,
   (req,res)=>{
@@ -1338,7 +1371,10 @@ app.post(
     return sendUpdateRequired(res,8);
   }
   const submissionId=typeof b.submissionId==='string'?b.submissionId.trim():'';
-  const patientId=typeof b.patientId==='string'?b.patientId.trim():'';
+  const submittedPatientId=typeof b.patientId==='string'?b.patientId.trim():'';
+  const patientId=String(
+    req.deviceIdentity.effectivePatientId || req.deviceIdentity.patientId || '',
+  ).trim();
   const rawPatientName=b.patientName??b.fullName;
   const submittedPatientName=typeof rawPatientName==='string'?rawPatientName.trim():'';
   const hasClinicProfile=Boolean(
@@ -1349,13 +1385,13 @@ app.post(
     : submittedPatientName;
   let profileRevision=Number(b.profileRevision||0);
   if (!validClinicalLabel(submissionId,160) ||
-      !validClinicalLabel(patientId,120) ||
+      !validClinicalLabel(submittedPatientId,120) ||
       !validClinicalLabel(patientName) ||
       !utcDateFromIso(b.date) || !looksLikeTime(b.time) ||
       !validSubmittedWellness(wellness)) {
     return res.status(400).json({error:'Invalid or incomplete submission.'});
   }
-  if (req.deviceIdentity.patientId !== patientId) {
+  if (req.deviceIdentity.patientId !== submittedPatientId) {
     return res.status(403).json({
       error: 'The submitted PatientId does not match this device enrolment.',
       code: 'patient_identity_mismatch',
@@ -1549,6 +1585,12 @@ app.post(
   });
 });
 
+function effectiveDevicePatientId(device) {
+  return String(
+    device?.recoveryTargetPatientId || device?.patientId || '',
+  ).trim();
+}
+
 function enrolmentPatients(rows) {
   const directory = patientDirectory(rows);
   const store = identityStore.snapshot();
@@ -1561,7 +1603,8 @@ function enrolmentPatients(rows) {
     const fromStore = store.patients[patientId];
     if (fromStore?.reviewIdentity) return null;
     const activeDeviceRecords = Object.values(store.devices).filter(
-      device => device.patientId === patientId && !device.revokedAt,
+      device => effectiveDevicePatientId(device) === patientId &&
+        !device.revokedAt,
     );
     const observedBuilds = [...new Set(activeDeviceRecords.map(device =>
       Number.isInteger(device.lastMobileBuild)
@@ -1574,6 +1617,9 @@ function enrolmentPatients(rows) {
       supportId: supportId(patientId),
       activeDevices: activeDeviceRecords.length,
       observedBuilds,
+      quarantinedAt: fromStore?.quarantinedAt || null,
+      quarantineReason: fromStore?.quarantineReason || null,
+      recoveredFrom: fromStore?.recoveredFrom || null,
       clinicalProfile: fromStore?.clinicalProfile || null,
       suggestedProfile: fromStore?.clinicalProfile
         ? null
@@ -1709,14 +1755,25 @@ function legacyProfileEditor(patient = null) {
       secondarySymptomIds: [],
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
-  return `<section class="panel"><h2>${patient ? 'Edit clinic-assigned profile' : 'Create patient profile'}</h2>
+  const identityField = patient
+    ? `<div class="field"><label>Clinic identity</label><div><strong>${html(patient.displayName)}</strong><br><span class="muted">${html(patient.supportId)} · The identity name is locked while editing its clinical profile.</span></div></div>
+      <input type="hidden" name="displayName" value="${html(patient.displayName)}">`
+    : '<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>';
+  const actions = patient
+    ? `<button type="submit" name="action" value="save">Save profile changes</button>
+        <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
+    : `<button type="submit" name="action" value="save">Create patient without a code</button>
+        <button type="submit" name="action" value="save-and-issue">Create patient and enrolment code</button>`;
+  return `<section class="panel"><h2>${patient ? 'Edit existing clinic identity' : 'Create a new patient identity'}</h2>
     <p class="muted">Build 7 compatibility editor: clinic staff control the patient name, disorders, and exactly three symptoms per disorder. Saving retains the nested schema for this patient.</p>
+    ${patient ? '<div class="notice"><strong>Edit mode:</strong> changes apply to this existing patient. Use “Cancel editing and create a new patient” for anybody else.</div>' : '<div class="notice"><strong>New-patient mode:</strong> submitting this form creates a distinct PatientId. After a code is issued, the form resets for the next patient.</div>'}
     ${suggested ? '<div class="notice"><strong>Suggested from the latest accepted check-in.</strong> Review all fields before saving.</div>' : ''}
     <form method="post" action="/admin/enrolments/save-profile" autocomplete="off" id="profileForm">
       <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
       <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
+      <input type="hidden" name="formMode" value="${patient ? 'edit' : 'create'}">
       <input type="hidden" name="profileModel" value="legacy-v1">
-      <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient?.displayName || '')}"></div>
+      ${identityField}
       <h3>Primary disorder</h3>
       <div class="field"><label>Disorder</label><select name="primaryDisorderId" id="primaryDisorder" required>${disorderOptions(profile.primaryDisorderId || 'migraine')}</select></div>
       <p class="muted"><span id="primaryCount">0</span>/3 symptoms selected</p>
@@ -1726,8 +1783,7 @@ function legacyProfileEditor(patient = null) {
       <p class="muted"><span id="secondaryCount">0</span>/3 symptoms selected</p>
       ${symptomSelectors('secondary', [profile.secondaryDisorderId], profile.secondarySymptomIds || [])}
       <div class="toolbar" style="margin-top:18px">
-        <button type="submit" name="action" value="save">Save profile</button>
-        <button type="submit" name="action" value="save-and-issue">Save and create enrolment code</button>
+        ${actions}
       </div>
     </form>
     <script>
@@ -1811,16 +1867,27 @@ function independentProfileEditor(patient = null) {
   );
   const disorderChoices = availableDisorders(selected.disorderIds);
   const symptomChoices = availableSymptoms(selected.symptomIds);
-  return `<section class="panel"><h2>${patient ? 'Edit clinic-assigned profile' : 'Create patient profile'}</h2>
+  const identityField = patient
+    ? `<div class="field"><label>Clinic identity</label><div><strong>${html(patient.displayName)}</strong><br><span class="muted">${html(patient.supportId)} · The identity name is locked while editing its clinical profile.</span></div></div>
+      <input type="hidden" name="displayName" value="${html(patient.displayName)}">`
+    : '<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>';
+  const actions = patient
+    ? `<button type="submit" name="action" value="save">Save profile changes</button>
+        <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
+    : `<button type="submit" name="action" value="save">Create patient without a code</button>
+        <button type="submit" name="action" value="save-and-issue">Create patient and enrolment code</button>`;
+  return `<section class="panel"><h2>${patient ? 'Edit existing clinic identity' : 'Create a new patient identity'}</h2>
     <p class="muted">Clinic staff independently select the patient’s disorders and between 1 and ${maximumIndependentSymptoms} symptoms. A symptom is rated once regardless of how many disorders are selected.</p>
+    ${patient ? '<div class="notice"><strong>Edit mode:</strong> changes apply to this existing patient. Use “Cancel editing and create a new patient” for anybody else.</div>' : '<div class="notice"><strong>New-patient mode:</strong> submitting this form creates a distinct PatientId. After a code is issued, the form resets for the next patient.</div>'}
     ${suggested ? '<div class="notice"><strong>Suggested from the latest accepted check-in.</strong> Review all fields before saving.</div>' : ''}
     ${migrating ? '<div class="notice"><strong>Build 7 profile migration.</strong> Saving creates a new schema-3 profile revision. The previous nested revision and all historical check-ins remain unchanged.</div>' : ''}
     <form method="post" action="/admin/enrolments/save-profile" autocomplete="off" id="profileForm">
       <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
       <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
+      <input type="hidden" name="formMode" value="${patient ? 'edit' : 'create'}">
       <input type="hidden" name="schemaVersion" value="3">
       <input type="hidden" name="profileModel" value="independent-v1">
-      <div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient?.displayName || '')}"></div>
+      ${identityField}
       <h3>Disorders</h3>
       <p class="muted">Select at least one. Disorders classify the patient; they do not constrain the symptom list.</p>
       <div class="patient-list" id="disorderChoices">
@@ -1832,8 +1899,7 @@ function independentProfileEditor(patient = null) {
         ${symptomChoices.map(symptom => `<label><input type="checkbox" name="symptomIds" value="${html(symptom.id)}" ${selected.symptomIds.includes(symptom.id) ? 'checked' : ''}>${html(symptom.displayName)}${symptom.active ? '' : ' (archived)'}</label>`).join('')}
       </div>
       <div class="toolbar" style="margin-top:18px">
-        <button type="submit" name="action" value="save">Save profile</button>
-        <button type="submit" name="action" value="save-and-issue">Save and create enrolment code</button>
+        ${actions}
       </div>
     </form>
     <script>
@@ -1882,7 +1948,7 @@ function enrolmentPage({
   const patients = enrolmentPatients(readRows());
   const csrfToken = adminCsrfToken();
   const editPatient = patients.find(
-    patient => patient.patientId === editPatientId,
+    patient => patient.patientId === editPatientId && !patient.quarantinedAt,
   ) || null;
   const notice = issued ? `<div class="notice">
     <strong>One-time enrolment code for ${html(issued.displayName)}</strong>
@@ -1890,29 +1956,38 @@ function enrolmentPage({
     <div>Support ID: ${html(issued.supportId)} · Expires: ${html(new Date(issued.expiresAt).toLocaleString('en-AU'))}</div>
     <div><strong>Enrolment link:</strong> <a href="${html(`${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`)}">${html(`${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`)}</a></div>
     <p><strong>Copy the link or code now.</strong> The code is not stored in readable form and cannot be shown again.</p>
+    <p><strong>A blank new-patient form is shown below.</strong> The issued identity is complete; do not edit it to enrol somebody else.</p>
   </div>` : '';
   const errorNotice = error ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>` : '';
   const messageNotice = message ? `<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>${html(message)}</strong></div>` : '';
-  const patientRows = patients.map(patient => `<tr>
+  const patientRows = patients.map(patient => {
+    const status = patient.quarantinedAt
+      ? '<strong class="flag">QUARANTINED IDENTITY COLLISION</strong>'
+      : patient.recoveredFrom
+      ? '<strong class="good">Recovered separate identity</strong>'
+      : '';
+    const actions = patient.quarantinedAt
+      ? '<a class="button danger" style="width:auto;padding:7px 10px" href="/admin/enrolments/recovery">Continue identity recovery</a>'
+      : `<a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}">Edit profile</a>
+        ${independentProfilesEnabled && patient.clinicalProfile && !isIndependentClinicalProfile(patient.clinicalProfile) ? `<a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}&profileMode=legacy">Maintain Build 7 profile</a>` : ''}
+        ${patient.clinicalProfile ? `<form class="inline-form" method="post" action="/admin/enrolments/issue">
+          <input type="hidden" name="csrfToken" value="${csrfToken}">
+          <input type="hidden" name="patientId" value="${html(patient.patientId)}">
+          <button type="submit">New device code</button>
+        </form>` : '<strong class="flag">Profile required</strong>'}
+        <form class="inline-form" method="post" action="/admin/enrolments/revoke" onsubmit="return confirm('Revoke every enrolled device for this patient?')">
+          <input type="hidden" name="csrfToken" value="${csrfToken}">
+          <input type="hidden" name="patientId" value="${html(patient.patientId)}">
+          <button class="danger" type="submit">Revoke devices</button>
+        </form>`;
+    return `<tr>
     <td>${html(patient.displayName)}</td>
     <td>${html(patient.supportId)}</td>
-    <td>${html(profileDescription(patient.clinicalProfile))}</td>
+    <td>${status}${status ? '<br>' : ''}${html(profileDescription(patient.clinicalProfile))}</td>
     <td>${patient.activeDevices}${patient.observedBuilds ? `<br><span class="muted">${html(patient.observedBuilds)}</span>` : ''}</td>
-    <td>
-      <a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}">Edit profile</a>
-      ${independentProfilesEnabled && patient.clinicalProfile && !isIndependentClinicalProfile(patient.clinicalProfile) ? `<a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}&profileMode=legacy">Maintain Build 7 profile</a>` : ''}
-      ${patient.clinicalProfile ? `<form class="inline-form" method="post" action="/admin/enrolments/issue">
-        <input type="hidden" name="csrfToken" value="${csrfToken}">
-        <input type="hidden" name="patientId" value="${html(patient.patientId)}">
-        <button type="submit">New device code</button>
-      </form>` : '<strong class="flag">Profile required</strong>'}
-      <form class="inline-form" method="post" action="/admin/enrolments/revoke" onsubmit="return confirm('Revoke every enrolled device for this patient?')">
-        <input type="hidden" name="csrfToken" value="${csrfToken}">
-        <input type="hidden" name="patientId" value="${html(patient.patientId)}">
-        <button class="danger" type="submit">Revoke devices</button>
-      </form>
-    </td>
-  </tr>`).join('');
+    <td>${actions}</td>
+  </tr>`;
+  }).join('');
   const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient, profileMode)}
   <section class="panel"><h2>Existing clinic identities</h2>
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
@@ -1920,6 +1995,79 @@ function enrolmentPage({
     <tbody>${patientRows || '<tr><td colspan="5">No patient identities yet.</td></tr>'}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
+}
+
+function enrolmentRecoveryPage({ error = '', recovered = null } = {}) {
+  const snapshot = identityStore.snapshot();
+  const originalCodes = Object.values(snapshot.enrolmentCodes)
+    .filter(record => !record.incidentRecovery);
+  const affectedRows = Object.values(snapshot.patients)
+    .filter(patient => patient && !patient.reviewIdentity)
+    .map(patient => {
+      const records = originalCodes.filter(
+        record => record.patientId === patient.patientId,
+      );
+      const activeDevices = Object.values(snapshot.devices).filter(
+        device => effectiveDevicePatientId(device) === patient.patientId &&
+          !device.revokedAt,
+      ).length;
+      const recoveredCodes = records.filter(record => record.recoveredAt).length;
+      return {
+        patient,
+        records,
+        activeDevices,
+        recoveredCodes,
+      };
+    })
+    .filter(item => item.records.length > 1 || item.patient.quarantinedAt)
+    .sort((left, right) =>
+      String(left.patient.displayName || '').localeCompare(
+        String(right.patient.displayName || ''),
+        'en-AU',
+      )
+    );
+  const candidateRows = affectedRows.map(item => `<tr>
+    <td>${html(item.patient.displayName || 'Unnamed patient')}</td>
+    <td>${html(supportId(item.patient.patientId))}</td>
+    <td>${item.records.length}</td>
+    <td>${item.recoveredCodes}</td>
+    <td>${item.activeDevices}</td>
+    <td>${item.patient.quarantinedAt ? '<strong class="flag">Quarantined</strong>' : '<strong class="flag">Collision suspected</strong>'}</td>
+  </tr>`).join('');
+  const errorNotice = error
+    ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>`
+    : '';
+  const recoveryNotice = recovered ? `<div class="notice" style="border-color:#047857;background:#ecfdf5">
+    <strong>Separate identity recovered for ${html(recovered.displayName)}</strong>
+    <div class="code">${html(recovered.code)}</div>
+    <div>New Support ID: ${html(recovered.supportId)} · Expires: ${html(new Date(recovered.expiresAt).toLocaleString('en-AU'))}</div>
+    <div><strong>Replacement enrolment link:</strong> <a href="${html(`${publicBaseUrl}/enrol#${normaliseCode(recovered.code)}`)}">${html(`${publicBaseUrl}/enrol#${normaliseCode(recovered.code)}`)}</a></div>
+    <p>Recovered profile: ${html(profileDescription(recovered.clinicalProfile))}</p>
+    <p>Original code status: <strong>${recovered.originalCodeWasUsed ? 'previously used on a phone' : 'not yet used'}</strong>. ${recovered.bridgedDevices ? 'Its installed device was matched to the original redemption and safely bridged to this recovered identity.' : recovered.bridgeAmbiguous ? 'More than one device matched the redemption time, so no automatic bridge was made; contact support before relying on unsent phone entries.' : 'No active installed device needed a recovery bridge.'} ${recovered.revokedDevices ? `${recovered.revokedDevices} unmatched device credential(s) were revoked.` : ''}</p>
+    <p><strong>Copy this replacement code now.</strong> It cannot be displayed again. For an already-installed phone, first reopen the app after mobile access is restored and let any pending check-ins sync. Only when Settings shows “Synced” should the patient use Settings → Clinic enrolment → Enter a new enrolment code. Entering the replacement code retires the temporary bridge.</p>
+    <p class="muted">Recovery backup: ${html(path.basename(recovered.backupPath))}</p>
+  </div>` : '';
+  const csrfToken = adminCsrfToken();
+  const lockdownNotice = enrolmentIncidentLockdown
+    ? '<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>Mobile containment is active.</strong> It is safe to recover identities while enrolment, profile sync, and symptom uploads remain paused.</div>'
+    : '<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>Recovery is blocked until mobile containment is active.</strong> Set <code>ENROLMENT_INCIDENT_LOCKDOWN=true</code> and restart the backend before recovering any code.</div>';
+  return pageShell('Identity recovery', `${recoveryNotice}${errorNotice}${lockdownNotice}
+    <section class="panel">
+      <h2>Recover one patient from the shared identity</h2>
+      <p>Use the <strong>original code sent to that patient</strong>. The server uses its issue-time profile revision to create a distinct PatientId and replacement code.</p>
+      <p class="flag">The first successful recovery quarantines the collided identity and invalidates all its original codes, immediately blocking the shared record. When a used code has one exact device match, that device is bridged only to its recovered identity so pending entries can sync safely after lockdown. Unmatched devices remain blocked and are revoked when recovery is complete. Existing mixed submissions are retained under the quarantined identity and are not reassigned automatically.</p>
+      <form method="post" action="/admin/enrolments/recover-collision" autocomplete="off" class="toolbar">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <div class="field"><label>Correct patient display name</label><input name="displayName" required maxlength="160"></div>
+        <div class="field"><label>Original enrolment code</label><input name="originalCode" required maxlength="20" placeholder="XXXX-XXXX-XXXX"></div>
+        <div class="field"><label>Type RECOVER to confirm</label><input name="confirmation" required autocomplete="off"></div>
+        <div class="field"><label>&nbsp;</label><button class="danger" type="submit">Recover separate identity</button></div>
+      </form>
+    </section>
+    <section class="panel"><h2>Collision status</h2>
+      <div class="table-wrap"><table><thead><tr><th>Current stored name</th><th>Shared Support ID</th><th>Original codes</th><th>Recovered</th><th>Active devices</th><th>Status</th></tr></thead>
+      <tbody>${candidateRows || '<tr><td colspan="6">No multi-code identity was detected.</td></tr>'}</tbody></table></div>
+    </section>`);
 }
 
 function disorderManagementPage({ error = '', message = '' } = {}) {
@@ -2198,15 +2346,70 @@ app.get('/admin/enrolments',requireAdmin,(req,res)=>{
   }));
 });
 
+app.get('/admin/enrolments/recovery',requireAdmin,(req,res)=>{
+  res.send(enrolmentRecoveryPage());
+});
+
+app.post(
+  '/admin/enrolments/recover-collision',
+  requireAdmin,
+  requireAdminCsrf,
+  (req,res)=>{
+    if (!enrolmentIncidentLockdown) {
+      return res.status(409).send(enrolmentRecoveryPage({
+        error: 'Enable ENROLMENT_INCIDENT_LOCKDOWN before recovering an identity.',
+      }));
+    }
+    if (String(req.body.confirmation || '').trim().toUpperCase() !== 'RECOVER') {
+      return res.status(400).send(enrolmentRecoveryPage({
+        error: 'Type RECOVER exactly to confirm identity recovery.',
+      }));
+    }
+    try {
+      const recovered = identityStore.recoverCollidedEnrolment({
+        originalCode: req.body.originalCode,
+        displayName: req.body.displayName,
+        expiresInDays: 14,
+      });
+      return res.status(201).send(enrolmentRecoveryPage({ recovered }));
+    } catch (error) {
+      return res.status(400).send(enrolmentRecoveryPage({
+        error: error.message,
+      }));
+    }
+  },
+);
+
 app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res)=>{
   const requestedIndependent =
     String(req.body.profileModel || '') === 'independent-v1' ||
     Number(req.body.schemaVersion) === 3;
   try {
     const patientId = String(req.body.patientId || '').trim();
+    const formMode = String(req.body.formMode || '').trim();
     const existingPatient = patientId
       ? identityStore.snapshot().patients[patientId]
       : null;
+    if (!['create', 'edit'].includes(formMode)) {
+      throw new Error(
+        'This enrolment form is stale. Reload the enrolments page before saving.',
+      );
+    }
+    if (formMode === 'create' && patientId) {
+      throw new Error(
+        'A new-patient form cannot contain an existing PatientId. Reload the enrolments page.',
+      );
+    }
+    if (formMode === 'edit' && (!patientId || !existingPatient)) {
+      throw new Error(
+        'The clinic identity being edited was not found. Reload the enrolments page.',
+      );
+    }
+    if (formMode === 'edit' && req.body.action === 'save-and-issue') {
+      throw new Error(
+        'An edit form cannot create a new-patient enrolment. Save the profile, then use New device code for this same patient.',
+      );
+    }
     if (requestedIndependent && !independentProfilesEnabled) {
       throw new Error(
         'Independent Build 8 profiles are not enabled in production yet.',
@@ -2270,7 +2473,7 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
     if (profileMinimumBuild(clinicalProfile) >= 8 && patientId) {
       const activeDevices = Object.values(identityStore.snapshot().devices)
         .filter(device =>
-        device.patientId === patientId && !device.revokedAt
+          effectiveDevicePatientId(device) === patientId && !device.revokedAt
         );
       const incompatibleDevices = activeDevices.filter(device =>
         !Number.isInteger(device.lastMobileBuild) ||
@@ -2289,7 +2492,9 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
     }
     const saved = identityStore.saveClinicalProfile({
       patientId,
-      displayName: String(req.body.displayName || '').trim(),
+      displayName: formMode === 'edit'
+        ? existingPatient.displayName
+        : String(req.body.displayName || '').trim(),
       clinicalProfile,
     });
     if (req.body.action === 'save-and-issue') {
@@ -2300,8 +2505,8 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
       });
       return res.status(201).send(enrolmentPage({
         issued,
-        editPatientId: saved.patientId,
-        profileMode: requestedIndependent ? '' : 'legacy',
+        editPatientId: '',
+        profileMode: '',
       }));
     }
     return res.send(enrolmentPage({
@@ -2312,7 +2517,9 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
   } catch (error) {
     return res.status(400).send(enrolmentPage({
       error: error.message,
-      editPatientId: String(req.body.patientId || '').trim(),
+      editPatientId: String(req.body.formMode || '').trim() === 'edit'
+        ? String(req.body.patientId || '').trim()
+        : '',
       profileMode: requestedIndependent ? '' : 'legacy',
     }));
   }
@@ -2327,6 +2534,7 @@ app.post('/admin/enrolments/issue',requireAdmin,requireAdminCsrf,(req,res)=>{
       patientId,
       displayName: patient.displayName,
       requireClinicalProfile: true,
+      replacesPatientId: patient.recoveredFrom?.patientId || '',
     });
     res.status(201).send(enrolmentPage({ issued, editPatientId: patientId }));
   } catch (error) {
@@ -2353,16 +2561,19 @@ function patientManagementPage({ error = '', message = '' } = {}) {
     const submissions = new Set(patientRows.map(row =>
       row.SubmissionId || `${row.Date}|${row.Time}`
     )).size;
+    const deletion = patient.quarantinedAt
+      ? '<strong class="flag">Preserved incident record — deletion disabled</strong>'
+      : `<form method="post" action="/admin/patients/delete" class="toolbar" onsubmit="return confirm('Permanently remove this patient from the portal and revoke every device? A server backup will be retained.')">
+          <input type="hidden" name="csrfToken" value="${csrfToken}">
+          <input type="hidden" name="patientId" value="${html(patient.patientId)}">
+          <div class="field"><label>Type ${html(patient.supportId)} to confirm</label><input name="confirmation" required autocomplete="off"></div>
+          <div class="field"><label>&nbsp;</label><button class="danger" type="submit">Delete patient</button></div>
+        </form>`;
     return `<tr>
       <td>${html(patient.displayName)}</td>
       <td>${html(patient.supportId)}</td>
       <td>${submissions}</td>
-      <td><form method="post" action="/admin/patients/delete" class="toolbar" onsubmit="return confirm('Permanently remove this patient from the portal and revoke every device? A server backup will be retained.')">
-        <input type="hidden" name="csrfToken" value="${csrfToken}">
-        <input type="hidden" name="patientId" value="${html(patient.patientId)}">
-        <div class="field"><label>Type ${html(patient.supportId)} to confirm</label><input name="confirmation" required autocomplete="off"></div>
-        <div class="field"><label>&nbsp;</label><button class="danger" type="submit">Delete patient</button></div>
-      </form></td>
+      <td>${deletion}</td>
     </tr>`;
   }).join('');
   const errorNotice = error
@@ -2395,6 +2606,11 @@ app.post('/admin/patients/delete',requireAdmin,requireAdminCsrf,(req,res)=>{
   if (!patient || storedPatient?.reviewIdentity) {
     return res.status(404).send(patientManagementPage({
       error: 'The patient identity was not found.',
+    }));
+  }
+  if (storedPatient?.quarantinedAt) {
+    return res.status(409).send(patientManagementPage({
+      error: 'A quarantined identity-collision record cannot be deleted through the portal.',
     }));
   }
   if (
@@ -2511,6 +2727,7 @@ app.get('/admin/population',requireAdmin,(req,res)=>{
   const disorder=disorderLabel(rows,disorderId);
   const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'weekly';
   const allPatients=[...new Set(rows.filter(r=>rowHasDisorder(r,disorderId)).map(patientKey).filter(Boolean))]
+    .filter(patientId => !directory.get(patientId)?.quarantined)
     .sort((a,b)=>(directory.get(a)?.label||a).localeCompare(directory.get(b)?.label||b));
   const selected=String(req.query.patients||'').split('|').filter(x=>allPatients.includes(x)).slice(0,10);
   const cohort=patientSeries(rows,disorderId,metric,aggregation,[],directory);

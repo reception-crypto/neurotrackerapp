@@ -153,6 +153,11 @@ function createIdentityStore({
     const store = readStore();
     const savedAt = now().toISOString();
     const existing = store.patients[id];
+    if (existing?.quarantinedAt) {
+      throw new Error(
+        'This clinic identity is quarantined and cannot be edited.',
+      );
+    }
     const previousProfile = existing?.clinicalProfile || null;
     const changed = !previousProfile ||
       !sameClinicalProfile(previousProfile, profile);
@@ -172,11 +177,21 @@ function createIdentityStore({
       ? [previousProfile]
       : [];
     if (changed) history.push(savedProfile);
+    const displayNameHistory = Array.isArray(existing?.displayNameHistory)
+      ? [...existing.displayNameHistory]
+      : [];
+    if (existing?.displayName && existing.displayName !== name) {
+      displayNameHistory.push({
+        displayName: existing.displayName,
+        replacedAt: savedAt,
+      });
+    }
 
     store.patients[id] = {
       ...existing,
       patientId: id,
       displayName: name,
+      displayNameHistory,
       createdAt: existing?.createdAt || savedAt,
       updatedAt: savedAt,
       clinicalProfile: savedProfile,
@@ -197,6 +212,7 @@ function createIdentityStore({
     displayName = '',
     expiresInDays = 7,
     requireClinicalProfile = false,
+    replacesPatientId = '',
   }) {
     const store = readStore();
     const { id, name } = validatePatientIdentity(patientId, displayName);
@@ -213,9 +229,20 @@ function createIdentityStore({
     } while (store.enrolmentCodes[codeHash]);
 
     const existing = store.patients[id];
+    if (existing?.quarantinedAt) {
+      throw new Error(
+        'This clinic identity is quarantined and cannot receive new codes.',
+      );
+    }
     if (requireClinicalProfile && !existing?.clinicalProfile) {
       throw new Error(
         'Configure the patient’s clinical profile before issuing a code.',
+      );
+    }
+    if (existing?.displayName && existing.displayName !== name) {
+      throw new Error(
+        'The enrolment name does not match this clinic identity. ' +
+        'Return to the enrolments page and select the correct patient.',
       );
     }
     store.patients[id] = {
@@ -227,11 +254,15 @@ function createIdentityStore({
     };
     store.enrolmentCodes[codeHash] = {
       patientId: id,
+      displayNameAtIssue: name,
       createdAt: issuedAt.toISOString(),
       expiresAt: expiresAt.toISOString(),
       usedAt: null,
       clinicManaged: Boolean(existing?.clinicalProfile),
       profileRevision: existing?.clinicalProfile?.revision || null,
+      ...(String(replacesPatientId || '').trim()
+        ? { replacesPatientId: String(replacesPatientId).trim() }
+        : {}),
     };
     writeStore(store);
 
@@ -262,17 +293,23 @@ function createIdentityStore({
     const codeHash = digest('enrolment-code', compactCode);
     const record = store.enrolmentCodes[codeHash];
     if (!record) return { status: 'invalid' };
+    if (record.invalidatedAt) return { status: 'invalidated' };
     if (record.usedAt) return { status: 'used' };
     if (new Date(record.expiresAt).getTime() <= now().getTime()) {
       return { status: 'expired' };
     }
     const expectedId = String(expectedPatientId || '').trim();
-    if (expectedId && record.patientId !== expectedId) {
+    const authorisedReplacement = Boolean(
+      expectedId &&
+      record.patientId !== expectedId &&
+      String(record.replacesPatientId || '').trim() === expectedId
+    );
+    if (expectedId && record.patientId !== expectedId && !authorisedReplacement) {
       return { status: 'patient_mismatch' };
     }
 
     const patient = store.patients[record.patientId];
-    if (!patient) return { status: 'invalid' };
+    if (!patient || patient.quarantinedAt) return { status: 'invalid' };
     const effectiveSupportedBuild = Number.isInteger(supportedMobileBuild)
       ? supportedMobileBuild
       : supportsClinicManagedProfile
@@ -296,6 +333,20 @@ function createIdentityStore({
     const deviceId = crypto.randomUUID();
     const redeemedAt = now().toISOString();
     record.usedAt = redeemedAt;
+    let replacedBridgeDevices = 0;
+    if (authorisedReplacement) {
+      for (const existingDevice of Object.values(store.devices)) {
+        if (
+          !existingDevice.revokedAt &&
+          existingDevice.patientId === expectedId &&
+          existingDevice.recoveryTargetPatientId === record.patientId
+        ) {
+          existingDevice.revokedAt = redeemedAt;
+          existingDevice.revocationReason = 'identity-recovery-replaced';
+          replacedBridgeDevices++;
+        }
+      }
+    }
     const device = {
       deviceId,
       patientId: record.patientId,
@@ -320,6 +371,205 @@ function createIdentityStore({
       displayName: patient.displayName,
       supportId: supportId(record.patientId),
       clinicalProfile: patient.clinicalProfile || null,
+      replacedPatientId: authorisedReplacement ? expectedId : null,
+      replacedBridgeDevices,
+    };
+  }
+
+  function recoverCollidedEnrolment({
+    originalCode = '',
+    displayName = '',
+    expiresInDays = 14,
+  } = {}) {
+    const compactCode = normaliseCode(originalCode);
+    if (compactCode.length !== 12) {
+      throw new Error('Enter the original 12-character enrolment code.');
+    }
+    const name = String(displayName || '').trim();
+    if (!name || name.length > 160) {
+      throw new Error('A patient display name is required.');
+    }
+    const days = Number(expiresInDays);
+    if (!Number.isInteger(days) || days < 1 || days > 30) {
+      throw new Error('The replacement-code lifetime is invalid.');
+    }
+
+    const store = readStore();
+    const originalCodeHash = digest('enrolment-code', compactCode);
+    const originalRecord = store.enrolmentCodes[originalCodeHash];
+    if (!originalRecord) {
+      throw new Error(
+        'The original code was not found in this clinic identity store.',
+      );
+    }
+    if (originalRecord.recoveredAt) {
+      throw new Error(
+        'This original code has already been recovered as a separate identity.',
+      );
+    }
+    const sourcePatientId = String(originalRecord.patientId || '').trim();
+    const sourcePatient = store.patients[sourcePatientId];
+    if (!sourcePatient || sourcePatient.reviewIdentity) {
+      throw new Error('The original code does not belong to a recoverable patient.');
+    }
+    const sourceCodeEntries = Object.entries(store.enrolmentCodes).filter(
+      ([, record]) => record.patientId === sourcePatientId && !record.incidentRecovery,
+    );
+    if (sourceCodeEntries.length < 2) {
+      throw new Error(
+        'This identity does not contain multiple original enrolment codes. Recovery was stopped.',
+      );
+    }
+    const revision = Number(originalRecord.profileRevision);
+    const profileHistory = Array.isArray(sourcePatient.clinicalProfileHistory)
+      ? sourcePatient.clinicalProfileHistory
+      : sourcePatient.clinicalProfile
+      ? [sourcePatient.clinicalProfile]
+      : [];
+    const sourceProfile = profileHistory.find(
+      profile => Number(profile?.revision) === revision,
+    ) || (
+      Number(sourcePatient.clinicalProfile?.revision) === revision
+        ? sourcePatient.clinicalProfile
+        : null
+    );
+    if (!sourceProfile) {
+      throw new Error(
+        `Clinical profile revision ${revision || 'unknown'} could not be recovered for this code.`,
+      );
+    }
+
+    const recoveredAt = now().toISOString();
+    const backupDir = path.join(dataDir, 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    const backupStamp = recoveredAt.replace(/[:.]/g, '-');
+    const backupPath = path.join(
+      backupDir,
+      `before-enrolment-recovery-${backupStamp}-${crypto.randomUUID().slice(0, 8)}.json`,
+    );
+    fs.copyFileSync(identityPath, backupPath, fs.constants.COPYFILE_EXCL);
+
+    const targetPatientId = createPatientId();
+    const bridgeCandidates = originalRecord.usedAt
+      ? Object.values(store.devices).filter(device =>
+          device.patientId === sourcePatientId &&
+          !device.revokedAt &&
+          !device.recoveryTargetPatientId &&
+          device.createdAt === originalRecord.usedAt
+        )
+      : [];
+    const bridgeDevice = bridgeCandidates.length === 1
+      ? bridgeCandidates[0]
+      : null;
+    let bridgedDevices = 0;
+    let containedDevices = 0;
+    for (const device of Object.values(store.devices)) {
+      if (device.patientId !== sourcePatientId || device.revokedAt) continue;
+      device.incidentQuarantinedAt = device.incidentQuarantinedAt || recoveredAt;
+      if (device === bridgeDevice) {
+        device.recoveryTargetPatientId = targetPatientId;
+        device.recoverySourcePatientId = sourcePatientId;
+        device.recoveryBridgedAt = recoveredAt;
+        bridgedDevices++;
+      } else if (!device.recoveryTargetPatientId) {
+        containedDevices++;
+      }
+    }
+    for (const [, record] of sourceCodeEntries) {
+      if (!record.invalidatedAt) {
+        record.invalidatedAt = recoveredAt;
+        record.invalidationReason = 'identity-collision-quarantine';
+      }
+    }
+
+    const recoveredProfile = JSON.parse(JSON.stringify(sourceProfile));
+    recoveredProfile.revision = Number(sourceProfile.revision) || revision || 1;
+    recoveredProfile.updatedAt = recoveredAt;
+    store.patients[targetPatientId] = {
+      patientId: targetPatientId,
+      displayName: name,
+      displayNameHistory: [],
+      createdAt: recoveredAt,
+      updatedAt: recoveredAt,
+      clinicalProfile: recoveredProfile,
+      clinicalProfileHistory: [recoveredProfile],
+      recoveredFrom: {
+        patientId: sourcePatientId,
+        originalCodeCreatedAt: originalRecord.createdAt || null,
+        originalCodeUsedAt: originalRecord.usedAt || null,
+        originalProfileRevision: revision,
+        recoveredAt,
+      },
+    };
+
+    sourcePatient.quarantinedAt = sourcePatient.quarantinedAt || recoveredAt;
+    sourcePatient.quarantineReason = 'multiple-patients-shared-one-identity';
+    const recoveredCodeCount = sourceCodeEntries.filter(
+      ([, record]) => record.recoveredAt,
+    ).length + 1;
+    sourcePatient.identityCollision = {
+      ...(sourcePatient.identityCollision || {}),
+      detectedAt: sourcePatient.identityCollision?.detectedAt || recoveredAt,
+      updatedAt: recoveredAt,
+      originalCodeCount: sourceCodeEntries.length,
+      recoveredCodeCount,
+    };
+    originalRecord.recoveredAt = recoveredAt;
+    originalRecord.recoveredPatientId = targetPatientId;
+    originalRecord.recoveredDisplayName = name;
+
+    let replacementCompact;
+    let replacementHash;
+    do {
+      replacementCompact = randomCode();
+      replacementHash = digest('enrolment-code', replacementCompact);
+    } while (store.enrolmentCodes[replacementHash]);
+    const expiresAt = new Date(
+      new Date(recoveredAt).getTime() + days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    store.enrolmentCodes[replacementHash] = {
+      patientId: targetPatientId,
+      displayNameAtIssue: name,
+      createdAt: recoveredAt,
+      expiresAt,
+      usedAt: null,
+      clinicManaged: true,
+      profileRevision: recoveredProfile.revision,
+      replacesPatientId: sourcePatientId,
+      incidentRecovery: true,
+      recoveredFromCodeHash: originalCodeHash,
+    };
+    let revokedDevices = 0;
+    if (recoveredCodeCount >= sourceCodeEntries.length) {
+      for (const device of Object.values(store.devices)) {
+        if (
+          device.patientId === sourcePatientId &&
+          !device.revokedAt &&
+          !device.recoveryTargetPatientId
+        ) {
+          device.revokedAt = recoveredAt;
+          device.revocationReason = 'identity-collision-unmatched-device';
+          revokedDevices++;
+        }
+      }
+    }
+    writeStore(store);
+
+    return {
+      patientId: targetPatientId,
+      displayName: name,
+      supportId: supportId(targetPatientId),
+      sourcePatientId,
+      sourceSupportId: supportId(sourcePatientId),
+      code: formatCode(replacementCompact),
+      expiresAt,
+      originalCodeWasUsed: Boolean(originalRecord.usedAt),
+      bridgedDevices,
+      bridgeAmbiguous: bridgeCandidates.length > 1,
+      containedDevices,
+      revokedDevices,
+      clinicalProfile: recoveredProfile,
+      backupPath,
     };
   }
 
@@ -412,6 +662,21 @@ function createIdentityStore({
     const tokenHash = digest('device-token', token);
     const device = store.devices[tokenHash];
     if (!device || device.revokedAt) return null;
+    const recoveryTargetPatientId = String(
+      device.recoveryTargetPatientId || '',
+    ).trim();
+    const sourcePatient = store.patients[device.patientId];
+    const patient = recoveryTargetPatientId
+      ? store.patients[recoveryTargetPatientId]
+      : sourcePatient;
+    if (!patient || patient.quarantinedAt) return null;
+    if (
+      recoveryTargetPatientId &&
+      (!sourcePatient?.quarantinedAt ||
+       patient.recoveredFrom?.patientId !== device.patientId)
+    ) {
+      return null;
+    }
 
     const usedAt = now().toISOString();
     device.lastUsedAt = usedAt;
@@ -419,7 +684,8 @@ function createIdentityStore({
     writeStore(store);
     return {
       ...device,
-      patient: store.patients[device.patientId] || null,
+      patient,
+      effectivePatientId: recoveryTargetPatientId || device.patientId,
     };
   }
 
@@ -444,7 +710,10 @@ function createIdentityStore({
     const revokedAt = now().toISOString();
     let revoked = 0;
     for (const device of Object.values(store.devices)) {
-      if (device.patientId === id && !device.revokedAt) {
+      if (
+        !device.revokedAt &&
+        (device.patientId === id || device.recoveryTargetPatientId === id)
+      ) {
         device.revokedAt = revokedAt;
         revoked++;
       }
@@ -459,6 +728,7 @@ function createIdentityStore({
     if (!id || !name || name.length > 160) return;
     const store = readStore();
     const existing = store.patients[id];
+    if (existing?.quarantinedAt) return;
     store.patients[id] = {
       ...existing,
       patientId: id,
@@ -506,6 +776,7 @@ function createIdentityStore({
     const refreshedAt = now().toISOString();
     let updatedPatients = 0;
     for (const patient of Object.values(store.patients)) {
+      if (patient?.quarantinedAt) continue;
       const previousProfile = patient?.clinicalProfile;
       if (!previousProfile || !matches(previousProfile)) continue;
       const refreshedProfile = normaliseClinicalProfile(
@@ -560,6 +831,7 @@ function createIdentityStore({
     const reconciledAt = now().toISOString();
     let updatedPatients = 0;
     for (const patient of Object.values(store.patients)) {
+      if (patient?.quarantinedAt) continue;
       const previousProfile = patient?.clinicalProfile;
       if (!previousProfile) continue;
       const refreshedProfile = normaliseClinicalProfile(
@@ -678,6 +950,7 @@ function createIdentityStore({
     }
 
     for (const patient of Object.values(store.patients)) {
+      if (patient?.quarantinedAt) continue;
       if (!patient?.clinicalProfile) continue;
       const before = JSON.stringify({
         current: patient.clinicalProfile,
@@ -729,7 +1002,10 @@ function createIdentityStore({
       }
     }
     for (const [tokenHash, device] of Object.entries(store.devices)) {
-      if (device.patientId === id) {
+      if (
+        device.patientId === id ||
+        device.recoveryTargetPatientId === id
+      ) {
         delete store.devices[tokenHash];
         devices++;
       }
@@ -774,6 +1050,7 @@ function createIdentityStore({
     identityPath,
     deletePatient,
     issueEnrolmentCode,
+    recoverCollidedEnrolment,
     saveClinicalProfile,
     redeemEnrolmentCode,
     enrolReusableReviewDevice,

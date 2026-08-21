@@ -130,6 +130,38 @@ device rather than bypassing the safeguard.
 For a reinstall or replacement phone, use **New device code** on the existing
 Support ID. Do not create a second patient identity.
 
+## Enrolment identity collision recovery
+
+If several codes were accidentally issued from one patient edit form, stop the
+backend service and preserve the entire data directory before doing anything
+else. Set `ENROLMENT_INCIDENT_LOCKDOWN=true`, restart the backend, and confirm
+`/health` reports `"enrolmentIncidentLockdown":true`. The lockdown leaves the
+clinician portal available but returns HTTP 503 for mobile enrolment, profile
+sync, and symptom uploads.
+
+Open `/admin/enrolments/recovery`. For each affected person, enter the exact
+original code sent to that person and the correct display name. The first
+successful recovery quarantines the shared identity, invalidates all original
+codes attached to it, and blocks all attached devices. For a previously used
+code, the server matches the code redemption time to its device credential. A
+single exact match is bridged only to that recovered PatientId so pending phone
+entries can sync to the correct record after lockdown. Unmatched devices remain
+blocked and are revoked when all original codes have been processed. Each code
+is recovered into a distinct PatientId with its issue-time clinical profile
+revision and a one-time replacement code. The server creates an identity-store
+backup before every recovery.
+
+Do not automatically reassign existing CSV submissions from the quarantined
+identity: the current CSV schema cannot prove which device submitted an entry.
+Keep those rows as incident evidence and reconcile them manually only with
+independent clinical confirmation. Once every affected code has been recovered
+and the replacement instructions are ready, set
+`ENROLMENT_INCIDENT_LOCKDOWN=false`, restart, and confirm `/health` reports
+`false`. An already-installed patient should reopen the app and wait until
+Settings shows `Synced` before entering the replacement code from Settings.
+That step retires the temporary recovery bridge and stores the new PatientId on
+the phone.
+
 ## Mobile version policy
 
 The backend recognises the Build 7 protocol:

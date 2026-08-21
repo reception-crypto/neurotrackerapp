@@ -418,6 +418,7 @@ test('Build 8-only disorder and symptom assignment remains gated until explicitl
           const csrfToken = html.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
           const form = new URLSearchParams({
             csrfToken,
+            formMode: 'create',
             displayName: 'Gated Patient',
             primaryDisorderId: custom.id,
             action: 'save',
@@ -436,6 +437,7 @@ test('Build 8-only disorder and symptom assignment remains gated until explicitl
           console.log('GATE_MESSAGE=' + body.includes('disabled until Build 8 is available'));
           const symptomForm = new URLSearchParams({
             csrfToken,
+            formMode: 'create',
             displayName: 'Gated Symptom Patient',
             primaryDisorderId: 'migraine',
             action: 'save',
@@ -495,6 +497,7 @@ test('independent profile assignment remains gated during predeployment', async 
   assert.ok(csrfToken);
   const form = new URLSearchParams({
     csrfToken,
+    formMode: 'create',
     displayName: 'Premature Independent Profile',
     schemaVersion: '3',
     profileModel: 'independent-v1',
@@ -754,6 +757,7 @@ test('admin profile forms require CSRF and never store plaintext codes', async (
 
   const form = new URLSearchParams({
     csrfToken,
+    formMode: 'create',
     displayName: 'Portal Enrolment Test',
     primaryDisorder: 'Migraine',
     secondaryDisorder: '',
@@ -781,6 +785,147 @@ test('admin profile forms require CSRF and never store plaintext codes', async (
   );
   assert.equal(storedIdentity.includes(code), false);
   assert.equal(storedIdentity.includes(code.replaceAll('-', '')), false);
+});
+
+test('consecutive portal enrolments create distinct identities without a refresh', async () => {
+  const pageResponse = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  const page = await pageResponse.text();
+  const csrfToken = page.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+  const codesBefore = new Set(
+    Object.keys(identityStore.snapshot().enrolmentCodes),
+  );
+
+  const createAndIssue = displayName => {
+    const form = new URLSearchParams({
+      csrfToken,
+      formMode: 'create',
+      displayName,
+      primaryDisorder: 'Migraine',
+      secondaryDisorder: '',
+      action: 'save-and-issue',
+    });
+    for (const symptom of ['Headache', 'Nausea', 'Vomiting']) {
+      form.append('primarySymptoms', symptom);
+    }
+    return fetch(`${baseUrl}/admin/enrolments/save-profile`, {
+      method: 'POST',
+      headers: {
+        ...adminHeaders(),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: form,
+    });
+  };
+
+  const firstResponse = await createAndIssue('Sequential Patient One');
+  assert.equal(firstResponse.status, 201);
+  const firstPage = await firstResponse.text();
+  const firstForm = firstPage.match(
+    /<form method="post" action="\/admin\/enrolments\/save-profile"[^>]*id="profileForm">([\s\S]*?)<\/form>/,
+  )?.[1] || '';
+  assert.match(firstPage, /Create a new patient identity/);
+  assert.match(firstForm, /name="patientId" value=""/);
+  assert.match(firstForm, /name="formMode" value="create"/);
+
+  const secondResponse = await createAndIssue('Sequential Patient Two');
+  assert.equal(secondResponse.status, 201);
+
+  const snapshot = identityStore.snapshot();
+  const firstPatient = Object.values(snapshot.patients).find(
+    patient => patient.displayName === 'Sequential Patient One',
+  );
+  const secondPatient = Object.values(snapshot.patients).find(
+    patient => patient.displayName === 'Sequential Patient Two',
+  );
+  assert.ok(firstPatient);
+  assert.ok(secondPatient);
+  assert.notEqual(firstPatient.patientId, secondPatient.patientId);
+  const newCodes = Object.entries(snapshot.enrolmentCodes)
+    .filter(([codeHash]) => !codesBefore.has(codeHash))
+    .map(([, record]) => record);
+  assert.equal(newCodes.length, 2);
+  assert.equal(new Set(newCodes.map(record => record.patientId)).size, 2);
+  assert.deepEqual(
+    new Set(newCodes.map(record => record.displayNameAtIssue)),
+    new Set(['Sequential Patient One', 'Sequential Patient Two']),
+  );
+
+  const editPage = await fetch(
+    `${baseUrl}/admin/enrolments?editPatientId=${encodeURIComponent(firstPatient.patientId)}`,
+    { headers: adminHeaders() },
+  ).then(response => response.text());
+  const editForm = editPage.match(
+    /<form method="post" action="\/admin\/enrolments\/save-profile"[^>]*id="profileForm">([\s\S]*?)<\/form>/,
+  )?.[1] || '';
+  assert.match(editForm, /name="formMode" value="edit"/);
+  assert.match(
+    editForm,
+    /type="hidden" name="displayName" value="Sequential Patient One"/,
+  );
+  assert.doesNotMatch(editForm, /name="action" value="save-and-issue"/);
+
+  const tamperedEdit = new URLSearchParams({
+    csrfToken,
+    formMode: 'edit',
+    patientId: firstPatient.patientId,
+    displayName: 'Collision Target',
+    primaryDisorder: 'Migraine',
+    secondaryDisorder: '',
+    action: 'save-and-issue',
+  });
+  for (const symptom of ['Headache', 'Nausea', 'Vomiting']) {
+    tamperedEdit.append('primarySymptoms', symptom);
+  }
+  const blocked = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: tamperedEdit,
+  });
+  assert.equal(blocked.status, 400);
+  assert.match(await blocked.text(), /edit form cannot create a new-patient enrolment/i);
+  assert.equal(
+    identityStore.snapshot().patients[firstPatient.patientId].displayName,
+    'Sequential Patient One',
+  );
+  assert.equal(
+    Object.keys(identityStore.snapshot().enrolmentCodes).length,
+    Object.keys(snapshot.enrolmentCodes).length,
+  );
+});
+
+test('stale enrolment forms cannot modify clinic identities', async () => {
+  const page = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  }).then(response => response.text());
+  const csrfToken = page.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  const response = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      csrfToken,
+      displayName: 'Stale Form Patient',
+      primaryDisorder: 'Migraine',
+      primarySymptoms: 'Headache',
+      action: 'save',
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /form is stale/i);
+  assert.equal(
+    Object.values(identityStore.snapshot().patients).some(
+      patient => patient.displayName === 'Stale Form Patient',
+    ),
+    false,
+  );
 });
 
 test('admin disorder creation requires CSRF, exact confirmation, and uniqueness', async () => {
@@ -902,6 +1047,7 @@ test('admin can add a controlled symptom and change disorder availability withou
 
   const profileForm = new URLSearchParams({
     csrfToken,
+    formMode: 'create',
     displayName: 'Custom Symptom Patient',
     primaryDisorderId: 'migraine',
     action: 'save',
@@ -966,6 +1112,7 @@ test('an active Build 7 device blocks a Build 8-only profile assignment', async 
     const form = new URLSearchParams({
       csrfToken,
       patientId: identity.patientId,
+      formMode: 'edit',
       displayName: 'Build Seven Guard',
       primaryDisorderId: custom.id,
       action: 'save',
@@ -1662,6 +1809,96 @@ test('a recovery code keeps the PatientId and revoked devices are rejected', asy
     recovery.accessToken,
   );
   assert.equal(response.status, 401);
+});
+
+test('a recovered device sends pending entries to its separate identity before replacement', async () => {
+  const original = await enrolClinicManaged({
+    patientId: 'pt-collided-pending-bridge',
+    displayName: 'Accidental First Name',
+  });
+  const second = identityStore.saveClinicalProfile({
+    patientId: original.patientId,
+    displayName: 'Accidental Second Name',
+    clinicalProfile: {
+      primaryDisorder: 'Migraine',
+      primarySymptoms: ['Headache', 'Dizziness', 'Fatigue'],
+      secondaryDisorder: null,
+      secondarySymptoms: [],
+    },
+  });
+  const secondCode = identityStore.issueEnrolmentCode({
+    patientId: second.patientId,
+    displayName: second.displayName,
+    requireClinicalProfile: true,
+  });
+
+  const recovered = identityStore.recoverCollidedEnrolment({
+    originalCode: original.issued.code,
+    displayName: 'Recovered Pending Patient',
+  });
+  assert.equal(recovered.bridgedDevices, 1);
+
+  const bridgedProfileResponse = await fetch(`${baseUrl}/api/profile`, {
+    headers: build7Headers(original.accessToken),
+  });
+  assert.equal(bridgedProfileResponse.status, 200);
+  const bridgedProfile = await bridgedProfileResponse.json();
+  assert.equal(bridgedProfile.patientId, original.patientId);
+  assert.equal(bridgedProfile.displayName, 'Recovered Pending Patient');
+  assert.equal(
+    bridgedProfile.clinicalProfile.revision,
+    recovered.clinicalProfile.revision,
+  );
+
+  const pendingSubmissionId = 'NS-recovered-pending-bridge';
+  const pendingBody = validSubmission({
+    submissionId: pendingSubmissionId,
+    patientId: original.patientId,
+    patientName: 'Accidental First Name',
+    date: '2026-08-30',
+  });
+  pendingBody.profileRevision = recovered.clinicalProfile.revision;
+  const pendingResponse = await post(
+    pendingBody,
+    original.accessToken,
+    { clinicManaged: true },
+  );
+  assert.equal(pendingResponse.status, 201);
+  const pendingRows = fs.readFileSync(csvPath, 'utf8')
+    .split(/\r?\n/)
+    .filter(row => row.includes(pendingSubmissionId));
+  assert.equal(pendingRows.length, 3);
+  assert.equal(
+    pendingRows.every(row => row.includes(`,${recovered.patientId},`)),
+    true,
+  );
+  assert.equal(
+    pendingRows.some(row => row.includes(`,${original.patientId},`)),
+    false,
+  );
+
+  const replacementResponse = await fetch(`${baseUrl}/api/enrol`, {
+    method: 'POST',
+    headers: build7Headers(),
+    body: JSON.stringify({
+      code: recovered.code,
+      expectedPatientId: original.patientId,
+    }),
+  });
+  assert.equal(replacementResponse.status, 200);
+  assert.equal(
+    (await replacementResponse.json()).patientId,
+    recovered.patientId,
+  );
+  const retiredBridge = await fetch(`${baseUrl}/api/profile`, {
+    headers: build7Headers(original.accessToken),
+  });
+  assert.equal(retiredBridge.status, 401);
+
+  identityStore.recoverCollidedEnrolment({
+    originalCode: secondCode.code,
+    displayName: 'Recovered Second Patient',
+  });
 });
 
 test('patient deletion requires typed Support ID and creates backups', async () => {

@@ -334,6 +334,141 @@ test('device compatibility observations retain Build 7 traffic evidence', () => 
   }
 });
 
+test('collided codes recover into separate identities and replace the shared PatientId', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    let clock = new Date('2026-08-21T01:00:00.000Z');
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+      now: () => clock,
+    });
+    const first = identityStore.saveClinicalProfile({
+      patientId: 'pt-collided-identity',
+      displayName: 'First Visible Name',
+      clinicalProfile: {
+        primaryDisorder: 'Migraine',
+        primarySymptoms: ['Headache', 'Nausea', 'Vomiting'],
+        secondaryDisorder: null,
+        secondarySymptoms: [],
+      },
+    });
+    const firstCode = identityStore.issueEnrolmentCode({
+      patientId: first.patientId,
+      displayName: first.displayName,
+      requireClinicalProfile: true,
+    });
+    const firstDevice = identityStore.redeemEnrolmentCode(firstCode.code, {
+      supportedMobileBuild: 7,
+      supportsClinicManagedProfile: true,
+    });
+    assert.equal(firstDevice.status, 'ok');
+
+    clock = new Date('2026-08-21T01:05:00.000Z');
+    const second = identityStore.saveClinicalProfile({
+      patientId: first.patientId,
+      displayName: 'Last Visible Name',
+      clinicalProfile: {
+        primaryDisorder: 'Migraine',
+        primarySymptoms: ['Headache', 'Dizziness', 'Fatigue'],
+        secondaryDisorder: null,
+        secondarySymptoms: [],
+      },
+    });
+    const secondCode = identityStore.issueEnrolmentCode({
+      patientId: second.patientId,
+      displayName: second.displayName,
+      requireClinicalProfile: true,
+    });
+    assert.equal(second.clinicalProfile.revision, 2);
+
+    clock = new Date('2026-08-21T02:00:00.000Z');
+    const recoveredFirst = identityStore.recoverCollidedEnrolment({
+      originalCode: firstCode.code,
+      displayName: 'Correct Patient One',
+    });
+    assert.notEqual(recoveredFirst.patientId, first.patientId);
+    assert.equal(recoveredFirst.originalCodeWasUsed, true);
+    assert.equal(recoveredFirst.bridgedDevices, 1);
+    assert.equal(recoveredFirst.revokedDevices, 0);
+    assert.deepEqual(
+      recoveredFirst.clinicalProfile.primarySymptoms,
+      ['Headache', 'Nausea', 'Vomiting'],
+    );
+    assert.equal(recoveredFirst.clinicalProfile.revision, 1);
+    const bridgedIdentity = identityStore.authenticate(firstDevice.accessToken);
+    assert.equal(bridgedIdentity.patientId, first.patientId);
+    assert.equal(bridgedIdentity.effectivePatientId, recoveredFirst.patientId);
+    assert.equal(
+      bridgedIdentity.patient.displayName,
+      'Correct Patient One',
+    );
+    assert.equal(
+      identityStore.redeemEnrolmentCode(secondCode.code, {
+        supportedMobileBuild: 7,
+        supportsClinicManagedProfile: true,
+      }).status,
+      'invalidated',
+    );
+
+    const replacementDevice = identityStore.redeemEnrolmentCode(
+      recoveredFirst.code,
+      {
+        expectedPatientId: first.patientId,
+        supportedMobileBuild: 7,
+        supportsClinicManagedProfile: true,
+      },
+    );
+    assert.equal(replacementDevice.status, 'ok');
+    assert.equal(replacementDevice.patientId, recoveredFirst.patientId);
+    assert.equal(replacementDevice.replacedPatientId, first.patientId);
+    assert.equal(replacementDevice.replacedBridgeDevices, 1);
+    assert.equal(identityStore.authenticate(firstDevice.accessToken), null);
+
+    clock = new Date('2026-08-21T02:05:00.000Z');
+    const recoveredSecond = identityStore.recoverCollidedEnrolment({
+      originalCode: secondCode.code,
+      displayName: 'Correct Patient Two',
+    });
+    assert.notEqual(recoveredSecond.patientId, recoveredFirst.patientId);
+    assert.equal(recoveredSecond.originalCodeWasUsed, false);
+    assert.deepEqual(
+      recoveredSecond.clinicalProfile.primarySymptoms,
+      ['Headache', 'Dizziness', 'Fatigue'],
+    );
+    assert.equal(recoveredSecond.clinicalProfile.revision, 2);
+    const snapshot = identityStore.snapshot();
+    assert.ok(snapshot.patients[first.patientId].quarantinedAt);
+    assert.equal(
+      snapshot.patients[first.patientId].identityCollision.recoveredCodeCount,
+      2,
+    );
+    assert.throws(
+      () => identityStore.issueEnrolmentCode({
+        patientId: first.patientId,
+        displayName: snapshot.patients[first.patientId].displayName,
+      }),
+      /quarantined/,
+    );
+    assert.throws(
+      () => identityStore.recoverCollidedEnrolment({
+        originalCode: firstCode.code,
+        displayName: 'Duplicate Recovery',
+      }),
+      /already been recovered/,
+    );
+    assert.equal(
+      fs.readdirSync(path.join(dataDir, 'backups'))
+        .filter(name => name.startsWith('before-enrolment-recovery-')).length,
+      2,
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('independent profiles require an explicitly capable Build 8 device', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
   try {
