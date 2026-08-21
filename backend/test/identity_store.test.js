@@ -469,6 +469,116 @@ test('collided codes recover into separate identities and replace the shared Pat
   }
 });
 
+test('a disentangled source identity and its recovered device bridge can both return to use', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    let clock = new Date('2026-08-21T04:00:00.000Z');
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+      now: () => clock,
+    });
+    const shared = identityStore.saveClinicalProfile({
+      patientId: 'pt-disentangled-source',
+      displayName: 'Patient Moved Away',
+      clinicalProfile: {
+        primaryDisorder: 'Migraine',
+        primarySymptoms: ['Headache', 'Nausea', 'Vomiting'],
+        secondaryDisorder: null,
+        secondarySymptoms: [],
+      },
+    });
+    const movedCode = identityStore.issueEnrolmentCode({
+      patientId: shared.patientId,
+      displayName: shared.displayName,
+      requireClinicalProfile: true,
+    });
+    const movedDevice = identityStore.redeemEnrolmentCode(movedCode.code, {
+      supportedMobileBuild: 7,
+      supportsClinicManagedProfile: true,
+    });
+    assert.equal(movedDevice.status, 'ok');
+
+    clock = new Date('2026-08-21T04:05:00.000Z');
+    const retained = identityStore.saveClinicalProfile({
+      patientId: shared.patientId,
+      displayName: 'Legitimate Retained Patient',
+      clinicalProfile: {
+        primaryDisorder: 'Migraine',
+        primarySymptoms: ['Headache', 'Dizziness', 'Fatigue'],
+        secondaryDisorder: null,
+        secondarySymptoms: [],
+      },
+    });
+    const retainedCode = identityStore.issueEnrolmentCode({
+      patientId: retained.patientId,
+      displayName: retained.displayName,
+      requireClinicalProfile: true,
+    });
+    const retainedDevice = identityStore.redeemEnrolmentCode(
+      retainedCode.code,
+      {
+        supportedMobileBuild: 7,
+        supportsClinicManagedProfile: true,
+      },
+    );
+    assert.equal(retainedDevice.status, 'ok');
+
+    clock = new Date('2026-08-21T04:10:00.000Z');
+    const recovered = identityStore.recoverCollidedEnrolment({
+      originalCode: movedCode.code,
+      displayName: 'Correct Moved Patient',
+    });
+    assert.equal(recovered.bridgedDevices, 1);
+    assert.equal(identityStore.authenticate(retainedDevice.accessToken), null);
+
+    const identityPath = path.join(dataDir, 'identity_store.json');
+    const releasedStore = identityStore.snapshot();
+    const source = releasedStore.patients[shared.patientId];
+    source.identityCollision.originalQuarantinedAt = source.quarantinedAt;
+    source.identityCollision.quarantineReleasedAt =
+      '2026-08-21T06:00:00.000Z';
+    source.identityCollision.resolutionDisposition =
+      'disentangled-source-restored';
+    delete source.quarantinedAt;
+    delete source.quarantineReason;
+    fs.writeFileSync(
+      identityPath,
+      `${JSON.stringify(releasedStore, null, 2)}\n`,
+      'utf8',
+    );
+
+    const movedAfterRelease = identityStore.authenticate(
+      movedDevice.accessToken,
+    );
+    assert.equal(movedAfterRelease.patientId, shared.patientId);
+    assert.equal(movedAfterRelease.effectivePatientId, recovered.patientId);
+    assert.equal(
+      movedAfterRelease.patient.displayName,
+      'Correct Moved Patient',
+    );
+    const retainedAfterRelease = identityStore.authenticate(
+      retainedDevice.accessToken,
+    );
+    assert.equal(retainedAfterRelease.patientId, shared.patientId);
+    assert.equal(retainedAfterRelease.effectivePatientId, shared.patientId);
+    assert.equal(
+      retainedAfterRelease.patient.displayName,
+      'Legitimate Retained Patient',
+    );
+    const newSourceCode = identityStore.issueEnrolmentCode({
+      patientId: shared.patientId,
+      displayName: 'Legitimate Retained Patient',
+      requireClinicalProfile: true,
+    });
+    assert.match(newSourceCode.code, /^[A-Z2-9]{4}(?:-[A-Z2-9]{4}){2}$/);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('independent profiles require an explicitly capable Build 8 device', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
   try {

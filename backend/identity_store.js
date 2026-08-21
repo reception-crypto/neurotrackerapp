@@ -670,9 +670,13 @@ function createIdentityStore({
       ? store.patients[recoveryTargetPatientId]
       : sourcePatient;
     if (!patient || patient.quarantinedAt) return null;
+    const sourceWasCollisionOrigin = Boolean(
+      sourcePatient?.quarantinedAt ||
+      sourcePatient?.identityCollision?.quarantineReleasedAt
+    );
     if (
       recoveryTargetPatientId &&
-      (!sourcePatient?.quarantinedAt ||
+      (!sourceWasCollisionOrigin ||
        patient.recoveredFrom?.patientId !== device.patientId)
     ) {
       return null;
