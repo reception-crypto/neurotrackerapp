@@ -83,6 +83,9 @@ if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0) {
 $pubspecPath = Join-Path $projectRoot 'pubspec.yaml'
 $gradlePath = Join-Path $projectRoot 'android\app\build.gradle.kts'
 $gradlePropertiesPath = Join-Path $projectRoot 'android\gradle.properties'
+$gradleWrapperPath = Join-Path `
+    $projectRoot `
+    'android\gradle\wrapper\gradle-wrapper.properties'
 $manifestPath = Join-Path `
     $projectRoot `
     'android\app\src\main\AndroidManifest.xml'
@@ -126,6 +129,10 @@ if (
     $gradleProperties -notmatch 'android\.newDsl=false'
 ) {
     throw 'The verified Flutter/Gradle compatibility settings are missing.'
+}
+$gradleWrapper = Get-Content -LiteralPath $gradleWrapperPath -Raw
+if ($gradleWrapper -notmatch 'gradle-8\.14\.3-all\.zip') {
+    throw 'The verified Gradle 8.14.3 wrapper pin is missing.'
 }
 if ((Get-Content -LiteralPath $manifestPath -Raw) -notmatch
     'android:allowBackup="false"') {

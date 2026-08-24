@@ -16,6 +16,12 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Verify Android release toolchain pin
+        run: |
+          grep -n -F 'gradle-8.14.3-all.zip' android/gradle/wrapper/gradle-wrapper.properties
+          grep -n -E 'com.android.application.*8\.13\.2' android/settings.gradle.kts
+          grep -n -F 'android.newDsl=false' android/gradle.properties
+          grep -n -F 'android.builtInKotlin=false' android/gradle.properties
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
