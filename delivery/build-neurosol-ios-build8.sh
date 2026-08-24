@@ -58,7 +58,7 @@ for required_commit in "${required_ancestors[@]}"; do
 done
 
 release_directory="$project_root/delivery/ios-build8"
-release_ipa="$release_directory/NeuroSol-Symptom-Diary-1.0.0-build8.ipa"
+release_ipa="$release_directory/NeuroSol-Symptom-Diary-1.1.0-build8.ipa"
 metadata_path="$release_directory/release.json"
 if [[ $force == false ]]; then
   for target in "$release_ipa" "$metadata_path"; do
@@ -89,7 +89,7 @@ if [[ -n $source_status ]]; then
   exit 1
 fi
 
-grep -Eq '^version:[[:space:]]*1\.0\.0\+8[[:space:]]*$' pubspec.yaml
+grep -Eq '^version:[[:space:]]*1\.1\.0\+8[[:space:]]*$' pubspec.yaml
 grep -Fq 'appBuildNumber = 8' lib/app_identity.dart
 grep -Fq 'clinic-managed-v1' lib/app_identity.dart
 grep -Fq 'canonical-v1' lib/app_identity.dart
@@ -164,7 +164,7 @@ fi
 echo 'Building signed Build 8 iOS archive and IPA...'
 flutter build ipa \
   --release \
-  --build-name=1.0.0 \
+  --build-name=1.1.0 \
   --build-number=8 \
   --dart-define=NEUROTRACKER_API_URL=https://tracker.melindapascoeneurology.com
 
@@ -191,7 +191,7 @@ built_version=$(/usr/libexec/PlistBuddy \
 built_number=$(/usr/libexec/PlistBuddy \
   -c 'Print :CFBundleVersion' "$app_bundle/Info.plist")
 if [[ $built_bundle_id != au.com.pascoeneurology.neurosol || \
-      $built_version != 1.0.0 || $built_number != 8 ]]; then
+      $built_version != 1.1.0 || $built_number != 8 ]]; then
   echo \
     "Unexpected signed IPA identity: $built_bundle_id $built_version ($built_number)" \
     >&2
@@ -222,7 +222,7 @@ const [
 const release = {
   releaseFormat: 1,
   product: 'NeuroSol Symptom Diary',
-  versionName: '1.0.0',
+  versionName: '1.1.0',
   buildNumber: 8,
   bundleId: 'au.com.pascoeneurology.neurosol',
   backendVersion: '0.10.0',

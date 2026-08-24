@@ -30,7 +30,7 @@ This one command restores Flutter and backend dependencies, formats and checks
 the source, runs Flutter analysis, all Flutter tests, all backend tests, and the
 clinical-data deployment probes. It then builds the signed IPA with:
 
-- version `1.0.0`
+- version `1.1.0`
 - build number `8`
 - bundle ID `au.com.pascoeneurology.neurosol`
 - production API `https://tracker.melindapascoeneurology.com`

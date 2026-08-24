@@ -9,7 +9,7 @@ before either Build 8 mobile app is released.
 
 - [ ] Confirm the branch contains the public Build 7 source plus the additive
       Build 8 backend compatibility changes.
-- [ ] Confirm `pubspec.yaml` is `1.0.0+8`, backend is `0.10.0`, and both app IDs
+- [ ] Confirm `pubspec.yaml` is `1.1.0+8`, backend is `0.10.0`, and both app IDs
       remain `au.com.pascoeneurology.neurosol`.
 - [ ] Confirm the source descends from independent architecture `1c9a365`,
       visual identity `f2adba0`, identity hotfix `fa351d7`, and restored bridge
@@ -141,7 +141,7 @@ Use synthetic data only:
 
 ## 7. Google Play
 
-- [ ] Upload `delivery\android-build8\NeuroSol-Symptom-Diary-1.0.0-build8.aab`.
+- [ ] Upload `delivery\android-build8\NeuroSol-Symptom-Diary-1.1.0-build8.aab`.
 - [ ] Keep reviewer access synthetic and include the reusable reviewer code.
 - [ ] Explain that clinic patients receive one-time codes and reviewer access is
       a special synthetic credential.

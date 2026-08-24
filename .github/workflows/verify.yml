@@ -28,7 +28,7 @@ jobs:
           fi
       - name: Verify clinic-managed Build 8 identity
         run: |
-          grep -n -E '^version: 1\.0\.0\+8$' pubspec.yaml
+          grep -n -E '^version: 1\.1\.0\+8$' pubspec.yaml
           grep -n -E 'appBuildNumber = 8' lib/app_identity.dart
           grep -n -E 'clinic-managed-v1' lib/app_identity.dart
           grep -n -E 'canonical-v1' lib/app_identity.dart

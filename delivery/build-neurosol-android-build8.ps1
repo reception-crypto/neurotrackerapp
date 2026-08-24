@@ -92,8 +92,8 @@ $backendIdentityPath = Join-Path $projectRoot 'backend\identity_store.js'
 $keyPropertiesPath = Join-Path $projectRoot 'android\key.properties'
 
 if ((Get-Content -LiteralPath $pubspecPath -Raw) -notmatch
-    '(?m)^version:\s*1\.0\.0\+8\s*$') {
-    throw 'pubspec.yaml is not set to version 1.0.0+8.'
+    '(?m)^version:\s*1\.1\.0\+8\s*$') {
+    throw 'pubspec.yaml is not set to version 1.1.0+8.'
 }
 $identityText = Get-Content -LiteralPath $identityPath -Raw
 foreach ($requiredIdentity in @(
@@ -288,7 +288,7 @@ Invoke-Checked `
         'build',
         'appbundle',
         '--release',
-        '--build-name=1.0.0',
+        '--build-name=1.1.0',
         '--build-number=8',
         $apiUrl
     ) `
@@ -300,7 +300,7 @@ Invoke-Checked `
         'build',
         'apk',
         '--release',
-        '--build-name=1.0.0',
+        '--build-name=1.1.0',
         '--build-number=8',
         $apiUrl
     ) `
@@ -321,10 +321,10 @@ foreach ($artifact in @($sourceAab, $sourceApk)) {
 $releaseDirectory = Join-Path $projectRoot 'delivery\android-build8'
 $releaseAab = Join-Path `
     $releaseDirectory `
-    'NeuroSol-Symptom-Diary-1.0.0-build8.aab'
+    'NeuroSol-Symptom-Diary-1.1.0-build8.aab'
 $releaseApk = Join-Path `
     $releaseDirectory `
-    'NeuroSol-Symptom-Diary-1.0.0-build8.apk'
+    'NeuroSol-Symptom-Diary-1.1.0-build8.apk'
 $metadataPath = Join-Path $releaseDirectory 'release.json'
 if (-not (Test-Path -LiteralPath $releaseDirectory -PathType Container)) {
     New-Item -ItemType Directory -Path $releaseDirectory | Out-Null
@@ -342,7 +342,7 @@ $sourceTree = (& git -C $projectRoot rev-parse 'HEAD^{tree}').Trim()
 [ordered]@{
     releaseFormat = 1
     product = 'NeuroSol Symptom Diary'
-    versionName = '1.0.0'
+    versionName = '1.1.0'
     buildNumber = 8
     applicationId = 'au.com.pascoeneurology.neurosol'
     backendVersion = '0.10.0'
@@ -373,5 +373,5 @@ Write-Host "AAB SHA256: $aabHash"
 Write-Host "APK SHA256: $apkHash"
 Write-Host "Release metadata: $metadataPath"
 Write-Host 'Install the APK for upgrade testing with:'
-Write-Host '$Apk = (Resolve-Path ''.\delivery\android-build8\NeuroSol-Symptom-Diary-1.0.0-build8.apk'').Path'
+Write-Host '$Apk = (Resolve-Path ''.\delivery\android-build8\NeuroSol-Symptom-Diary-1.1.0-build8.apk'').Path'
 Write-Host 'adb install -r "$Apk"'

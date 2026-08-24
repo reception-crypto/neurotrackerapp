@@ -6,7 +6,7 @@ with a CSV-backed clinician portal.
 ## Current release
 
 - Public mobile version: `1.0.0+7` (remains supported)
-- Build 8 release candidate: `1.0.0+8`
+- Build 8 release candidate: `1.1.0+8`
 - Reconciled backend source: `0.10.0` (deploy before Build 8 mobile)
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
@@ -126,7 +126,7 @@ single Build 8 build command, from the repository root, is:
 ```
 
 The script applies the same reconciled-source and test gates, creates the
-signed archive/IPA as version `1.0.0` build `8`, verifies the signed bundle ID,
+signed archive/IPA as version `1.1.0` build `8`, verifies the signed bundle ID,
 and records the source commit, source tree, size, and SHA-256 in
 `delivery/ios-build8/release.json`. `--skip-flutter-tests` is diagnostic only
 and stops before any signed release artifact is built.

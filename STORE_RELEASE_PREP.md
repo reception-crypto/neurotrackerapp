@@ -8,7 +8,7 @@ approve the final declarations and ensure they match the deployed service.
 - Store name: NeuroSol Symptom Diary
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
-- Release version: `1.0.0+8`
+- Release version: `1.1.0+8`
 - Category: Medical
 - Support email: `reception@pascoeneurology.com`
 - Privacy policy:
