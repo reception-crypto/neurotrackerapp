@@ -29,23 +29,6 @@ function Invoke-NodeCommand {
     }
 }
 
-function Test-PathWithin {
-    param(
-        [Parameter(Mandatory = $true)][string]$Candidate,
-        [Parameter(Mandatory = $true)][string]$Parent
-    )
-
-    $candidatePath = [IO.Path]::GetFullPath($Candidate).TrimEnd('\')
-    $parentPath = [IO.Path]::GetFullPath($Parent).TrimEnd('\')
-    return $candidatePath.Equals(
-        $parentPath,
-        [StringComparison]::OrdinalIgnoreCase
-    ) -or $candidatePath.StartsWith(
-        $parentPath + '\',
-        [StringComparison]::OrdinalIgnoreCase
-    )
-}
-
 function Invoke-IsolatedPackageTests {
     param(
         [Parameter(Mandatory = $true)][string]$NodeExecutable,
@@ -124,8 +107,8 @@ if (
     throw 'The deployment package is incomplete.'
 }
 $release = Get-Content -LiteralPath $releasePath -Raw | ConvertFrom-Json
-if ($release.backendVersion -ne '0.9.0') {
-    throw "Expected backend version 0.9.0, found $($release.backendVersion)."
+if ($release.backendVersion -ne '0.10.0') {
+    throw "Expected backend version 0.10.0, found $($release.backendVersion)."
 }
 if (
     [string]($release.sourceCommit) -notmatch '^[0-9a-f]{40}$' -or
@@ -140,6 +123,14 @@ if (
     $release.independentProfilesEnabledDuringBackendPredeployment -ne $false
 ) {
     throw 'The release metadata does not preserve the gated Build 7 rollout.'
+}
+if (
+    [string]$release.googlePlayUrl -ne
+        'https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol' -or
+    [string]$release.appStoreUrl -ne
+        'https://apps.apple.com/au/app/neurosol-symptom-diary/id6796575355'
+) {
+    throw 'The release metadata contains unexpected mobile-store URLs.'
 }
 
 $runtime = Resolve-NeuroSolRuntime `
@@ -186,8 +177,12 @@ foreach ($clinicalFile in @('identity_store.json', 'symptom_entries.csv')) {
 
 $resolvedBackupRoot = [IO.Path]::GetFullPath($BackupRoot)
 if (
-    (Test-PathWithin -Candidate $resolvedBackupRoot -Parent $dataDirectory) -or
-    (Test-PathWithin -Candidate $dataDirectory -Parent $resolvedBackupRoot)
+    (Test-NeuroSolPathWithin `
+        -Candidate $resolvedBackupRoot `
+        -Parent $dataDirectory) -or
+    (Test-NeuroSolPathWithin `
+        -Candidate $dataDirectory `
+        -Parent $resolvedBackupRoot)
 ) {
     throw 'BackupRoot and the clinical data directory must not contain each other.'
 }
@@ -337,6 +332,8 @@ try {
         LATEST_MOBILE_BUILD = '7'
         ENABLE_CUSTOM_DISORDERS = 'false'
         ENABLE_INDEPENDENT_PROFILES = 'false'
+        GOOGLE_PLAY_URL = [string]$release.googlePlayUrl
+        APP_STORE_URL = [string]$release.appStoreUrl
     }
     $updatedSettings = Read-NeuroSolDotEnv -Path $environmentPath
     if (
@@ -392,6 +389,8 @@ try {
         latestMobileBuild = 7
         customDisordersEnabled = $false
         independentProfilesEnabled = $false
+        googlePlayUrl = [string]$release.googlePlayUrl
+        appStoreUrl = [string]$release.appStoreUrl
         localVerification = $true
         publicVerification = (-not $SkipPublicVerification)
     }

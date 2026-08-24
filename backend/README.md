@@ -1,4 +1,4 @@
-# NeuroSol clinic backend
+# NeuroSol clinic backend 0.10.0
 
 Node/Express backend for canonical disorder definitions, staff-managed patient
 profiles, secure mobile enrolment, symptom submission, CSV storage, clinician
@@ -139,28 +139,35 @@ else. Set `ENROLMENT_INCIDENT_LOCKDOWN=true`, restart the backend, and confirm
 clinician portal available but returns HTTP 503 for mobile enrolment, profile
 sync, and symptom uploads.
 
-Open `/admin/enrolments/recovery`. For each affected person, enter the exact
-original code sent to that person and the correct display name. The first
+Open `/admin/enrolments/recovery`. For each code that was actually sent to the
+wrong person, enter the exact original code and correct display name. The first
 successful recovery quarantines the shared identity, invalidates all original
-codes attached to it, and blocks all attached devices. For a previously used
-code, the server matches the code redemption time to its device credential. A
-single exact match is bridged only to that recovered PatientId so pending phone
-entries can sync to the correct record after lockdown. Unmatched devices remain
-blocked and are revoked when all original codes have been processed. Each code
-is recovered into a distinct PatientId with its issue-time clinical profile
+codes attached to it, and blocks its devices while the records are separated.
+For a previously used code, the server matches the redemption time to one exact
+device credential. That device is bridged only to the recovered PatientId so
+its pending entries reach the correct profile. Each wrongly attached code is
+recovered into a distinct PatientId with its issue-time clinical profile
 revision and a one-time replacement code. The server creates an identity-store
 backup before every recovery.
 
-Do not automatically reassign existing CSV submissions from the quarantined
-identity: the current CSV schema cannot prove which device submitted an entry.
-Keep those rows as incident evidence and reconcile them manually only with
-independent clinical confirmation. Once every affected code has been recovered
-and the replacement instructions are ready, set
-`ENROLMENT_INCIDENT_LOCKDOWN=false`, restart, and confirm `/health` reports
-`false`. An already-installed patient should reopen the app and wait until
-Settings shows `Synced` before entering the replacement code from Settings.
-That step retires the temporary recovery bridge and stores the new PatientId on
-the phone.
+Do not recover legitimate later codes that were issued to the same retained
+patient. Once every incorrectly attached code has been separated and staff have
+verified that the remaining original codes are genuine same-patient reissues,
+the retained source identity may be released from quarantine. The guarded
+release records `quarantineReleasedAt` and the
+`disentangled-source-restored` disposition, while preserving every recovered
+PatientId and device bridge. Both the retained patient’s direct device and the
+recovered patient’s bridged device can then authenticate independently. The
+portal labels the retained record **Restored disentangled identity**.
+
+Do not automatically reassign existing CSV submissions from the collision
+identity: the current CSV schema cannot prove which person made an old entry.
+Keep those rows as incident evidence and reconcile them only with independent
+clinical confirmation. Original codes invalidated during containment remain
+invalid after release; issue a fresh code if a retained patient has not yet
+enrolled. When all affected identities have been either recovered or verified
+as the retained patient, set `ENROLMENT_INCIDENT_LOCKDOWN=false`, restart, and
+confirm `/health` reports `false` before reopening mobile access.
 
 ## Mobile version policy
 

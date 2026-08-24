@@ -33,10 +33,14 @@ jobs:
           grep -n -E 'clinic-managed-v1' lib/app_identity.dart
           grep -n -E 'canonical-v1' lib/app_identity.dart
           grep -n -E 'independent-v1' lib/app_identity.dart
+          grep -n -E 'stageDailyEntry' lib/services/storage_service.dart
+          grep -n -E 'completePendingEntry' lib/services/storage_service.dart
           if grep -R -n -E 'ProfileScreen|SymptomSelectionScreen|Edit patient profile' lib; then
             echo "Patient self-configuration remains reachable in source."
             exit 1
           fi
+      - name: Parse macOS release script
+        run: bash -n delivery/build-neurosol-ios-build8.sh
 
   backend:
     runs-on: ubuntu-latest
@@ -55,6 +59,12 @@ jobs:
       - run: node --check identity_store.js
       - run: node --check clinical_profiles.js
       - run: node --check disorder_catalog.js
+      - name: Verify reconciled backend identity
+        run: |
+          grep -n -E '"version": "0\.10\.0"' package.json
+          grep -n -E 'quarantineReleasedAt' identity_store.js
+          grep -n -E 'submission_id_conflict' server.js
+          grep -n -F 'https://apps.apple.com/au/app/neurosol-symptom-diary/id6796575355' .env.example
       - run: npm test
       - name: Reject committed runtime clinical data
         working-directory: .
@@ -82,6 +92,8 @@ jobs:
         run: |
           $Scripts = Get-ChildItem `
             .\delivery\build8-backend-compatibility\*.ps1
+          $Scripts += Get-Item `
+            .\delivery\build-neurosol-android-build8.ps1
           foreach ($Script in $Scripts) {
             $Tokens = $null
             $Errors = $null

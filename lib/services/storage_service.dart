@@ -32,9 +32,16 @@ class StorageService {
     return profile;
   }
 
-  static Future<void> saveEntryRows(List<String> csvRows) async {
+  static Future<void> saveEntryRows(
+    List<String> csvRows, {
+    String submissionId = '',
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final rows = prefs.getStringList(_entriesKey) ?? <String>[];
+    final id = submissionId.trim();
+    if (id.isNotEmpty && rows.any((row) => row.startsWith('$id,'))) {
+      return;
+    }
     rows.addAll(csvRows);
     await prefs.setStringList(_entriesKey, rows);
   }
@@ -58,6 +65,31 @@ class StorageService {
       pending.add(jsonEncode(entry.toJson()));
       await prefs.setStringList(_pendingKey, pending);
     }
+  }
+
+  static Future<void> stageDailyEntry(
+    DailyEntry entry,
+    List<String> csvRows,
+  ) async {
+    // Queue first. If the process stops between any later local writes, the
+    // pending entry still blocks a second check-in and can be reconstructed
+    // safely after an exact server retry.
+    await addPendingEntry(entry);
+    await saveEntryRows(csvRows, submissionId: entry.submissionId);
+    await saveEntryToHistory(entry);
+    await recordSubmissionDate(entry.date);
+  }
+
+  static Future<void> completePendingEntry(
+    DailyEntry entry,
+    List<String> csvRows,
+  ) async {
+    // Every operation is idempotent. This repairs a partially completed local
+    // save after a crash before finally retiring the upload queue item.
+    await saveEntryRows(csvRows, submissionId: entry.submissionId);
+    await saveEntryToHistory(entry);
+    await recordSubmissionDate(entry.date);
+    await removePendingEntry(entry.submissionId);
   }
 
   static Future<void> saveEntryToHistory(DailyEntry entry) async {
@@ -146,14 +178,19 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getString(_lastSubmissionDateKey) == date) return true;
 
-    final history = prefs.getStringList(_entryHistoryKey) ?? <String>[];
-    return history.any((raw) {
-      try {
-        return (jsonDecode(raw) as Map<String, dynamic>)['date'] == date;
-      } catch (_) {
-        return false;
+    for (final key in [_entryHistoryKey, _pendingKey]) {
+      final entries = prefs.getStringList(key) ?? <String>[];
+      if (entries.any((raw) {
+        try {
+          return (jsonDecode(raw) as Map<String, dynamic>)['date'] == date;
+        } catch (_) {
+          return false;
+        }
+      })) {
+        return true;
       }
-    });
+    }
+    return false;
   }
 
   static String localDateKey([DateTime? value]) {

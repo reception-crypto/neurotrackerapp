@@ -1,6 +1,12 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$script:NeuroSolExpectedBackendVersion = '0.10.0'
+$script:NeuroSolGooglePlayUrl =
+    'https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol'
+$script:NeuroSolAppStoreUrl =
+    'https://apps.apple.com/au/app/neurosol-symptom-diary/id6796575355'
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object `
@@ -194,6 +200,23 @@ function Resolve-NeuroSolDataDirectory {
         $dataDirectory = Join-Path $BackendPath 'data'
     }
     return [IO.Path]::GetFullPath($dataDirectory)
+}
+
+function Test-NeuroSolPathWithin {
+    param(
+        [Parameter(Mandatory = $true)][string]$Candidate,
+        [Parameter(Mandatory = $true)][string]$Parent
+    )
+
+    $candidatePath = [IO.Path]::GetFullPath($Candidate).TrimEnd('\')
+    $parentPath = [IO.Path]::GetFullPath($Parent).TrimEnd('\')
+    return $candidatePath.Equals(
+        $parentPath,
+        [StringComparison]::OrdinalIgnoreCase
+    ) -or $candidatePath.StartsWith(
+        $parentPath + '\',
+        [StringComparison]::OrdinalIgnoreCase
+    )
 }
 
 function Set-NeuroSolDotEnvValues {
@@ -421,13 +444,21 @@ function Get-NeuroSolMobileConfig {
 }
 
 function Assert-NeuroSolCompatibilityResponses {
-    param([Parameter(Mandatory = $true)][string]$BaseUri)
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUri,
+        [int]$TimeoutSeconds = 30
+    )
 
-    $health = Wait-NeuroSolHealth -BaseUri $BaseUri -TimeoutSeconds 30
+    $health = Wait-NeuroSolHealth `
+        -BaseUri $BaseUri `
+        -TimeoutSeconds $TimeoutSeconds
     if (
+        [string]$health.backendVersion -ne
+            $script:NeuroSolExpectedBackendVersion -or
         [int]$health.disorderCatalogVersion -ne 3 -or
         $health.customDisordersEnabled -ne $false -or
-        $health.independentProfilesEnabled -ne $false
+        $health.independentProfilesEnabled -ne $false -or
+        $health.enrolmentIncidentLockdown -ne $false
     ) {
         throw "Unexpected Build 8 health configuration at $BaseUri."
     }
@@ -440,6 +471,8 @@ function Assert-NeuroSolCompatibilityResponses {
         $build7.clinicManagedProfiles -ne $true -or
         [int]$build7.disorderCatalogVersion -ne 3 -or
         [int]$build7.preferredPayloadSchemaVersion -ne 1 -or
+        [string]$build7.googlePlayUrl -ne $script:NeuroSolGooglePlayUrl -or
+        [string]$build7.appStoreUrl -ne $script:NeuroSolAppStoreUrl -or
         $build7.independentProfileModel -ne $true -or
         $build7.customDisordersEnabled -ne $false -or
         $build7.independentProfilesEnabled -ne $false -or
@@ -479,6 +512,72 @@ function Assert-NeuroSolCompatibilityResponses {
         [int]$independentBuild8.maximumProfileSymptoms -ne 6
     ) {
         throw "Independent-profile predeployment gate failed at $BaseUri."
+    }
+}
+
+function Assert-NeuroSolBuild8ActiveResponses {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUri,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $health = Wait-NeuroSolHealth `
+        -BaseUri $BaseUri `
+        -TimeoutSeconds $TimeoutSeconds
+    if (
+        [string]$health.backendVersion -ne
+            $script:NeuroSolExpectedBackendVersion -or
+        [int]$health.disorderCatalogVersion -ne 3 -or
+        $health.customDisordersEnabled -ne $true -or
+        $health.independentProfilesEnabled -ne $true -or
+        $health.enrolmentIncidentLockdown -ne $false
+    ) {
+        throw "Unexpected active Build 8 health configuration at $BaseUri."
+    }
+
+    $build7 = Get-NeuroSolMobileConfig -BaseUri $BaseUri -Build 7
+    if (
+        [int]$build7.minimumBuild -ne 7 -or
+        [int]$build7.latestBuild -ne 7 -or
+        $build7.build7Supported -ne $true -or
+        [int]$build7.preferredPayloadSchemaVersion -ne 1 -or
+        [string]$build7.googlePlayUrl -ne $script:NeuroSolGooglePlayUrl -or
+        [string]$build7.appStoreUrl -ne $script:NeuroSolAppStoreUrl -or
+        $build7.customDisordersEnabled -ne $true -or
+        $build7.independentProfilesEnabled -ne $true
+    ) {
+        throw "Build 7 compatibility failed after Build 8 activation at $BaseUri."
+    }
+
+    $canonicalBuild8 = Get-NeuroSolMobileConfig `
+        -BaseUri $BaseUri `
+        -Build 8 `
+        -Canonical
+    if (
+        [int]$canonicalBuild8.minimumBuild -ne 7 -or
+        [int]$canonicalBuild8.latestBuild -ne 8 -or
+        [int]$canonicalBuild8.preferredPayloadSchemaVersion -ne 2 -or
+        $canonicalBuild8.canonicalDisorders -ne $true -or
+        $canonicalBuild8.customDisordersEnabled -ne $true -or
+        $canonicalBuild8.independentProfilesEnabled -ne $true
+    ) {
+        throw "Canonical Build 8 activation failed at $BaseUri."
+    }
+
+    $independentBuild8 = Get-NeuroSolMobileConfig `
+        -BaseUri $BaseUri `
+        -Build 8 `
+        -Independent
+    if (
+        [int]$independentBuild8.minimumBuild -ne 7 -or
+        [int]$independentBuild8.latestBuild -ne 8 -or
+        [int]$independentBuild8.preferredPayloadSchemaVersion -ne 3 -or
+        $independentBuild8.independentProfileModel -ne $true -or
+        $independentBuild8.customDisordersEnabled -ne $true -or
+        $independentBuild8.independentProfilesEnabled -ne $true -or
+        [int]$independentBuild8.maximumProfileSymptoms -ne 6
+    ) {
+        throw "Independent Build 8 activation failed at $BaseUri."
     }
 }
 

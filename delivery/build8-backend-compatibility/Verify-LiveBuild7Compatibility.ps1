@@ -90,6 +90,7 @@ try {
         BackendPath = $runtime.BackendPath
         LocalHealth = $true
         PublicHealth = (-not $SkipPublicVerification)
+        BackendVersion = '0.10.0'
         MinimumBuild = 7
         LatestBuild = 7
         Build7Supported = $true

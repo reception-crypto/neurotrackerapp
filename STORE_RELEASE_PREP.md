@@ -8,7 +8,7 @@ approve the final declarations and ensure they match the deployed service.
 - Store name: NeuroSol Symptom Diary
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
-- Release version: `1.0.0+7`
+- Release version: `1.0.0+8`
 - Category: Medical
 - Support email: `reception@pascoeneurology.com`
 - Privacy policy:
@@ -20,11 +20,13 @@ approve the final declarations and ensure they match the deployed service.
 
 NeuroSol Symptom Diary helps participating Pascoe Neurology patients complete
 a daily symptom and wellness check-in for review as part of their clinical
-care. Dr Pascoe or authorised clinic staff assign each patient’s disorders and
-symptoms before a one-time link or code securely connects the phone to the
-intended clinic record. Patients may change their reminder time, but not the
-clinic-assigned clinical profile. Entries remain on the device and are sent to
-the clinic; failed transmissions remain pending and retry later.
+care. Dr Pascoe or authorised clinic staff independently assign one or more
+disorders and between one and six symptoms before a one-time link or code
+securely connects the phone to the intended clinic record. Each assigned
+symptom is rated once, even when several disorders are selected. Patients may
+change their reminder time, but not the clinic-assigned clinical profile.
+Entries remain on the device and are sent to the clinic; interrupted or failed
+transmissions remain pending and retry without creating duplicate clinic rows.
 
 The app is not continuously monitored and must not be used for urgent or
 emergency assistance. It is not a medical device, does not diagnose, treat,
@@ -69,8 +71,8 @@ for review.
 
 ## Build and review gates
 
-Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) as the authoritative Build 7
-gate. In particular, deploy and test the matching backend before uploading the
-AAB, provide only synthetic review access, and do not release to real patients
-until privacy, backup/restore, clinic enrolment, revocation, and incident
-procedures are approved.
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) as the authoritative Build 8
+gate. In particular, deploy and test backend `0.10.0` before uploading the AAB,
+provide only synthetic review access, preserve Build 7 compatibility, and do
+not activate independent profiles until Build 8 is downloadable from both
+stores.

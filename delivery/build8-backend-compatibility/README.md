@@ -1,7 +1,7 @@
 # Build 8 compatible backend deployment
 
-This package deploys backend `0.9.0` before either Build 8 mobile app is
-released. It keeps the public Build 7 app fully supported:
+This package deploys reconciled backend `0.10.0` before either Build 8 mobile
+app is released. It keeps the public Build 7 app fully supported:
 
 - `MIN_SUPPORTED_MOBILE_BUILD=7`
 - `LATEST_MOBILE_BUILD=7`
@@ -16,6 +16,14 @@ released. It keeps the public Build 7 app fully supported:
 - `PatientId` and `ProfileRevision` remain authoritative
 - the new schema-3 model supports independently selected disorders and between
   one and six unique symptoms, but cannot be assigned while its gate is off
+- explicit new-patient/edit modes prevent the clinician portal from silently
+  reusing a PatientId when consecutive enrolments are created
+- identity-collision recovery, restored disentangled source identities, and
+  recovered-device bridges remain intact
+- exact schema-1/2/3 retries are idempotent; changed SubmissionId reuse and a
+  second PatientId/date submission are rejected
+- both mobile-store URLs are installed and verified, including the live App
+  Store listing
 
 It does not contain `.env`, credentials, patient data, `node_modules`, or any
 mobile binary. It does not download packages on the terminal server.
@@ -119,6 +127,25 @@ Before any Build 8 mobile release:
 
 Record the backup path printed by deployment and keep it until Build 7 and
 Build 8 traffic has been observed safely in production.
+
+## 5. Activate Build 8 after both stores are live
+
+Do not run this while either Build 8 store release is unavailable. Once both
+listings are downloadable, run from an elevated PowerShell window:
+
+```powershell
+Set-Location $Pack
+
+.\Activate-NeuroSolBuild8.ps1 `
+  -Confirmation 'ACTIVATE BUILD 8 AFTER BOTH STORES ARE LIVE'
+```
+
+The activation creates an Administrator-only `.env` and clinical-data backup,
+keeps `MIN_SUPPORTED_MOBILE_BUILD=7`, sets `LATEST_MOBILE_BUILD=8`, enables the
+custom catalogue and independent profile model, restarts the service, proves
+Build 7 still receives its compatible contract, proves Build 8 receives schema
+3, and checks the public HTTPS path. Any failed check restores the
+preactivation environment and data automatically.
 
 ## Manual rollback
 

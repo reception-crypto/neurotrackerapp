@@ -59,10 +59,32 @@ if ($LASTEXITCODE -ne 0) {
         "$publicBuild7Commit."
     )
 }
+$requiredAncestors = @(
+    '1c9a365', # independent symptom/disorder architecture
+    'f2adba0', # Build 8 visual identity
+    'fa351d7', # enrolment identity prevention and recovery
+    'd9cb404'  # restored-source/recovered-device compatibility
+)
+foreach ($requiredCommit in $requiredAncestors) {
+    & $gitExecutable -C $repositoryRoot merge-base --is-ancestor `
+        $requiredCommit $sourceCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Required reconciled source commit is missing: $requiredCommit"
+    }
+}
 
 $sourceStatus = @(
     & $gitExecutable -C $repositoryRoot status --porcelain -- `
+        android `
+        ios `
+        assets `
+        lib `
+        test `
         backend `
+        pubspec.yaml `
+        pubspec.lock `
+        delivery/build-neurosol-android-build8.ps1 `
+        delivery/build-neurosol-ios-build8.sh `
         delivery/build8-backend-compatibility
 )
 if ($sourceStatus.Count -ne 0) {
@@ -75,8 +97,8 @@ if ($sourceStatus.Count -ne 0) {
 $packageJson = Get-Content `
     -LiteralPath (Join-Path $backendRoot 'package.json') `
     -Raw | ConvertFrom-Json
-if ($packageJson.version -ne '0.9.0') {
-    throw "Expected backend version 0.9.0, found $($packageJson.version)."
+if ($packageJson.version -ne '0.10.0') {
+    throw "Expected backend version 0.10.0, found $($packageJson.version)."
 }
 
 if (-not $SkipTests) {
@@ -147,6 +169,7 @@ $backendFiles = @(
 )
 $packFiles = @(
     'Build8Backend.Common.ps1',
+    'Activate-NeuroSolBuild8.ps1',
     'Deploy-Build8CompatibleBackend.ps1',
     'README.md',
     'Restore-Build8CompatibleBackend.ps1',
@@ -182,9 +205,11 @@ try {
     $release = [ordered]@{
         releaseFormat = 1
         product = 'NeuroSol Symptom Diary'
-        backendVersion = '0.9.0'
+        backendVersion = '0.10.0'
         sourceCommit = $sourceCommit
         generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+        googlePlayUrl = 'https://play.google.com/store/apps/details?id=au.com.pascoeneurology.neurosol'
+        appStoreUrl = 'https://apps.apple.com/au/app/neurosol-symptom-diary/id6796575355'
         minimumMobileBuild = 7
         latestMobileBuildDuringBackendPredeployment = 7
         customDisordersEnabledDuringBackendPredeployment = $false

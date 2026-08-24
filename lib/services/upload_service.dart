@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/daily_entry.dart';
 import 'api_config.dart';
+import 'csv_service.dart';
 import 'identity_service.dart';
 import 'storage_service.dart';
 
@@ -132,7 +133,10 @@ class UploadService {
     for (final entry in pending) {
       final result = await uploadDailyEntry(entry);
       if (result.terminal) {
-        await StorageService.removePendingEntry(entry.submissionId);
+        await StorageService.completePendingEntry(
+          entry,
+          CsvService.rowsFromEntry(entry),
+        );
         if (result.succeeded) {
           uploaded++;
         } else {

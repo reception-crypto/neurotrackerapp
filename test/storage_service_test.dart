@@ -96,6 +96,68 @@ void main() {
     expect(await StorageService.hasSubmittedOn('2026-07-28'), isFalse);
   });
 
+  test('a queued entry alone blocks a second check-in for that date', () async {
+    const entry = DailyEntry(
+      submissionId: 'pending-only',
+      patientId: 'patient-1',
+      date: '2026-07-27',
+      time: '19:00',
+      patientName: 'Synthetic Patient',
+      records: [
+        SymptomScoreRecord(
+          track: 'Primary',
+          disorder: 'Migraine',
+          symptom: 'Headache',
+          score: 3,
+        ),
+      ],
+      wellnessPercent: 70,
+    );
+
+    await StorageService.addPendingEntry(entry);
+
+    expect(await StorageService.hasSubmittedOn(entry.date), isTrue);
+  });
+
+  test('daily-entry staging and retry completion are idempotent', () async {
+    const entry = DailyEntry(
+      schemaVersion: 3,
+      submissionId: 'idempotent-local-entry',
+      patientId: 'patient-independent',
+      date: '2026-08-14',
+      time: '19:00',
+      patientName: 'Independent Patient',
+      profileRevision: 4,
+      profileDisorderIds: ['migraine'],
+      profileDisorders: ['Migraine'],
+      records: [
+        SymptomScoreRecord(
+          track: 'Independent',
+          symptomId: 'headache',
+          disorder: '',
+          symptom: 'Headache',
+          score: 3,
+        ),
+      ],
+      wellnessPercent: 70,
+    );
+    const rows = <String>[
+      'idempotent-local-entry,2026-08-14,19:00,Independent Patient,'
+          'Independent,,Headache,3,70,patient-independent,4,,headache,3,'
+          'migraine,Migraine',
+    ];
+
+    await StorageService.stageDailyEntry(entry, rows);
+    await StorageService.stageDailyEntry(entry, rows);
+    await StorageService.completePendingEntry(entry, rows);
+    await StorageService.completePendingEntry(entry, rows);
+
+    expect(await StorageService.loadEntries(), hasLength(1));
+    expect(await StorageService.loadEntryHistory(), hasLength(1));
+    expect(await StorageService.pendingCount(), 0);
+    expect(await StorageService.hasSubmittedOn(entry.date), isTrue);
+  });
+
   test('queued Build 7 entry without schema remains schema 1', () async {
     SharedPreferences.setMockInitialValues({
       'pending_uploads': <String>[

@@ -117,6 +117,11 @@ async function saveIndependentProfile(options) {
 }
 
 test('mobile configuration advertises the gated independent model safely', async () => {
+  const health = await fetch(`${baseUrl}/health`).then(response =>
+    response.json()
+  );
+  assert.equal(health.backendVersion, '0.10.0');
+
   const build7 = await fetch(`${baseUrl}/api/mobile-config`, {
     headers: build7Headers('', false),
   }).then(response => response.json());
@@ -282,6 +287,26 @@ test('schema 3 stores one row per symptom with profile disorder snapshots', asyn
   });
   assert.equal(exactRetry.status, 200);
   assert.equal((await exactRetry.json()).duplicate, true);
+
+  const conflictingRetry = structuredClone(body);
+  conflictingRetry.records[0].score = 9;
+  const conflict = await fetch(`${baseUrl}/api/symptom-entry`, {
+    method: 'POST',
+    headers: build8Headers(identity.accessToken),
+    body: JSON.stringify(conflictingRetry),
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).code, 'submission_id_conflict');
+
+  const secondSubmission = structuredClone(body);
+  secondSubmission.submissionId = 'NS-independent-second-same-day';
+  const sameDay = await fetch(`${baseUrl}/api/symptom-entry`, {
+    method: 'POST',
+    headers: build8Headers(identity.accessToken),
+    body: JSON.stringify(secondSubmission),
+  });
+  assert.equal(sameDay.status, 409);
+  assert.equal((await sameDay.json()).code, 'daily_submission_exists');
 
   const lines = fs.readFileSync(csvPath, 'utf8').trim().split('\n');
   assert.match(

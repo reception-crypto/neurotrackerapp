@@ -191,7 +191,7 @@ test('production refuses placeholder deployment secrets', () => {
   );
 });
 
-test('mobile configuration keeps Build 7 supported when Build 8 is latest', () => {
+test('active Build 8 configuration keeps Build 7 on its compatible contract', () => {
   const configDataDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'neurosol-version-'),
   );
@@ -215,6 +215,7 @@ test('mobile configuration keeps Build 7 supported when Build 8 is latest', () =
               'x-neurosol-build': '8',
               'x-neurosol-profile': 'clinic-managed-v1',
               'x-neurosol-disorders': 'canonical-v1',
+              'x-neurosol-profile-model': 'independent-v1',
             },
           });
           const enrolment = await fetch(base + '/api/enrol', {
@@ -241,13 +242,21 @@ test('mobile configuration keeps Build 7 supported when Build 8 is latest', () =
         DATA_DIR: configDataDir,
         MIN_SUPPORTED_MOBILE_BUILD: '',
         LATEST_MOBILE_BUILD: '8',
+        ENABLE_CUSTOM_DISORDERS: 'true',
+        ENABLE_INDEPENDENT_PROFILES: 'true',
       },
     },
   );
   fs.rmSync(configDataDir, { recursive: true, force: true });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /BUILD7=.*"minimumBuild":7.*"latestBuild":7/);
-  assert.match(result.stdout, /BUILD8=.*"minimumBuild":7.*"latestBuild":8/);
+  assert.match(
+    result.stdout,
+    /BUILD7=.*"minimumBuild":7.*"latestBuild":7.*"preferredPayloadSchemaVersion":1.*"customDisordersEnabled":true/,
+  );
+  assert.match(
+    result.stdout,
+    /BUILD8=.*"minimumBuild":7.*"latestBuild":8.*"independentProfilesEnabled":true.*"preferredPayloadSchemaVersion":3.*"customDisordersEnabled":true/,
+  );
   assert.match(result.stdout, /ENROLMENT=404/);
 });
 

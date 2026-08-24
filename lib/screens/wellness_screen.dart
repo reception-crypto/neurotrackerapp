@@ -64,10 +64,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
     }
     final rows = CsvService.rowsFromEntry(entry);
 
-    await StorageService.saveEntryRows(rows);
-    await StorageService.saveEntryToHistory(entry);
-    await StorageService.recordSubmissionDate(entry.date);
-    await StorageService.addPendingEntry(entry);
+    await StorageService.stageDailyEntry(entry, rows);
     try {
       await NotificationService.scheduleDailyReminder(
         hour: widget.profile.reminderTime.hour,
@@ -80,7 +77,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
     final uploadResult = await UploadService.uploadDailyEntry(entry);
     final uploaded = uploadResult.succeeded;
     if (uploadResult.terminal) {
-      await StorageService.removePendingEntry(entry.submissionId);
+      await StorageService.completePendingEntry(entry, rows);
     }
     final pending = await StorageService.pendingCount();
 

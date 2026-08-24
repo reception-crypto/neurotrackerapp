@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const basicAuth = require('basic-auth');
 const PDFDocument = require('pdfkit');
+const { version: backendVersion } = require('./package.json');
 const {
   createIdentityStore,
   formatCode,
@@ -1144,6 +1145,7 @@ app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
 app.get('/health',(req,res)=>res.json({
   ok:true,
+  backendVersion,
   storage:'csv',
   enrolmentIncidentLockdown,
   disorderCatalogVersion: catalogVersion,
@@ -1619,6 +1621,7 @@ function enrolmentPatients(rows) {
       observedBuilds,
       quarantinedAt: fromStore?.quarantinedAt || null,
       quarantineReason: fromStore?.quarantineReason || null,
+      identityCollision: fromStore?.identityCollision || null,
       recoveredFrom: fromStore?.recoveredFrom || null,
       clinicalProfile: fromStore?.clinicalProfile || null,
       suggestedProfile: fromStore?.clinicalProfile
@@ -1965,6 +1968,8 @@ function enrolmentPage({
       ? '<strong class="flag">QUARANTINED IDENTITY COLLISION</strong>'
       : patient.recoveredFrom
       ? '<strong class="good">Recovered separate identity</strong>'
+      : patient.identityCollision?.quarantineReleasedAt
+      ? '<strong class="good">Restored disentangled identity</strong>'
       : '';
     const actions = patient.quarantinedAt
       ? '<a class="button danger" style="width:auto;padding:7px 10px" href="/admin/enrolments/recovery">Continue identity recovery</a>'
