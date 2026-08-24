@@ -188,28 +188,31 @@ void main() {
     expect(pending.single.toApiJson()['schemaVersion'], 1);
   });
 
-  test('schema 3 profile survives local storage without nesting symptoms', () async {
-    const profile = PatientProfile(
-      patientId: 'patient-independent',
-      fullName: 'Independent Patient',
-      schemaVersion: 3,
-      disorderIds: ['migraine', 'dysautonomia'],
-      disorders: ['Migraine', 'Dysautonomia'],
-      symptomIds: ['headache', 'weakness'],
-      symptoms: ['Headache', 'Weakness'],
-      reminderTime: TimeOfDay(hour: 18, minute: 45),
-      profileRevision: 6,
-    );
+  test(
+    'schema 3 profile survives local storage without nesting symptoms',
+    () async {
+      const profile = PatientProfile(
+        patientId: 'patient-independent',
+        fullName: 'Independent Patient',
+        schemaVersion: 3,
+        disorderIds: ['migraine', 'dysautonomia'],
+        disorders: ['Migraine', 'Dysautonomia'],
+        symptomIds: ['headache', 'weakness'],
+        symptoms: ['Headache', 'Weakness'],
+        reminderTime: TimeOfDay(hour: 18, minute: 45),
+        profileRevision: 6,
+      );
 
-    await StorageService.saveProfile(profile);
-    final restored = await StorageService.loadProfile();
+      await StorageService.saveProfile(profile);
+      final restored = await StorageService.loadProfile();
 
-    expect(restored, isNotNull);
-    expect(restored!.isIndependent, isTrue);
-    expect(restored.primarySymptoms, isEmpty);
-    expect(restored.symptoms, ['Headache', 'Weakness']);
-    expect(restored.assignedDisorders, ['Migraine', 'Dysautonomia']);
-  });
+      expect(restored, isNotNull);
+      expect(restored!.isIndependent, isTrue);
+      expect(restored.primarySymptoms, isEmpty);
+      expect(restored.symptoms, ['Headache', 'Weakness']);
+      expect(restored.assignedDisorders, ['Migraine', 'Dysautonomia']);
+    },
+  );
 
   test(
     'reset removes the protected device credential and local data',

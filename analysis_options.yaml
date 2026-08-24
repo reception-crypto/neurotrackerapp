@@ -1,7 +1,14 @@
-﻿include: package:flutter_lints/flutter.yaml
+include: package:flutter_lints/flutter.yaml
 
 analyzer:
   exclude:
     - backend/**
     - delivery/**
     - widget_test.fixed.dart
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**

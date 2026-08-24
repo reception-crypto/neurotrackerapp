@@ -108,9 +108,7 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
     final replacing = widget.existingProfile != null;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const BrandAppBarTitle(label: 'Clinic Enrolment'),
-      ),
+      appBar: AppBar(title: const BrandAppBarTitle(label: 'Clinic Enrolment')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
