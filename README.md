@@ -116,7 +116,10 @@ from that diagnostic run is not built or packaged.
 
 ## iOS Build 8 release candidate
 
-On the configured signing Mac, from the project root:
+CodeMagic is the authoritative iOS signing environment. After pushing the
+exact release commit to GitHub, configure the existing CodeMagic workflow to
+use the Apple distribution signing integration already used for Build 7. Its
+single Build 8 build command, from the repository root, is:
 
 ```bash
 ./delivery/build-neurosol-ios-build8.sh
@@ -127,6 +130,11 @@ signed archive/IPA as version `1.0.0` build `8`, verifies the signed bundle ID,
 and records the source commit, source tree, size, and SHA-256 in
 `delivery/ios-build8/release.json`. `--skip-flutter-tests` is diagnostic only
 and stops before any signed release artifact is built.
+
+CodeMagic should collect `delivery/ios-build8/*.ipa` and
+`delivery/ios-build8/release.json` as artifacts. Do not also run a separate
+`flutter build ipa` step. See
+[delivery/CODEMAGIC_BUILD8.md](delivery/CODEMAGIC_BUILD8.md).
 
 ## Production data
 

@@ -154,12 +154,21 @@ Use synthetic data only:
 
 ## 8. Apple App Store
 
+CodeMagic is the signing and archive environment for Build 8. Push the exact
+release commit to GitHub, select that branch in the existing CodeMagic iOS
+workflow, and use this as its Build 8 build command:
+
 ```bash
 ./delivery/build-neurosol-ios-build8.sh
 ```
 
-- [ ] Build/archive the exact recorded source commit on the configured signing
-      Mac as version `1.0.0`, build `8`, or apply the same gates in Codemagic.
+- [ ] Confirm CodeMagic checked out the exact recorded release commit with full
+      Git history and no source modifications.
+- [ ] Confirm it uses the existing Apple distribution certificate, provisioning
+      profile, and App Store Connect integration for
+      `au.com.pascoeneurology.neurosol`.
+- [ ] Do not add a second `flutter build ipa` step; the guarded script builds
+      and verifies the signed IPA after every test passes.
 - [ ] Record the IPA, source commit, source tree, and SHA-256 from
       `delivery/ios-build8/release.json`.
 - [ ] Confirm bundle ID `au.com.pascoeneurology.neurosol`, distribution

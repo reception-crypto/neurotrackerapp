@@ -39,7 +39,7 @@ jobs:
             echo "Patient self-configuration remains reachable in source."
             exit 1
           fi
-      - name: Parse macOS release script
+      - name: Parse CodeMagic release script
         run: bash -n delivery/build-neurosol-ios-build8.sh
 
   backend:

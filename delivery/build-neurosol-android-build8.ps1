@@ -68,6 +68,7 @@ $sourceStatus = @(
         backend `
         pubspec.yaml `
         pubspec.lock `
+        delivery/CODEMAGIC_BUILD8.md `
         delivery/build-neurosol-android-build8.ps1 `
         delivery/build-neurosol-ios-build8.sh `
         delivery/build8-backend-compatibility
@@ -225,6 +226,10 @@ Push-Location (Join-Path $projectRoot 'backend')
 try {
     Invoke-Checked `
         -Command 'npm' `
+        -Arguments @('ci') `
+        -Description 'Backend dependency restore'
+    Invoke-Checked `
+        -Command 'npm' `
         -Arguments @('test') `
         -Description 'Backend tests'
 } finally {
@@ -264,6 +269,7 @@ $postVerificationStatus = @(
         backend `
         pubspec.yaml `
         pubspec.lock `
+        delivery/CODEMAGIC_BUILD8.md `
         delivery/build-neurosol-android-build8.ps1 `
         delivery/build-neurosol-ios-build8.sh `
         delivery/build8-backend-compatibility

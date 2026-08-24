@@ -83,6 +83,7 @@ $sourceStatus = @(
         backend `
         pubspec.yaml `
         pubspec.lock `
+        delivery/CODEMAGIC_BUILD8.md `
         delivery/build-neurosol-android-build8.ps1 `
         delivery/build-neurosol-ios-build8.sh `
         delivery/build8-backend-compatibility

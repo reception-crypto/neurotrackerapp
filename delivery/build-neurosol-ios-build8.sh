@@ -26,12 +26,12 @@ cd "$project_root"
 
 for command_name in flutter dart npm node git shasum unzip codesign; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
-    echo "$command_name is not available in this macOS shell." >&2
+    echo "$command_name is not available in this CodeMagic macOS shell." >&2
     exit 1
   fi
 done
 if [[ $(uname -s) != Darwin ]]; then
-  echo 'The signed iOS Build 8 script must run on macOS.' >&2
+  echo 'The signed iOS Build 8 script must run on a CodeMagic macOS runner.' >&2
   exit 1
 fi
 if [[ ! -x /usr/libexec/PlistBuddy ]]; then
@@ -79,6 +79,7 @@ source_status=$(git status --porcelain -- \
   backend \
   pubspec.yaml \
   pubspec.lock \
+  delivery/CODEMAGIC_BUILD8.md \
   delivery/build-neurosol-android-build8.ps1 \
   delivery/build-neurosol-ios-build8.sh \
   delivery/build8-backend-compatibility)
@@ -124,6 +125,7 @@ flutter analyze
 echo 'Running backend 0.10.0 tests...'
 (
   cd backend
+  npm ci
   npm test
 )
 echo 'Running backend deployment-probe tests...'
@@ -147,6 +149,7 @@ post_verification_status=$(git status --porcelain -- \
   backend \
   pubspec.yaml \
   pubspec.lock \
+  delivery/CODEMAGIC_BUILD8.md \
   delivery/build-neurosol-android-build8.ps1 \
   delivery/build-neurosol-ios-build8.sh \
   delivery/build8-backend-compatibility)
