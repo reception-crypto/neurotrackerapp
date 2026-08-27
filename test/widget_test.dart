@@ -6,8 +6,10 @@ import 'package:neurotrackerapp/models/symptom_data.dart';
 import 'package:neurotrackerapp/screens/home_screen.dart';
 import 'package:neurotrackerapp/screens/privacy_screen.dart';
 import 'package:neurotrackerapp/screens/settings_screen.dart';
+import 'package:neurotrackerapp/screens/wellness_screen.dart';
 import 'package:neurotrackerapp/services/identity_service.dart';
 import 'package:neurotrackerapp/services/storage_service.dart';
+import 'package:neurotrackerapp/theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const testProfile = PatientProfile(
@@ -188,6 +190,67 @@ void main() {
     expect(find.text('VERTIGO'), findsOneWidget);
     expect(find.textContaining('Primary:'), findsNothing);
     expect(find.textContaining('Second:'), findsNothing);
+  });
+
+  testWidgets('wellness submit remains visible with large accessibility text', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 667);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.darkBlueTheme,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: const WellnessScreen(
+          profile: testProfile,
+          symptomScores: {
+            'Headache': 4,
+            'Nausea': 3,
+            'Vomiting': 0,
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('wellness-content-scroll')), findsOneWidget);
+
+    final submitButton = find.byKey(
+      const Key('submit-wellness-check-in'),
+    );
+    expect(submitButton, findsOneWidget);
+    final submitBounds = tester.getRect(submitButton);
+    expect(submitBounds.top, greaterThanOrEqualTo(0));
+    expect(
+      submitBounds.bottom,
+      lessThanOrEqualTo(
+        tester.view.physicalSize.height / tester.view.devicePixelRatio,
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('10%'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('10%'));
+    await tester.pump();
+
+    expect(submitButton.hitTestable(), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(submitButton).onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('ordinary app launch with a profile opens home', (
