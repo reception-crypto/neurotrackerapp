@@ -1775,7 +1775,7 @@ test('portal groups by PatientId and displays only the latest name', async () =>
   assert.match(page, /Latest Name \(NS-/);
   assert.doesNotMatch(page, />Earlier Name \(NS-/);
   assert.equal(
-    page.split(`value="${identity.patientId}"`).length - 1,
+    page.split(`<option value="${identity.patientId}"`).length - 1,
     1,
   );
 
