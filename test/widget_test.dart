@@ -204,18 +204,13 @@ void main() {
       MaterialApp(
         theme: AppTheme.darkBlueTheme,
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: const TextScaler.linear(2)),
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(2)),
           child: child!,
         ),
         home: const WellnessScreen(
           profile: testProfile,
-          symptomScores: {
-            'Headache': 4,
-            'Nausea': 3,
-            'Vomiting': 0,
-          },
+          symptomScores: {'Headache': 4, 'Nausea': 3, 'Vomiting': 0},
         ),
       ),
     );
@@ -224,9 +219,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('wellness-content-scroll')), findsOneWidget);
 
-    final submitButton = find.byKey(
-      const Key('submit-wellness-check-in'),
-    );
+    final submitButton = find.byKey(const Key('submit-wellness-check-in'));
     expect(submitButton, findsOneWidget);
     final submitBounds = tester.getRect(submitButton);
     expect(submitBounds.top, greaterThanOrEqualTo(0));
@@ -246,10 +239,7 @@ void main() {
     await tester.pump();
 
     expect(submitButton.hitTestable(), findsOneWidget);
-    expect(
-      tester.widget<FilledButton>(submitButton).onPressed,
-      isNotNull,
-    );
+    expect(tester.widget<FilledButton>(submitButton).onPressed, isNotNull);
     expect(tester.takeException(), isNull);
   });
 
