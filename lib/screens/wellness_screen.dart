@@ -156,52 +156,48 @@ class _WellnessScreenState extends State<WellnessScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Daily Check-in')),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Step 2 of 2', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 8),
-            Text(
-              'Overall Wellness',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Thinking about that day as a whole, how well did you feel?\n\n100% represents your best possible day.\n10% represents your worst possible day.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(color: AppTheme.secondaryText),
-            ),
-            const SizedBox(height: 26),
-            Wrap(
-              spacing: 10,
-              runSpacing: 12,
-              children: List.generate(10, (index) {
-                final percent = (index + 1) * 10;
-                return ScoreButton(
-                  label: '$percent%',
-                  width: 82,
-                  selected: wellnessPercent == percent,
-                  onPressed: () => setState(() => wellnessPercent = percent),
-                );
-              }),
-            ),
-            const Spacer(),
-            SafeArea(
-              minimum: const EdgeInsets.only(bottom: 20),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: submitting || wellnessPercent == null
-                      ? null
-                      : _submit,
-                  child: Text(submitting ? 'Saving…' : 'Submit'),
-                ),
-              ),
-            ),
-          ],
+      body: ListView(
+        key: const Key('wellness-content-scroll'),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        children: [
+          Text('Step 2 of 2', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(
+            'Overall Wellness',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Thinking about that day as a whole, how well did you feel?\n\n100% represents your best possible day.\n10% represents your worst possible day.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(color: AppTheme.secondaryText),
+          ),
+          const SizedBox(height: 26),
+          Wrap(
+            spacing: 10,
+            runSpacing: 12,
+            children: List.generate(10, (index) {
+              final percent = (index + 1) * 10;
+              return ScoreButton(
+                label: '$percent%',
+                width: 82,
+                selected: wellnessPercent == percent,
+                onPressed: () => setState(() => wellnessPercent = percent),
+              );
+            }),
+          ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            key: const Key('submit-wellness-check-in'),
+            onPressed: submitting || wellnessPercent == null ? null : _submit,
+            child: Text(submitting ? 'Saving…' : 'Submit'),
+          ),
         ),
       ),
     );
