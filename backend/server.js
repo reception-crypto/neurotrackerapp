@@ -4,6 +4,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const fs = require('fs');
 const path = require('path');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const basicAuth = require('basic-auth');
 const PDFDocument = require('pdfkit');
 const { version: backendVersion } = require('./package.json');
@@ -26,6 +27,11 @@ const {
   catalogVersion,
   createDisorderCatalogStore,
 } = require('./disorder_catalog');
+const {
+  createPortalUserStore,
+  drPascoePermissions,
+  permissionDefinitions,
+} = require('./portal_users');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -76,6 +82,8 @@ const identityStore = createIdentityStore({
   secret: identitySecret,
   disorderCatalog,
 });
+const portalUserStore = createPortalUserStore({ dataDir });
+const portalRequestContext = new AsyncLocalStorage();
 
 const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision','DisorderId','SymptomId','PayloadSchemaVersion','ProfileDisorderIds','ProfileDisorders'];
 
@@ -739,7 +747,7 @@ function recordAcceptedPayloadSchema(req, schemaVersion) {
 function adminCsrfToken() {
   return crypto
     .createHmac('sha256', identitySecret)
-    .update(`admin-enrolments:${adminUser}`)
+    .update('neurosol-clinician-portal-forms')
     .digest('hex');
 }
 
@@ -757,12 +765,7 @@ function requireAdminCsrf(req, res, next) {
   next();
 }
 
-function requireAdmin(req, res, next) {
-  const user = basicAuth(req);
-  if (!user || user.name !== adminUser || user.pass !== adminPassword) {
-    res.set('WWW-Authenticate', 'Basic realm="NeuroSol Admin"');
-    return res.status(401).send('Authentication required.');
-  }
+function securePortalResponse(res) {
   res.set({
     'Cache-Control': 'no-store',
     'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
@@ -770,7 +773,55 @@ function requireAdmin(req, res, next) {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
   });
+}
+
+function sameCredential(left, right) {
+  const a = Buffer.from(String(left || ''), 'utf8');
+  const b = Buffer.from(String(right || ''), 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function requirePortalUser(req, res, next) {
+  const user = basicAuth(req);
+  let portalUser = null;
+  if (user && sameCredential(user.name, adminUser) &&
+      sameCredential(user.pass, adminPassword)) {
+    portalUser = {
+      username: adminUser,
+      isAdmin: true,
+      permissions: permissionDefinitions.map(item => item.id),
+    };
+  } else if (user) {
+    const stored = portalUserStore.authenticate(user.name, user.pass);
+    if (stored) portalUser = { ...stored, isAdmin: false };
+  }
+  if (!portalUser) {
+    res.set('WWW-Authenticate', 'Basic realm="NeuroSol Admin"');
+    return res.status(401).send('Authentication required.');
+  }
+  req.portalUser = portalUser;
+  securePortalResponse(res);
   next();
+}
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    if (req.portalUser?.isAdmin || req.portalUser?.permissions?.includes(permission)) {
+      return next();
+    }
+    return res.status(403).send(pageShell(
+      'Access denied',
+      '<section class="panel"><h2>Access denied</h2><p>This account does not have permission to use that part of the clinician portal.</p></section>',
+    ));
+  };
+}
+
+function requireSystemAdmin(req, res, next) {
+  if (req.portalUser?.isAdmin) return next();
+  return res.status(403).send(pageShell(
+    'Administrator access required',
+    '<section class="panel"><h2>Administrator access required</h2><p>Only the protected admin account can manage clinician portal users.</p></section>',
+  ));
 }
 
 function html(value) {
@@ -1248,6 +1299,29 @@ function svgChart(series, metric, aggregation, mode='summary', selectedPatient='
 }
 
 function pageShell(title, body) {
+  const portalUser = portalRequestContext.getStore()?.req?.portalUser;
+  const can = permission => portalUser?.isAdmin ||
+    portalUser?.permissions?.includes(permission);
+  const navigation = [
+    ['patient_review', '/admin', 'Patient review'],
+    ['population_analytics', '/admin/population', 'Population analytics'],
+    ['enrolments', '/admin/enrolments', 'Enrolments'],
+    ['identity_recovery', '/admin/enrolments/recovery', 'Identity recovery'],
+    ['disorders_symptoms', '/admin/disorders', 'Disorders'],
+    ['disorders_symptoms', '/admin/symptoms', 'Symptoms'],
+    ['manage_patients', '/admin/patients', 'Manage patients'],
+    ['csv_export', '/admin/export.csv', 'CSV export'],
+  ].filter(([permission]) => can(permission))
+    .map(([, href, label]) => `<a href="${href}">${label}</a>`);
+  if (portalUser?.isAdmin) {
+    navigation.push('<a href="/admin/users">User accounts</a>');
+  }
+  const signedIn = portalUser
+    ? `<div class="signed-in">Signed in as ${html(portalUser.username)}</div>`
+    : '';
+  const patientSearch = can('patient_review')
+    ? '<form class="portal-search" method="get" action="/admin/patient-search"><input name="q" maxlength="160" required aria-label="Search patients" placeholder="Search name, BP ID or Support ID"><button type="submit">Find patient</button></form>'
+    : '';
   const incidentNotice = enrolmentIncidentLockdown
     ? '<div class="incident-lock"><strong>IDENTITY RECOVERY LOCKDOWN ACTIVE</strong> — mobile enrolment, profile sync, and symptom uploads are paused. Complete identity recovery before reopening mobile access.</div>'
     : '';
@@ -1272,7 +1346,8 @@ function pageShell(title, body) {
     .calendar-dot{transform:scale(.75)}
   }
   .incident-lock{background:#7f1d1d;color:#fff;padding:14px 24px;text-align:center;border-bottom:4px solid #fca5a5}
-  </style></head><body><header><div class="portal-header"><h1>NeuroSol Clinician Portal</h1><form class="portal-search" method="get" action="/admin/patient-search"><input name="q" maxlength="160" required aria-label="Search patients" placeholder="Search name, BP ID or Support ID"><button type="submit">Find patient</button></form></div><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/enrolments/recovery">Identity recovery</a><a href="/admin/disorders">Disorders</a><a href="/admin/symptoms">Symptoms</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header>${incidentNotice}<main>${body}</main></body></html>`;
+  .signed-in{font-size:12px;color:#cbd5e1;text-align:right;margin-top:8px}
+  </style></head><body><header><div class="portal-header"><h1>NeuroSol Clinician Portal</h1>${patientSearch}</div><div><nav>${navigation.join('')}</nav>${signedIn}</div></header>${incidentNotice}<main>${body}</main></body></html>`;
 }
 
 // Validate the catalogue before any profile or CSV migration can write data.
@@ -1295,6 +1370,8 @@ if (reconciledProfiles) {
 repairCsvIfNeeded();
 app.use(express.json({limit:'256kb'}));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
+app.use('/admin', (req, res, next) =>
+  portalRequestContext.run({ req }, next));
 
 app.get('/health',(req,res)=>res.json({
   ok:true,
@@ -2489,15 +2566,15 @@ function symptomManagementPage({ error = '', message = '' } = {}) {
   return pageShell('Symptoms', body);
 }
 
-app.get('/admin/disorders',requireAdmin,(req,res)=>{
+app.get('/admin/disorders',requirePortalUser,requirePermission('disorders_symptoms'),(req,res)=>{
   res.send(disorderManagementPage());
 });
 
-app.get('/admin/symptoms',requireAdmin,(req,res)=>{
+app.get('/admin/symptoms',requirePortalUser,requirePermission('disorders_symptoms'),(req,res)=>{
   res.send(symptomManagementPage());
 });
 
-app.post('/admin/disorders/create',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/disorders/create',requirePortalUser,requirePermission('disorders_symptoms'),requireAdminCsrf,(req,res)=>{
   try {
     const created = disorderCatalog.createCustomDisorder({
       displayName: req.body.displayName,
@@ -2514,7 +2591,7 @@ app.post('/admin/disorders/create',requireAdmin,requireAdminCsrf,(req,res)=>{
   }
 });
 
-app.post('/admin/disorders/update',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/disorders/update',requirePortalUser,requirePermission('disorders_symptoms'),requireAdminCsrf,(req,res)=>{
   try {
     const action = String(req.body.action || '');
     const input = {
@@ -2545,7 +2622,7 @@ app.post('/admin/disorders/update',requireAdmin,requireAdminCsrf,(req,res)=>{
   }
 });
 
-app.post('/admin/disorders/create-symptom',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/disorders/create-symptom',requirePortalUser,requirePermission('disorders_symptoms'),requireAdminCsrf,(req,res)=>{
   try {
     const created = disorderCatalog.createCustomSymptom({
       displayName: req.body.displayName,
@@ -2562,7 +2639,7 @@ app.post('/admin/disorders/create-symptom',requireAdmin,requireAdminCsrf,(req,re
   }
 });
 
-app.post('/admin/disorders/update-symptom',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/disorders/update-symptom',requirePortalUser,requirePermission('disorders_symptoms'),requireAdminCsrf,(req,res)=>{
   try {
     const action = String(req.body.action || '');
     const input = {
@@ -2593,7 +2670,7 @@ app.post('/admin/disorders/update-symptom',requireAdmin,requireAdminCsrf,(req,re
   }
 });
 
-app.post('/admin/disorders/set-symptoms',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/disorders/set-symptoms',requirePortalUser,requirePermission('disorders_symptoms'),requireAdminCsrf,(req,res)=>{
   try {
     const updated = disorderCatalog.setDisorderSymptoms({
       disorderId: req.body.disorderId,
@@ -2610,26 +2687,27 @@ app.post('/admin/disorders/set-symptoms',requireAdmin,requireAdminCsrf,(req,res)
   }
 });
 
-app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
+app.get('/admin/export.csv',requirePortalUser,requirePermission('csv_export'),(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
 
-app.get('/admin/patient-search',requireAdmin,(req,res)=>{
+app.get('/admin/patient-search',requirePortalUser,requirePermission('patient_review'),(req,res)=>{
   res.send(patientSearchPage(req.query.q));
 });
 
-app.get('/admin/enrolments',requireAdmin,(req,res)=>{
+app.get('/admin/enrolments',requirePortalUser,requirePermission('enrolments'),(req,res)=>{
   res.send(enrolmentPage({
     editPatientId: String(req.query.editPatientId || '').trim(),
     profileMode: String(req.query.profileMode || '').trim(),
   }));
 });
 
-app.get('/admin/enrolments/recovery',requireAdmin,(req,res)=>{
+app.get('/admin/enrolments/recovery',requirePortalUser,requirePermission('identity_recovery'),(req,res)=>{
   res.send(enrolmentRecoveryPage());
 });
 
 app.post(
   '/admin/enrolments/recover-collision',
-  requireAdmin,
+  requirePortalUser,
+  requirePermission('identity_recovery'),
   requireAdminCsrf,
   (req,res)=>{
     if (!enrolmentIncidentLockdown) {
@@ -2657,7 +2735,7 @@ app.post(
   },
 );
 
-app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,(req,res)=>{
   const requestedIndependent =
     String(req.body.profileModel || '') === 'independent-v1' ||
     Number(req.body.schemaVersion) === 3;
@@ -2803,7 +2881,7 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
   }
 });
 
-app.post('/admin/enrolments/issue',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/enrolments/issue',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,(req,res)=>{
   try {
     const patientId = String(req.body.patientId || '').trim();
     const patient = identityStore.snapshot().patients[patientId];
@@ -2820,7 +2898,7 @@ app.post('/admin/enrolments/issue',requireAdmin,requireAdminCsrf,(req,res)=>{
   }
 });
 
-app.post('/admin/enrolments/revoke',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/enrolments/revoke',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,(req,res)=>{
   const patientId = String(req.body.patientId || '').trim();
   const revoked = identityStore.revokePatientDevices(patientId);
   res.send(enrolmentPage({
@@ -2870,11 +2948,11 @@ function patientManagementPage({ error = '', message = '' } = {}) {
     </section>`);
 }
 
-app.get('/admin/patients',requireAdmin,(req,res)=>{
+app.get('/admin/patients',requirePortalUser,requirePermission('manage_patients'),(req,res)=>{
   res.send(patientManagementPage());
 });
 
-app.post('/admin/patients/delete',requireAdmin,requireAdminCsrf,(req,res)=>{
+app.post('/admin/patients/delete',requirePortalUser,requirePermission('manage_patients'),requireAdminCsrf,(req,res)=>{
   const patientId = String(req.body.patientId || '').trim();
   const rows = readRows();
   const storedPatient = identityStore.snapshot().patients[patientId];
@@ -2939,7 +3017,113 @@ app.post('/admin/patients/delete',requireAdmin,requireAdminCsrf,(req,res)=>{
   }
 });
 
-app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
+function permissionCheckboxes(selected = [], locked = false) {
+  return permissionDefinitions.map(permission =>
+    `<label><input type="checkbox" name="permissions" value="${html(permission.id)}" ${selected.includes(permission.id) ? 'checked' : ''} ${locked ? 'disabled' : ''}>${html(permission.label)}</label>`
+  ).join('');
+}
+
+function userManagementPage({ error = '', message = '' } = {}) {
+  const users = portalUserStore.list();
+  const csrfToken = adminCsrfToken();
+  const drPascoeExists = users.some(user =>
+    user.username.toLocaleLowerCase('en-AU') === 'dr pascoe');
+  const notice = error
+    ? `<div class="notice" style="border-color:#b91c1c;background:#fef2f2"><strong>${html(error)}</strong></div>`
+    : message
+    ? `<div class="notice" style="border-color:#047857;background:#ecfdf5"><strong>${html(message)}</strong></div>`
+    : '';
+  const drPascoeForm = drPascoeExists ? '' : `
+    <section class="panel"><h2>Create the Dr Pascoe account</h2>
+      <p class="muted">This preset grants patient review, population analytics, enrolments, and disorder/symptom management only.</p>
+      <form method="post" action="/admin/users/save" class="toolbar" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <input type="hidden" name="username" value="Dr Pascoe">
+        <input type="hidden" name="preset" value="dr-pascoe">
+        <div class="field"><label>Temporary password</label><input type="password" name="password" minlength="12" required autocomplete="new-password"></div>
+        <div class="field"><label>&nbsp;</label><button type="submit">Create Dr Pascoe</button></div>
+      </form>
+    </section>`;
+  const accountRows = users.map(user => {
+    const isDrPascoe = user.username.toLocaleLowerCase('en-AU') === 'dr pascoe';
+    return `
+    <tr><td><strong>${html(user.username)}</strong><br><span class="muted">${user.active ? 'Active' : 'Disabled'}</span></td>
+    <td><form method="post" action="/admin/users/save" autocomplete="off">
+      <input type="hidden" name="csrfToken" value="${csrfToken}">
+      <input type="hidden" name="username" value="${html(user.username)}">
+      <div class="patient-list">${permissionCheckboxes(user.permissions, isDrPascoe)}</div>
+      ${isDrPascoe ? '<p class="muted">The Dr Pascoe clinical permission set is fixed.</p>' : ''}
+      <div class="toolbar" style="margin-top:10px">
+        <div class="field"><label>New password (optional)</label><input type="password" name="password" minlength="12" autocomplete="new-password"></div>
+        <div class="field"><label><input style="width:auto" type="checkbox" name="active" value="true" ${user.active ? 'checked' : ''}> Account active</label></div>
+        <div class="field"><label>&nbsp;</label><button type="submit">Save account</button></div>
+      </div>
+    </form></td>
+    <td><form method="post" action="/admin/users/delete" onsubmit="return confirm('Delete this clinician portal account?')">
+      <input type="hidden" name="csrfToken" value="${csrfToken}">
+      <input type="hidden" name="username" value="${html(user.username)}">
+      <button class="danger" type="submit">Delete</button>
+    </form></td></tr>`;
+  }).join('');
+  return pageShell('User accounts', `${notice}${drPascoeForm}
+    <section class="panel"><h2>Create another user account</h2>
+      <p class="muted">Select only the functions this person needs. Access is enforced on the server as well as in the navigation menu.</p>
+      <form method="post" action="/admin/users/save" autocomplete="off">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <div class="toolbar">
+          <div class="field"><label>Username</label><input name="username" maxlength="80" required></div>
+          <div class="field"><label>Temporary password</label><input type="password" name="password" minlength="12" required autocomplete="new-password"></div>
+        </div>
+        <h3>Allowed functionality</h3><div class="patient-list">${permissionCheckboxes()}</div>
+        <button style="width:auto;margin-top:12px" type="submit">Create user</button>
+      </form>
+    </section>
+    <section class="panel"><h2>Existing user accounts</h2>
+      <p class="muted">The protected ${html(adminUser)} account always retains full access and is configured on the server.</p>
+      <div class="table-wrap"><table><thead><tr><th>User</th><th>Functionality</th><th>Remove</th></tr></thead>
+      <tbody>${accountRows || '<tr><td colspan="3">No additional accounts have been created.</td></tr>'}</tbody></table></div>
+    </section>`);
+}
+
+app.get('/admin/users',requirePortalUser,requireSystemAdmin,(req,res)=>{
+  res.send(userManagementPage());
+});
+
+app.post('/admin/users/save',requirePortalUser,requireSystemAdmin,requireAdminCsrf,(req,res)=>{
+  try {
+    if (String(req.body.username || '').trim().toLocaleLowerCase('en-AU') ===
+        adminUser.toLocaleLowerCase('en-AU')) {
+      throw new Error('The protected admin account cannot be replaced.');
+    }
+    const isDrPascoe = String(req.body.username || '').trim()
+      .toLocaleLowerCase('en-AU') === 'dr pascoe';
+    const permissions = isDrPascoe
+      ? [...drPascoePermissions]
+      : req.body.permissions;
+    const existing = portalUserStore.get(req.body.username);
+    const user = portalUserStore.save({
+      username: req.body.username,
+      password: String(req.body.password || ''),
+      permissions,
+      active: existing ? req.body.active === 'true' : true,
+    });
+    res.send(userManagementPage({ message: `${user.username} was saved.` }));
+  } catch (error) {
+    res.status(400).send(userManagementPage({ error: error.message }));
+  }
+});
+
+app.post('/admin/users/delete',requirePortalUser,requireSystemAdmin,requireAdminCsrf,(req,res)=>{
+  const username = String(req.body.username || '').trim();
+  const removed = portalUserStore.remove(username);
+  res.status(removed ? 200 : 404).send(userManagementPage({
+    [removed ? 'message' : 'error']: removed
+      ? `${username} was deleted.`
+      : 'The user account was not found.',
+  }));
+});
+
+app.get('/admin/report.pdf',requirePortalUser,requirePermission('patient_review'),(req,res)=>{
   const allRows=readRows();
   const requestedId=String(req.query.patientId||'').trim();
   const selectedId=requestedId
@@ -2973,7 +3157,7 @@ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
   doc.end();
 });
 
-app.get('/admin',requireAdmin,(req,res)=>{
+app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)=>{
   const rows=readRows(), directory=patientDirectory(rows), disorders=disorderChoices(rows);
   const patients=[...directory.values()].sort((a,b)=>a.label.localeCompare(b.label));
   const patientId=resolvePatientKey(rows,req.query.patientId,req.query.patient);
@@ -3007,7 +3191,7 @@ app.get('/admin',requireAdmin,(req,res)=>{
   res.send(pageShell('Patient review',body));
 });
 
-app.get('/admin/population',requireAdmin,(req,res)=>{
+app.get('/admin/population',requirePortalUser,requirePermission('population_analytics'),(req,res)=>{
   const rows=readRows(), directory=patientDirectory(rows), disorders=disorderChoices(rows);
   const disorderId=resolveDisorderKey(rows,req.query.disorderId,req.query.disorder)||disorders[0]?.id||'', metric=req.query.metric==='symptom'?'symptom':'wellness';
   const disorder=disorderLabel(rows,disorderId);
@@ -3061,6 +3245,7 @@ module.exports = {
   disorderKey,
   diaryEntriesForPatient,
   identityStore,
+  portalUserStore,
   patientDirectory,
   patientMatchesSearch,
   patientSeries,

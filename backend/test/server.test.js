@@ -26,6 +26,7 @@ const {
   disorderCatalog,
   identityStore,
   patientDirectory,
+  portalUserStore,
 } = require('../server');
 const { supportId } = require('../identity_store');
 
@@ -161,6 +162,61 @@ function adminHeaders() {
   );
   return { authorization: `Basic ${credentials}` };
 }
+
+function portalHeaders(username, password) {
+  return {
+    authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+  };
+}
+
+test('Dr Pascoe has clinical functions without destructive or admin access', async () => {
+  portalUserStore.save({
+    username: 'Dr Pascoe',
+    password: 'dr-pascoe-test-password',
+    permissions: [
+      'patient_review',
+      'population_analytics',
+      'enrolments',
+      'disorders_symptoms',
+    ],
+  });
+  const headers = portalHeaders('Dr Pascoe', 'dr-pascoe-test-password');
+  for (const route of [
+    '/admin',
+    '/admin/population',
+    '/admin/enrolments',
+    '/admin/disorders',
+    '/admin/symptoms',
+  ]) {
+    const response = await fetch(`${baseUrl}${route}`, { headers });
+    assert.equal(response.status, 200, route);
+  }
+  for (const route of [
+    '/admin/enrolments/recovery',
+    '/admin/patients',
+    '/admin/export.csv',
+    '/admin/users',
+  ]) {
+    const response = await fetch(`${baseUrl}${route}`, { headers });
+    assert.equal(response.status, 403, route);
+  }
+  const portal = await fetch(`${baseUrl}/admin`, { headers }).then(r => r.text());
+  assert.match(portal, /Signed in as Dr Pascoe/);
+  assert.doesNotMatch(portal, /CSV export/);
+  assert.doesNotMatch(portal, /Manage patients/);
+  assert.doesNotMatch(portal, /User accounts/);
+});
+
+test('admin retains full access and can open user management', async () => {
+  const response = await fetch(`${baseUrl}/admin/users`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /Existing user accounts/);
+  assert.match(body, /Dr Pascoe/);
+  assert.match(body, /CSV export/);
+});
 
 test('production refuses placeholder deployment secrets', () => {
   const configDataDir = fs.mkdtempSync(
