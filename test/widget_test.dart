@@ -143,7 +143,15 @@ void main() {
     await tester.pumpAndSettle();
 
     final today = StorageService.localDateKey();
-    expect(find.text('Choose check-in date'), findsOneWidget);
+    final checkInDateDialog = find.byType(SimpleDialog);
+    expect(checkInDateDialog, findsOneWidget);
+    expect(
+      find.descendant(
+        of: checkInDateDialog,
+        matching: find.text('Choose check-in date'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(Key('check-in-date-$today')));
     await tester.pumpAndSettle();
 
