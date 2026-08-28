@@ -185,6 +185,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() => _checkingAccess = true);
     final submittedDates = await StorageService.submittedDates();
     if (!mounted) return;
+    setState(() => _checkingAccess = false);
     final now = DateTime.now();
     final candidateDates = List.generate(
       _maximumBackdateDays + 1,
@@ -222,10 +223,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
     if (!mounted) return;
-    if (selectedDate == null) {
-      setState(() => _checkingAccess = false);
-      return;
-    }
+    if (selectedDate == null) return;
+    setState(() => _checkingAccess = true);
     final selectedDateKey = StorageService.localDateKey(selectedDate);
     final alreadyCompleted = await StorageService.hasSubmittedOn(
       selectedDateKey,

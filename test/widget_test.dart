@@ -261,11 +261,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Overall wellness'), findsOneWidget);
-    expect(find.text('Symptoms'), findsOneWidget);
     expect(find.text('30 days'), findsOneWidget);
     expect(find.text('60 days'), findsOneWidget);
     expect(find.text('90 days'), findsOneWidget);
     expect(find.byType(CustomPaint), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.text('Symptoms'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Symptoms'), findsOneWidget);
   });
 
   testWidgets('notification launch cannot reopen a completed check-in', (
