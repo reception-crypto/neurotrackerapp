@@ -1,4 +1,4 @@
-# NeuroSol clinic backend 0.10.0
+# NeuroSol clinic backend 0.11.0
 
 Node/Express backend for canonical disorder definitions, staff-managed patient
 profiles, secure mobile enrolment, symptom submission, CSV storage, clinician
@@ -30,6 +30,25 @@ Production must use:
 
 Do not replace the existing production `IDENTITY_SECRET`: doing so invalidates
 every device credential and unused enrolment code.
+
+## Clinician portal user accounts
+
+The environment-backed `ADMIN_USER` account is the protected system
+administrator. It always has all portal functionality and cannot be edited or
+deleted through the portal.
+
+Sign in as that account and open `/admin/users` to create additional users.
+Passwords must contain at least 12 characters and are stored as salted scrypt
+hashes in `DATA_DIR\portal_users.json`; plaintext passwords are never written
+to disk. Each account can be independently granted patient review, population
+analytics, enrolments, disorder/symptom management, identity recovery, patient
+deletion, and CSV export. The server checks permissions on every protected GET
+and POST route as well as hiding unavailable navigation links.
+
+The page includes a dedicated **Create Dr Pascoe** preset. The administrator
+chooses the initial password; the preset grants only patient review, population
+analytics, enrolments, and disorder/symptom management. It does not grant
+identity recovery, patient deletion, CSV export, or user administration.
 
 ## Create and maintain a patient
 
