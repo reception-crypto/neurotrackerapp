@@ -75,7 +75,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'This app is not a medical device and does not diagnose, treat, cure, or prevent any medical condition. It is not continuously monitored. In an emergency, call 000.',
+                  'This app is not a medical device and does not diagnose, treat, cure, or prevent any medical condition. It is not continuously monitored. In an emergency, contact local emergency services (000 in Australia).',
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
                 const SizedBox(height: 12),

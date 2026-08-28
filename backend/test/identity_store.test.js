@@ -150,6 +150,52 @@ test('retired symptoms migrate without becoming selectable again', () => {
   }
 });
 
+test('BP Patient IDs are optional, normalised, and unique per clinic identity', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    const disorderCatalog = createDisorderCatalogStore({ dataDir });
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog,
+      now: () => new Date('2026-08-28T01:02:03.000Z'),
+    });
+    const clinicalProfile = {
+      primaryDisorderId: 'migraine',
+      primarySymptomIds: ['headache', 'nausea', 'vomiting'],
+    };
+    const first = identityStore.saveClinicalProfile({
+      patientId: 'pt-bp-first',
+      displayName: 'BP First',
+      bpPatientId: '  BP   0042  ',
+      clinicalProfile,
+    });
+    assert.equal(first.bpPatientId, 'BP 0042');
+    assert.equal(identityStore.snapshot().version, 4);
+
+    assert.throws(
+      () => identityStore.saveClinicalProfile({
+        patientId: 'pt-bp-second',
+        displayName: 'BP Second',
+        bpPatientId: 'bp 0042',
+        clinicalProfile,
+      }),
+      /already assigned to another clinic identity/,
+    );
+
+    const cleared = identityStore.saveClinicalProfile({
+      patientId: first.patientId,
+      displayName: first.displayName,
+      bpPatientId: '',
+      clinicalProfile,
+    });
+    assert.equal(cleared.bpPatientId, '');
+    assert.equal(cleared.clinicalProfile.revision, first.clinicalProfile.revision);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('retired Migraine Visual aura remains valid for a Build 7 profile revision', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
   try {
@@ -328,6 +374,7 @@ test('device compatibility observations retain Build 7 traffic evidence', () => 
       payloadSchemas: { 1: 1 },
       canonicalDevices: 0,
       independentProfileDevices: 0,
+      patientDiaryDevices: 0,
     });
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });

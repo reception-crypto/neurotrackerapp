@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
@@ -10,8 +11,15 @@ import 'wellness_screen.dart';
 
 class DailySymptomScreen extends StatefulWidget {
   final PatientProfile profile;
+  final DateTime? entryDate;
+  final int maximumBackdateDays;
 
-  const DailySymptomScreen({super.key, required this.profile});
+  const DailySymptomScreen({
+    super.key,
+    required this.profile,
+    this.entryDate,
+    this.maximumBackdateDays = defaultMaximumBackdateDays,
+  });
 
   @override
   State<DailySymptomScreen> createState() => _DailySymptomScreenState();
@@ -39,6 +47,13 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
 
   bool get _allSymptomsRated =>
       scores.isNotEmpty && scores.values.every((score) => score != null);
+
+  DateTime get _entryDate => widget.entryDate ?? DateTime.now();
+
+  String get _entryDateLabel {
+    final date = _entryDate;
+    return '${date.day}/${date.month}/${date.year}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -107,7 +122,8 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Today’s Symptoms',
+              'Symptoms for $_entryDateLabel',
+              key: const Key('check-in-selected-date'),
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),
@@ -167,6 +183,9 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
                             builder: (_) => WellnessScreen(
                               profile: widget.profile,
                               symptomScores: scores,
+                              entryDate: _entryDate,
+                              maximumBackdateDays:
+                                  widget.maximumBackdateDays,
                             ),
                           ),
                         )

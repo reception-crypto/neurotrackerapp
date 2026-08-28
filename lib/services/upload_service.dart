@@ -41,7 +41,7 @@ extension UploadResultMessage on UploadResult {
     UploadResult.profileRefreshRequired =>
       'The clinic-assigned profile has changed. Return to the home screen while online to synchronise it.',
     UploadResult.dailyAlreadyRecorded =>
-      'The clinic already has a check-in for this patient today. Contact the clinic if it needs to be corrected.',
+      'The clinic already has a check-in for this patient on that date. Contact the clinic if it needs to be corrected.',
     UploadResult.rejected =>
       'The clinic server rejected this check-in. Please contact the clinic.',
     UploadResult.serverUnavailable =>

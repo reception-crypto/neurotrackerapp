@@ -1,3 +1,4 @@
+import '../app_identity.dart';
 import '../models/daily_entry.dart';
 import '../models/patient_profile.dart';
 
@@ -10,6 +11,9 @@ class CsvService {
     required PatientProfile profile,
     required Map<String, int?> symptomScores,
     required int wellnessPercent,
+    DateTime? entryDate,
+    DateTime? now,
+    int maximumBackdateDays = defaultMaximumBackdateDays,
   }) {
     if (profile.patientId.trim().isEmpty) {
       throw StateError(
@@ -30,15 +34,37 @@ class CsvService {
       throw StateError('The clinic-assigned symptom list is invalid.');
     }
 
-    final now = DateTime.now();
+    final createdAt = now ?? DateTime.now();
+    final selected = entryDate ?? createdAt;
+    final currentDay = DateTime.utc(
+      createdAt.year,
+      createdAt.month,
+      createdAt.day,
+    );
+    final selectedDay = DateTime.utc(
+      selected.year,
+      selected.month,
+      selected.day,
+    );
+    final daysBack = currentDay.difference(selectedDay).inDays;
+    if (
+      maximumBackdateDays < 1 ||
+      daysBack < 0 ||
+      daysBack > maximumBackdateDays
+    ) {
+      throw StateError(
+        'Choose today or one of the previous $maximumBackdateDays calendar days.',
+      );
+    }
     final date =
-        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+        '${selected.year.toString().padLeft(4, '0')}-${selected.month.toString().padLeft(2, '0')}-${selected.day.toString().padLeft(2, '0')}';
     final time =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+        '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
     final idFragment = profile.patientId.length <= 8
         ? profile.patientId
         : profile.patientId.substring(0, 8);
-    final submissionId = 'NS-${now.microsecondsSinceEpoch}-$idFragment';
+    final submissionId =
+        'NS-${createdAt.microsecondsSinceEpoch}-$idFragment';
 
     final records = assignments
         .map(
@@ -58,6 +84,10 @@ class CsvService {
         .toList(growable: false);
 
     return DailyEntry(
+      clientEntryVersion: 2,
+      createdAtUtc: createdAt.toUtc().toIso8601String(),
+      localUtcOffsetMinutes: createdAt.timeZoneOffset.inMinutes,
+      entryDateSource: daysBack == 0 ? 'today' : 'backdated',
       schemaVersion: profile.payloadSchemaVersion,
       submissionId: submissionId,
       date: date,

@@ -42,6 +42,8 @@ class MobileConfiguration {
   final bool independentProfilesEnabled;
   final int maximumProfileSymptoms;
   final int preferredPayloadSchemaVersion;
+  final bool patientDiary;
+  final int maximumBackdateDays;
 
   const MobileConfiguration({
     required this.minimumBuild,
@@ -53,6 +55,8 @@ class MobileConfiguration {
     this.independentProfilesEnabled = false,
     this.maximumProfileSymptoms = 6,
     this.preferredPayloadSchemaVersion = 2,
+    this.patientDiary = true,
+    this.maximumBackdateDays = defaultMaximumBackdateDays,
   });
 
   bool get updateRequired =>
@@ -119,11 +123,16 @@ class ClinicProfileService {
           (body['preferredPayloadSchemaVersion'] as num?)?.toInt() ?? 0;
       final independentProfilesEnabled =
           body['independentProfilesEnabled'] == true;
+      final maximumBackdateDays =
+          (body['maximumBackdateDays'] as num?)?.toInt() ?? 0;
       if (minimumBuild < 1 ||
           latestBuild < minimumBuild ||
           body['clinicManagedProfiles'] != true ||
           body['canonicalDisorders'] != true ||
           body['independentProfileModel'] != true ||
+          body['patientDiary'] != true ||
+          maximumBackdateDays < 1 ||
+          maximumBackdateDays > 30 ||
           maximumProfileSymptoms != 6 ||
           preferredPayloadSchemaVersion !=
               (independentProfilesEnabled ? 3 : 2)) {
@@ -142,6 +151,8 @@ class ClinicProfileService {
         independentProfilesEnabled: independentProfilesEnabled,
         maximumProfileSymptoms: maximumProfileSymptoms,
         preferredPayloadSchemaVersion: preferredPayloadSchemaVersion,
+        patientDiary: true,
+        maximumBackdateDays: maximumBackdateDays,
       );
     } on ClinicProfileException {
       rethrow;

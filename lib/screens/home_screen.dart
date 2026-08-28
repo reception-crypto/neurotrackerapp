@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/clinic_profile_service.dart';
+import '../services/diary_service.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
@@ -28,6 +30,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _loading = true;
   bool _checkingAccess = false;
   bool _completedToday = false;
+  int _maximumBackdateDays = defaultMaximumBackdateDays;
+  Set<String> _submittedDates = <String>{};
   int _pendingUploads = 0;
   DateTime? _lastSync;
 
@@ -55,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _loadStatus({bool syncClinicProfile = true}) async {
     var profile = await StorageService.loadProfile();
     final storedProfile = profile;
+    var maximumBackdateDays = _maximumBackdateDays;
     if (syncClinicProfile &&
         storedProfile != null &&
         await IdentityService.hasAccessToken()) {
@@ -62,6 +67,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       try {
         final configuration =
             await ClinicProfileService.fetchMobileConfiguration();
+        maximumBackdateDays = configuration.maximumBackdateDays;
         if (configuration.updateRequired) {
           if (!mounted) return;
           _replaceAll(
@@ -138,7 +144,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       }
     }
+    if (profile != null && await IdentityService.hasAccessToken()) {
+      // Pull the clinic-held dates before offering backdating so a replacement
+      // phone does not invite the patient to repeat an already recorded day.
+      await DiaryService.loadHistory(days: 30);
+    }
     final completedToday = await StorageService.hasSubmittedToday();
+    final submittedDates = await StorageService.submittedDates();
     final pendingUploads = await StorageService.pendingCount();
     final lastSync = await StorageService.lastSuccessfulSync();
 
@@ -146,6 +158,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       _profile = profile ?? _profile;
       _completedToday = completedToday;
+      _maximumBackdateDays = maximumBackdateDays;
+      _submittedDates = submittedDates;
       _pendingUploads = pendingUploads;
       _lastSync = lastSync;
       _loading = false;
@@ -169,27 +183,71 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _startCheckIn() async {
     if (_checkingAccess) return;
     setState(() => _checkingAccess = true);
-
-    final alreadyCompleted = await StorageService.hasSubmittedToday();
+    final submittedDates = await StorageService.submittedDates();
     if (!mounted) return;
-
+    final now = DateTime.now();
+    final candidateDates = List.generate(
+      _maximumBackdateDays + 1,
+      (index) => DateTime(now.year, now.month, now.day - index),
+    );
+    final selectedDate = await showDialog<DateTime>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Choose check-in date'),
+        children: candidateDates.map((date) {
+          final dateKey = StorageService.localDateKey(date);
+          final submitted = submittedDates.contains(dateKey);
+          final dayLabel = _checkInDateLabel(date, now);
+          return SimpleDialogOption(
+            key: Key('check-in-date-$dateKey'),
+            onPressed: submitted
+                ? null
+                : () => Navigator.pop(dialogContext, date),
+            child: Row(
+              children: [
+                Icon(
+                  submitted ? Icons.check_circle : Icons.calendar_today,
+                  color: submitted
+                      ? AppTheme.successGreen
+                      : AppTheme.primaryBlue,
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Text(dayLabel)),
+                if (submitted)
+                  const Text('Recorded', style: TextStyle(fontSize: 12)),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+    if (!mounted) return;
+    if (selectedDate == null) {
+      setState(() => _checkingAccess = false);
+      return;
+    }
+    final selectedDateKey = StorageService.localDateKey(selectedDate);
+    final alreadyCompleted = await StorageService.hasSubmittedOn(
+      selectedDateKey,
+    );
+    if (!mounted) return;
     if (alreadyCompleted) {
-      setState(() {
-        _completedToday = true;
-        _checkingAccess = false;
-      });
+      setState(() => _checkingAccess = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Today’s check-in has already been completed.'),
-        ),
+        SnackBar(content: Text('$selectedDateKey has already been recorded.')),
       );
       return;
     }
-
     setState(() => _checkingAccess = false);
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => DailySymptomScreen(profile: _profile)),
+      MaterialPageRoute(
+        builder: (_) => DailySymptomScreen(
+          profile: _profile,
+          entryDate: selectedDate,
+          maximumBackdateDays: _maximumBackdateDays,
+        ),
+      ),
     );
 
     if (mounted) await _loadStatus();
@@ -215,6 +273,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final hour = local.hour.toString().padLeft(2, '0');
     final minute = local.minute.toString().padLeft(2, '0');
     return '${local.day}/${local.month}/${local.year} at $hour:$minute';
+  }
+
+  String _checkInDateLabel(DateTime date, DateTime today) {
+    final difference = DateTime.utc(
+      today.year,
+      today.month,
+      today.day,
+    ).difference(DateTime.utc(date.year, date.month, date.day)).inDays;
+    final formatted = '${date.day}/${date.month}/${date.year}';
+    if (difference == 0) return 'Today · $formatted';
+    if (difference == 1) return 'Yesterday · $formatted';
+    return formatted;
+  }
+
+  bool get _hasAvailableCheckInDate {
+    final now = DateTime.now();
+    return List.generate(
+      _maximumBackdateDays + 1,
+      (index) => DateTime(now.year, now.month, now.day - index),
+    ).any(
+      (date) => !_submittedDates.contains(StorageService.localDateKey(date)),
+    );
   }
 
   @override
@@ -275,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               const SizedBox(height: 8),
                               Text(
                                 _completedToday
-                                    ? 'Your next check-in will be available tomorrow.'
+                                    ? 'You can still record a missed day from the previous $_maximumBackdateDays days.'
                                     : 'Record your symptoms and overall wellness when you are ready.',
                                 style: Theme.of(context).textTheme.bodyLarge
                                     ?.copyWith(color: AppTheme.secondaryText),
@@ -286,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ],
                     ),
                     const SizedBox(height: 18),
-                    if (!_completedToday)
+                    if (_hasAvailableCheckInDate)
                       FilledButton.icon(
                         key: const Key('start-daily-check-in'),
                         onPressed: _loading || _checkingAccess
@@ -300,7 +380,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 ),
                               )
                             : const Icon(Icons.edit_note),
-                        label: const Text('Start today’s check-in'),
+                        label: const Text('Choose check-in date'),
                       )
                     else
                       const Row(
@@ -309,7 +389,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'The next reminder is scheduled for tomorrow.',
+                              'Every available date has already been recorded.',
                             ),
                           ),
                         ],
@@ -321,8 +401,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Card(
               child: ListTile(
                 leading: const Icon(Icons.history),
-                title: const Text('Check-in history'),
-                subtitle: const Text('Review entries saved on this device'),
+                title: const Text('Patient diary'),
+                subtitle: const Text(
+                  'View 30, 60 and 90 day wellness and symptom trends',
+                ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.push(
                   context,
@@ -359,7 +441,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             Text(
-              'One check-in is available each calendar day. '
+              'One check-in is available for each calendar day, including the previous $_maximumBackdateDays days. '
               'This app is for clinical monitoring and must not be used for emergencies.',
               textAlign: TextAlign.center,
               style: Theme.of(

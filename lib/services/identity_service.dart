@@ -47,6 +47,9 @@ class IdentityService {
     'X-NeuroSol-Profile': clinicProfileProtocol,
     'X-NeuroSol-Disorders': canonicalDisorderProtocol,
     'X-NeuroSol-Profile-Model': independentProfileProtocol,
+    'X-NeuroSol-Diary': patientDiaryProtocol,
+    'X-NeuroSol-UTC-Offset-Minutes':
+        '${DateTime.now().timeZoneOffset.inMinutes}',
     if (accessToken?.trim().isNotEmpty == true)
       'Authorization': 'Bearer ${accessToken!.trim()}',
   };

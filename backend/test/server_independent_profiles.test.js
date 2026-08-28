@@ -120,7 +120,7 @@ test('mobile configuration advertises the gated independent model safely', async
   const health = await fetch(`${baseUrl}/health`).then(response =>
     response.json()
   );
-  assert.equal(health.backendVersion, '0.10.0');
+  assert.equal(health.backendVersion, '0.11.0');
 
   const build7 = await fetch(`${baseUrl}/api/mobile-config`, {
     headers: build7Headers('', false),

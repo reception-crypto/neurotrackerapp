@@ -186,6 +186,10 @@ void main() {
     expect(pending, hasLength(1));
     expect(pending.single.schemaVersion, 1);
     expect(pending.single.toApiJson()['schemaVersion'], 1);
+    expect(
+      pending.single.toApiJson().containsKey('clientEntryVersion'),
+      isFalse,
+    );
   });
 
   test(

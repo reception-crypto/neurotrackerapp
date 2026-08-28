@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_identity.dart';
+import '../models/daily_entry.dart';
 import '../models/patient_profile.dart';
 import '../services/csv_service.dart';
 import '../services/notification_service.dart';
@@ -12,11 +14,15 @@ import 'home_screen.dart';
 class WellnessScreen extends StatefulWidget {
   final PatientProfile profile;
   final Map<String, int?> symptomScores;
+  final DateTime? entryDate;
+  final int maximumBackdateDays;
 
   const WellnessScreen({
     super.key,
     required this.profile,
     required this.symptomScores,
+    this.entryDate,
+    this.maximumBackdateDays = defaultMaximumBackdateDays,
   });
 
   @override
@@ -31,20 +37,43 @@ class _WellnessScreenState extends State<WellnessScreen> {
     if (submitting) return;
     setState(() => submitting = true);
 
-    final entry = CsvService.generateDailyEntry(
-      profile: widget.profile,
-      symptomScores: widget.symptomScores,
-      wellnessPercent: wellnessPercent!,
-    );
+    late DailyEntry entry;
+    try {
+      entry = CsvService.generateDailyEntry(
+        profile: widget.profile,
+        symptomScores: widget.symptomScores,
+        wellnessPercent: wellnessPercent!,
+        entryDate: widget.entryDate,
+        maximumBackdateDays: widget.maximumBackdateDays,
+      );
+    } on StateError catch (error) {
+      if (!mounted) return;
+      setState(() => submitting = false);
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Choose the date again'),
+          content: Text(error.message.toString()),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final entryDateLabel = _displayDate(entry.date);
     if (await StorageService.hasSubmittedOn(entry.date)) {
       if (!mounted) return;
       setState(() => submitting = false);
       await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('Already recorded today'),
-          content: const Text(
-            'A check-in has already been saved for today. Contact the clinic if it needs to be corrected.',
+          title: const Text('Date already recorded'),
+          content: Text(
+            'A check-in has already been saved for $entryDateLabel. Contact the clinic if it needs to be corrected.',
           ),
           actions: [
             TextButton(
@@ -69,7 +98,8 @@ class _WellnessScreenState extends State<WellnessScreen> {
       await NotificationService.scheduleDailyReminder(
         hour: widget.profile.reminderTime.hour,
         minute: widget.profile.reminderTime.minute,
-        skipToday: true,
+        skipToday:
+            entry.date == StorageService.localDateKey(DateTime.now()),
       );
     } catch (_) {
       // The locally saved check-in remains valid if reminder scheduling fails.
@@ -95,10 +125,10 @@ class _WellnessScreenState extends State<WellnessScreen> {
         ),
         content: Text(
           uploaded
-              ? 'Today’s check-in has been securely sent to the clinic.'
+              ? 'The check-in for $entryDateLabel has been securely sent to the clinic.'
               : uploadResult == UploadResult.dailyAlreadyRecorded
-              ? 'The clinic already has a check-in for today. This later check-in remains in this phone’s local history but will not replace the clinic record. Contact the clinic if a correction is needed.'
-              : 'Today’s check-in is safely stored on this phone.\n\n${uploadResult.patientMessage}\n\nPending uploads: $pending',
+              ? 'The clinic already has a check-in for $entryDateLabel. This later check-in remains in this phone’s local history but will not replace the clinic record. Contact the clinic if a correction is needed.'
+              : 'The check-in for $entryDateLabel is safely stored on this phone.\n\n${uploadResult.patientMessage}\n\nPending uploads: $pending',
         ),
         actions: [
           TextButton(
@@ -115,6 +145,12 @@ class _WellnessScreenState extends State<WellnessScreen> {
       MaterialPageRoute(builder: (_) => HomeScreen(profile: widget.profile)),
       (_) => false,
     );
+  }
+
+  String _displayDate(String value) {
+    final date = DateTime.tryParse(value);
+    if (date == null) return value;
+    return '${date.day}/${date.month}/${date.year}';
   }
 
   @override
@@ -134,7 +170,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Thinking about your day as a whole, how well have you felt today?\n\n100% represents your best possible day.\n10% represents your worst possible day.',
+              'Thinking about that day as a whole, how well did you feel?\n\n100% represents your best possible day.\n10% represents your worst possible day.',
               style: Theme.of(
                 context,
               ).textTheme.bodyLarge?.copyWith(color: AppTheme.secondaryText),

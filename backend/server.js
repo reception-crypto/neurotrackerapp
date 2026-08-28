@@ -10,6 +10,7 @@ const { version: backendVersion } = require('./package.json');
 const {
   createIdentityStore,
   formatCode,
+  normaliseBpPatientId,
   normaliseCode,
   supportId,
 } = require('./identity_store');
@@ -66,6 +67,7 @@ const independentProfilesEnabled = /^(1|true|yes)$/i.test(
 const enrolmentIncidentLockdown = /^(1|true|yes)$/i.test(
   String(process.env.ENROLMENT_INCIDENT_LOCKDOWN || '').trim(),
 );
+const maximumBackdateDays = Number(process.env.MAX_BACKDATE_DAYS || 7);
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const csvPath = path.join(dataDir, 'symptom_entries.csv');
 const disorderCatalog = createDisorderCatalogStore({ dataDir });
@@ -105,6 +107,14 @@ if (
   throw new Error(
     'LATEST_MOBILE_BUILD and MIN_SUPPORTED_MOBILE_BUILD are invalid.',
   );
+}
+
+if (
+  !Number.isInteger(maximumBackdateDays) ||
+  maximumBackdateDays < 1 ||
+  maximumBackdateDays > 30
+) {
+  throw new Error('MAX_BACKDATE_DAYS must be an integer between 1 and 30.');
 }
 
 if (process.env.NODE_ENV === 'production' &&
@@ -636,6 +646,27 @@ function supportsIndependentProfiles(req) {
     req.header('x-neurosol-profile-model') === 'independent-v1';
 }
 
+function supportsPatientDiary(req) {
+  return mobileBuild(req) >= 9 &&
+    req.header('x-neurosol-diary') === 'patient-diary-v1';
+}
+
+function mobileLocalToday(req) {
+  const offsetMinutes = Number(
+    req.header('x-neurosol-utc-offset-minutes'),
+  );
+  if (
+    !Number.isInteger(offsetMinutes) ||
+    offsetMinutes < -840 ||
+    offsetMinutes > 840
+  ) {
+    return todayIso();
+  }
+  return new Date(Date.now() + offsetMinutes * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+
 function sendUpdateRequired(res, requiredBuild = minimumMobileBuild) {
   res.set('Cache-Control', 'no-store');
   return res.status(426).json({
@@ -682,6 +713,7 @@ function requireDeviceIdentity(req, res, next) {
     supportsClinicManagedProfile: supportsClinicManagedProfile(req),
     supportsCanonicalDisorders: supportsCanonicalDisorders(req),
     supportsIndependentProfiles: supportsIndependentProfiles(req),
+    supportsPatientDiary: supportsPatientDiary(req),
   });
   if (identity) {
     req.deviceIdentity = identity;
@@ -780,6 +812,7 @@ function patientDirectory(rows) {
     directory.set(patientId, {
       ...current,
       displayName: patient.displayName,
+      bpPatientId: normaliseBpPatientId(patient.bpPatientId),
       supportId: shortId,
       quarantined: Boolean(patient.quarantinedAt),
       label: patient.quarantinedAt
@@ -865,6 +898,117 @@ function todayIso(timeZone = process.env.APP_TIME_ZONE || 'Australia/Brisbane') 
   }).formatToParts(new Date());
   const get = type => parts.find(part => part.type === type)?.value || '';
   return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function validatePatientSelectedDate(body = {}) {
+  const hasBuild9Metadata = [
+    body.clientEntryVersion,
+    body.createdAtUtc,
+    body.localUtcOffsetMinutes,
+    body.entryDateSource,
+  ].some(value => value !== undefined && value !== null && value !== '');
+  if (!hasBuild9Metadata) return null;
+
+  const clientEntryVersion = Number(body.clientEntryVersion);
+  const localUtcOffsetMinutes = Number(body.localUtcOffsetMinutes);
+  const createdAt = new Date(String(body.createdAtUtc || ''));
+  const entryDateSource = String(body.entryDateSource || '');
+  if (
+    clientEntryVersion !== 2 ||
+    !Number.isInteger(localUtcOffsetMinutes) ||
+    localUtcOffsetMinutes < -840 ||
+    localUtcOffsetMinutes > 840 ||
+    Number.isNaN(createdAt.getTime()) ||
+    !['today', 'backdated'].includes(entryDateSource)
+  ) {
+    return {
+      code: 'invalid_entry_date_metadata',
+      error: 'The selected check-in date metadata is invalid.',
+    };
+  }
+
+  const localCreatedAt = new Date(
+    createdAt.getTime() + localUtcOffsetMinutes * 60 * 1000,
+  );
+  const localCreatedDate = localCreatedAt.toISOString().slice(0, 10);
+  const earliestDate = addIsoDays(localCreatedDate, -maximumBackdateDays);
+  if (body.date < earliestDate || body.date > localCreatedDate) {
+    return {
+      code: 'entry_date_out_of_range',
+      error:
+        `Choose today or one of the previous ${maximumBackdateDays} ` +
+        'calendar days.',
+    };
+  }
+  const expectedSource = body.date === localCreatedDate
+    ? 'today'
+    : 'backdated';
+  if (entryDateSource !== expectedSource) {
+    return {
+      code: 'invalid_entry_date_metadata',
+      error: 'The selected check-in date metadata does not match the date.',
+    };
+  }
+  return null;
+}
+
+function diaryEntriesForPatient(
+  rows,
+  patientId,
+  requestedDays = 90,
+  endDate = todayIso(),
+) {
+  const days = [30, 60, 90].includes(Number(requestedDays))
+    ? Number(requestedDays)
+    : 90;
+  const startDate = addIsoDays(endDate, -(days - 1));
+  const groups = new Map();
+
+  for (const row of rows) {
+    if (
+      patientKey(row) !== patientId ||
+      !utcDateFromIso(row.Date) ||
+      row.Date < startDate ||
+      row.Date > endDate
+    ) {
+      continue;
+    }
+    const submissionId = String(row.SubmissionId || '').trim() ||
+      `legacy-${row.Date}-${row.Time}`;
+    const key = `${submissionId}|${row.Date}|${row.Time}`;
+    let entry = groups.get(key);
+    if (!entry) {
+      const suppliedSchema = Number(row.PayloadSchemaVersion);
+      entry = {
+        schemaVersion: [1, 2, 3].includes(suppliedSchema)
+          ? suppliedSchema
+          : 1,
+        submissionId,
+        date: row.Date,
+        time: row.Time,
+        patientName: String(row.Patient || ''),
+        patientId,
+        profileRevision: Number(row.ProfileRevision) || 0,
+        profileDisorderIds: splitProfileValues(row.ProfileDisorderIds),
+        profileDisorders: splitProfileValues(row.ProfileDisorders),
+        wellnessPercent: Number(row.WellnessPercent) || 0,
+        records: [],
+      };
+      groups.set(key, entry);
+    }
+    entry.records.push({
+      track: String(row.Track || ''),
+      disorderId: String(row.DisorderId || ''),
+      disorder: String(row.Disorder || ''),
+      symptomId: String(row.SymptomId || ''),
+      symptom: String(row.Symptom || ''),
+      score: Number(row.Score),
+    });
+  }
+
+  return [...groups.values()].sort((left, right) =>
+    `${right.date} ${right.time}`.localeCompare(`${left.date} ${left.time}`)
+  );
 }
 
 function metricLabel(metric) {
@@ -1101,12 +1245,13 @@ function pageShell(title, body) {
     : '';
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${html(title)}</title><style>
   :root{--bg:#f3f4f6;--panel:#fff;--ink:#111827;--muted:#6b7280;--blue:#2563eb;--line:#e5e7eb;--danger:#b91c1c;--good:#047857}
-  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}header{background:#111827;color:#fff;padding:20px 30px;display:flex;justify-content:space-between;align-items:center}header h1{font-size:24px;margin:0}nav a{color:#bfdbfe;margin-left:18px;text-decoration:none;font-weight:600}main{max-width:1500px;margin:auto;padding:24px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}.field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}select,input,button,.button{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#111827;font-size:14px}button,.button{background:var(--blue);color:white;border:none;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;display:inline-block}.button.secondary{background:#374151}.button.danger,button.danger{background:var(--danger)}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}.stat .label{font-size:12px;text-transform:uppercase;color:var(--muted);font-weight:700}.stat .value{font-size:27px;font-weight:800;margin-top:5px}.notice{border:2px solid #2563eb;background:#eff6ff;border-radius:12px;padding:18px;margin-bottom:20px}.code{font:800 28px Consolas,monospace;letter-spacing:.08em;margin:10px 0}.inline-form{display:inline}.inline-form button{width:auto;padding:7px 10px}.chart{width:100%;min-height:420px}.axis{font-size:12px;fill:#4b5563}.axis-title{font-size:13px;fill:#374151;font-weight:700}.patient-faint{fill:none;stroke:#64748b;stroke-width:1;stroke-opacity:.16}.cohort{fill:none;stroke:#1d4ed8;stroke-width:4}.median{fill:none;stroke:#7c3aed;stroke-width:2;stroke-dasharray:7 5}.legend{display:flex;gap:20px;flex-wrap:wrap;color:var(--muted);font-size:13px}.swatch{display:inline-block;width:24px;height:4px;margin-right:7px;vertical-align:middle}.table-wrap{overflow:auto;max-height:480px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#f8fafc;color:#475569}.flag{color:var(--danger);font-weight:700}.good{color:var(--good);font-weight:700}.muted{color:var(--muted)}.empty{padding:70px;text-align:center;color:var(--muted)}.patient-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:210px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:9px}.patient-list label{font-size:13px}.patient-list input{width:auto;margin-right:7px}.calendar-range{color:var(--muted);font-size:13px;margin:-4px 0 16px}.calendar-scroll{overflow-x:auto;padding-bottom:4px}.calendar-frame{min-width:560px;max-width:560px}.calendar-weekdays,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(66px,1fr));gap:8px}.calendar-weekdays{margin-bottom:8px}.calendar-weekday{text-align:center;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.calendar-day{position:relative;aspect-ratio:1;min-height:66px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;display:grid;place-items:center;overflow:hidden}.calendar-day.no-entry{border-style:dashed;background:#f8fafc;color:#94a3b8}.calendar-day.full.symptom{background:#dc2626;border-color:#dc2626;color:#fff}.calendar-day.full.wellness{background:#059669;border-color:#059669;color:#fff}.calendar-date{position:absolute;top:7px;left:8px;z-index:2;font-size:11px;font-weight:800}.calendar-dot{display:block;border-radius:50%}.calendar-day.symptom .calendar-dot{background:#dc2626}.calendar-day.wellness .calendar-dot{background:#059669}.calendar-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:12px;margin-top:16px}.calendar-legend span{display:flex;align-items:center;gap:7px}.calendar-key{display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;position:relative}.calendar-key.dot::after{content:"";display:block;border-radius:50%}.calendar-key.dot.symptom::after{background:#dc2626}.calendar-key.dot.wellness::after{background:#059669}.calendar-key.dot.small::after{width:10px;height:10px}.calendar-key.dot.medium::after{width:17px;height:17px}.calendar-key.full.symptom{background:#dc2626;border-color:#dc2626}.calendar-key.full.wellness{background:#059669;border-color:#059669}.calendar-key.missing{border-style:dashed;background:#f8fafc}@media(max-width:700px){
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Segoe UI,Arial,sans-serif}header{background:#111827;color:#fff;padding:18px 30px}.portal-header{display:flex;justify-content:space-between;align-items:center;gap:18px;flex-wrap:wrap}.portal-header h1{font-size:24px;margin:0}.portal-search{display:flex;gap:8px;min-width:min(430px,100%)}.portal-search input{margin:0}.portal-search button{width:auto;white-space:nowrap}nav{margin-top:14px}nav a{color:#bfdbfe;margin-right:18px;text-decoration:none;font-weight:600}main{max-width:1500px;margin:auto;padding:24px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;align-items:end}.field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}select,input,button,.button{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:#111827;font-size:14px}button,.button{background:var(--blue);color:white;border:none;font-weight:700;cursor:pointer;text-decoration:none;text-align:center;display:inline-block}.button.secondary{background:#374151}.button.danger,button.danger{background:var(--danger)}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px}.stat .label{font-size:12px;text-transform:uppercase;color:var(--muted);font-weight:700}.stat .value{font-size:27px;font-weight:800;margin-top:5px}.notice{border:2px solid #2563eb;background:#eff6ff;border-radius:12px;padding:18px;margin-bottom:20px}.code{font:800 28px Consolas,monospace;letter-spacing:.08em;margin:10px 0}.inline-form{display:inline}.inline-form button{width:auto;padding:7px 10px}.chart{width:100%;min-height:420px}.axis{font-size:12px;fill:#4b5563}.axis-title{font-size:13px;fill:#374151;font-weight:700}.patient-faint{fill:none;stroke:#64748b;stroke-width:1;stroke-opacity:.16}.cohort{fill:none;stroke:#1d4ed8;stroke-width:4}.median{fill:none;stroke:#7c3aed;stroke-width:2;stroke-dasharray:7 5}.legend{display:flex;gap:20px;flex-wrap:wrap;color:var(--muted);font-size:13px}.swatch{display:inline-block;width:24px;height:4px;margin-right:7px;vertical-align:middle}.table-wrap{overflow:auto;max-height:480px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#f8fafc;color:#475569}.flag{color:var(--danger);font-weight:700}.good{color:var(--good);font-weight:700}.muted{color:var(--muted)}.empty{padding:70px;text-align:center;color:var(--muted)}.patient-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:210px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:9px}.patient-list label{font-size:13px}.patient-list input{width:auto;margin-right:7px}.calendar-range{color:var(--muted);font-size:13px;margin:-4px 0 16px}.calendar-scroll{overflow-x:auto;padding-bottom:4px}.calendar-frame{min-width:560px;max-width:560px}.calendar-weekdays,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(66px,1fr));gap:8px}.calendar-weekdays{margin-bottom:8px}.calendar-weekday{text-align:center;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.calendar-day{position:relative;aspect-ratio:1;min-height:66px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;display:grid;place-items:center;overflow:hidden}.calendar-day.no-entry{border-style:dashed;background:#f8fafc;color:#94a3b8}.calendar-day.full.symptom{background:#dc2626;border-color:#dc2626;color:#fff}.calendar-day.full.wellness{background:#059669;border-color:#059669;color:#fff}.calendar-date{position:absolute;top:7px;left:8px;z-index:2;font-size:11px;font-weight:800}.calendar-dot{display:block;border-radius:50%}.calendar-day.symptom .calendar-dot{background:#dc2626}.calendar-day.wellness .calendar-dot{background:#059669}.calendar-legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:12px;margin-top:16px}.calendar-legend span{display:flex;align-items:center;gap:7px}.calendar-key{display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;position:relative}.calendar-key.dot::after{content:"";display:block;border-radius:50%}.calendar-key.dot.symptom::after{background:#dc2626}.calendar-key.dot.wellness::after{background:#059669}.calendar-key.dot.small::after{width:10px;height:10px}.calendar-key.dot.medium::after{width:17px;height:17px}.calendar-key.full.symptom{background:#dc2626;border-color:#dc2626}.calendar-key.full.wellness{background:#059669;border-color:#059669}.calendar-key.missing{border-style:dashed;background:#f8fafc}@media(max-width:700px){
     main{padding:12px}
-    header{padding:14px 12px;display:block;text-align:center}
-    header h1{font-size:20px;margin-bottom:12px}
+    header{padding:14px 12px;text-align:center}
+    .portal-header{display:block}.portal-header h1{font-size:20px;margin-bottom:12px}
+    .portal-search{min-width:0;margin-bottom:12px}.portal-search button{width:auto}
     nav{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
-    nav a{margin:0;padding:10px 8px;border:1px solid #334155;border-radius:8px;text-align:center;font-size:13px;line-height:1.2}
+    nav{margin-top:0}nav a{margin:0;padding:10px 8px;border:1px solid #334155;border-radius:8px;text-align:center;font-size:13px;line-height:1.2}
     .chart{min-height:300px}
     .toolbar{grid-template-columns:1fr}
     .panel{padding:14px}
@@ -1119,7 +1264,7 @@ function pageShell(title, body) {
     .calendar-dot{transform:scale(.75)}
   }
   .incident-lock{background:#7f1d1d;color:#fff;padding:14px 24px;text-align:center;border-bottom:4px solid #fca5a5}
-  </style></head><body><header><h1>NeuroSol Clinician Portal</h1><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/enrolments/recovery">Identity recovery</a><a href="/admin/disorders">Disorders</a><a href="/admin/symptoms">Symptoms</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header>${incidentNotice}<main>${body}</main></body></html>`;
+  </style></head><body><header><div class="portal-header"><h1>NeuroSol Clinician Portal</h1><form class="portal-search" method="get" action="/admin/patient-search"><input name="q" maxlength="160" required aria-label="Search patients" placeholder="Search name, BP ID or Support ID"><button type="submit">Find patient</button></form></div><nav><a href="/admin">Patient review</a><a href="/admin/population">Population analytics</a><a href="/admin/enrolments">Enrolments</a><a href="/admin/enrolments/recovery">Identity recovery</a><a href="/admin/disorders">Disorders</a><a href="/admin/symptoms">Symptoms</a><a href="/admin/patients">Manage patients</a><a href="/admin/export.csv">CSV export</a></nav></header>${incidentNotice}<main>${body}</main></body></html>`;
 }
 
 // Validate the catalogue before any profile or CSV migration can write data.
@@ -1151,6 +1296,8 @@ app.get('/health',(req,res)=>res.json({
   disorderCatalogVersion: catalogVersion,
   customDisordersEnabled,
   independentProfilesEnabled,
+  patientDiaryAvailable: true,
+  maximumBackdateDays,
 }));
 app.get('/api/mobile-config',(req,res)=>{
   res.set('Cache-Control', 'no-store');
@@ -1173,6 +1320,8 @@ app.get('/api/mobile-config',(req,res)=>{
       : 1,
     build7Supported: minimumMobileBuild <= 7,
     customDisordersEnabled,
+    patientDiary: true,
+    maximumBackdateDays,
     enrolmentIncidentLockdown,
   });
 });
@@ -1265,6 +1414,7 @@ app.post(
       supportsClinicManagedProfile: supportsClinicManagedProfile(req),
       supportsCanonicalDisorders: supportsCanonicalDisorders(req),
       supportsIndependentProfiles: supportsIndependentProfiles(req),
+      supportsPatientDiary: supportsPatientDiary(req),
     });
     return res.status(200).json({
       patientId: reviewIdentity.patientId,
@@ -1279,6 +1429,7 @@ app.post(
     supportsClinicManagedProfile: supportsClinicManagedProfile(req),
     supportsCanonicalDisorders: supportsCanonicalDisorders(req),
     supportsIndependentProfiles: supportsIndependentProfiles(req),
+    supportsPatientDiary: supportsPatientDiary(req),
     supportedMobileBuild: mobileBuild(req),
   });
   if (result.status === 'ok') {
@@ -1352,6 +1503,43 @@ app.get(
   },
 );
 
+app.get(
+  '/api/diary',
+  requireIncidentClear,
+  requireDeviceIdentity,
+  requireSupportedMobileBuild,
+  (req, res) => {
+    if (!supportsPatientDiary(req)) return sendUpdateRequired(res, 9);
+    const days = [30, 60, 90].includes(Number(req.query.days))
+      ? Number(req.query.days)
+      : 90;
+    const patientId = String(
+      req.deviceIdentity.effectivePatientId ||
+        req.deviceIdentity.patientId ||
+        '',
+    ).trim();
+    const patientName = String(
+      req.deviceIdentity.patient?.displayName || '',
+    ).trim();
+    const responsePatientId = String(
+      req.deviceIdentity.patientId || patientId,
+    ).trim();
+    const entries = diaryEntriesForPatient(
+      readRows(),
+      patientId,
+      days,
+      mobileLocalToday(req),
+    )
+      .map(entry => ({ ...entry, patientName, patientId: responsePatientId }));
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      days,
+      maximumBackdateDays,
+      entries,
+    });
+  },
+);
+
 app.post(
   '/api/symptom-entry',
   requireIncidentClear,
@@ -1392,6 +1580,11 @@ app.post(
       !utcDateFromIso(b.date) || !looksLikeTime(b.time) ||
       !validSubmittedWellness(wellness)) {
     return res.status(400).json({error:'Invalid or incomplete submission.'});
+  }
+  const selectedDateError = validatePatientSelectedDate(b);
+  if (selectedDateError) {
+    if (!supportsPatientDiary(req)) return sendUpdateRequired(res, 9);
+    return res.status(400).json(selectedDateError);
   }
   if (req.deviceIdentity.patientId !== submittedPatientId) {
     return res.status(403).json({
@@ -1616,6 +1809,7 @@ function enrolmentPatients(rows) {
     return {
       patientId,
       displayName: fromStore?.displayName || fromData?.displayName || 'Unnamed patient',
+      bpPatientId: normaliseBpPatientId(fromStore?.bpPatientId),
       supportId: supportId(patientId),
       activeDevices: activeDeviceRecords.length,
       observedBuilds,
@@ -1629,6 +1823,68 @@ function enrolmentPatients(rows) {
         : suggestedClinicalProfile(rows, patientId),
     };
   }).filter(Boolean).sort((a,b)=>a.displayName.localeCompare(b.displayName));
+}
+
+function patientMatchesSearch(patient, query) {
+  const normalisedQuery = String(query || '')
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase('en-AU');
+  if (!normalisedQuery) return false;
+  const fields = [
+    patient.displayName,
+    normaliseBpPatientId(patient.bpPatientId),
+    patient.supportId,
+    patient.patientId,
+  ].map(value => String(value || '').normalize('NFKC').toLocaleLowerCase('en-AU'));
+  const joined = fields.join(' ');
+  const compactFields = fields.map(value => value.replace(/[^a-z0-9]/g, ''));
+  return normalisedQuery.split(/\s+/).every(term => {
+    const compactTerm = term.replace(/[^a-z0-9]/g, '');
+    return joined.includes(term) || (
+      compactTerm && compactFields.some(field => field.includes(compactTerm))
+    );
+  });
+}
+
+function patientSearchPage(query = '') {
+  const rows = readRows();
+  const q = String(query || '').normalize('NFKC').trim().slice(0, 160);
+  const matches = q
+    ? enrolmentPatients(rows).filter(patient => patientMatchesSearch(patient, q))
+    : [];
+  const resultRows = matches.map(patient => {
+    const hasCheckIns = rows.some(row => patientKey(row) === patient.patientId);
+    const actions = [
+      hasCheckIns
+        ? `<a class="button" style="width:auto;padding:7px 10px" href="/admin?patientId=${encodeURIComponent(patient.patientId)}">Open diary</a>`
+        : '<span class="muted">No check-ins yet</span>',
+      patient.quarantinedAt
+        ? '<a class="button danger" style="width:auto;padding:7px 10px" href="/admin/enrolments/recovery">Identity recovery</a>'
+        : `<a class="button secondary" style="width:auto;padding:7px 10px" href="/admin/enrolments?editPatientId=${encodeURIComponent(patient.patientId)}">Edit enrolment</a>`,
+    ].join(' ');
+    return `<tr>
+      <td>${html(patient.displayName)}</td>
+      <td>${html(patient.bpPatientId || '—')}</td>
+      <td>${html(patient.supportId)}</td>
+      <td>${patient.activeDevices}</td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
+  const summary = q
+    ? `${matches.length} matching patient${matches.length === 1 ? '' : 's'}`
+    : 'Enter a patient name, BP Patient ID, Support ID, or internal PatientId.';
+  return pageShell('Patient search', `
+    <section class="panel">
+      <h2>Find a patient</h2>
+      <form method="get" action="/admin/patient-search" class="toolbar">
+        <div class="field"><label>Patient search</label><input name="q" maxlength="160" required autofocus value="${html(q)}" placeholder="Name, BP ID or Support ID"></div>
+        <div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>
+      </form>
+      <p class="muted">${html(summary)}</p>
+    </section>
+    ${q ? `<section class="panel"><div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>BP Patient ID</th><th>Support ID</th><th>Active devices</th><th>Actions</th></tr></thead><tbody>${resultRows || '<tr><td colspan="5">No matching patient was found.</td></tr>'}</tbody></table></div></section>` : ''}
+  `);
 }
 
 function suggestedClinicalProfile(rows, patientId) {
@@ -1745,6 +2001,15 @@ function symptomSelectors(
   ).join('');
 }
 
+function profileIdentityFields(patient = null) {
+  const bpField = `<div class="field"><label>BP Patient ID (optional)</label><input name="bpPatientId" maxlength="80" value="${html(patient?.bpPatientId || '')}" placeholder="Best Practice patient reference"></div>`;
+  if (!patient) {
+    return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>${bpField}`;
+  }
+  return `<div class="field"><label>Clinic identity</label><div><strong>${html(patient.displayName)}</strong><br><span class="muted">${html(patient.supportId)} · The identity name is locked while editing its clinical profile.</span></div></div>
+    <input type="hidden" name="displayName" value="${html(patient.displayName)}">${bpField}`;
+}
+
 function legacyProfileEditor(patient = null) {
   const profile = patient?.clinicalProfile ||
     patient?.suggestedProfile || {
@@ -1758,10 +2023,7 @@ function legacyProfileEditor(patient = null) {
       secondarySymptomIds: [],
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
-  const identityField = patient
-    ? `<div class="field"><label>Clinic identity</label><div><strong>${html(patient.displayName)}</strong><br><span class="muted">${html(patient.supportId)} · The identity name is locked while editing its clinical profile.</span></div></div>
-      <input type="hidden" name="displayName" value="${html(patient.displayName)}">`
-    : '<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>';
+  const identityField = profileIdentityFields(patient);
   const actions = patient
     ? `<button type="submit" name="action" value="save">Save profile changes</button>
         <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
@@ -1870,10 +2132,7 @@ function independentProfileEditor(patient = null) {
   );
   const disorderChoices = availableDisorders(selected.disorderIds);
   const symptomChoices = availableSymptoms(selected.symptomIds);
-  const identityField = patient
-    ? `<div class="field"><label>Clinic identity</label><div><strong>${html(patient.displayName)}</strong><br><span class="muted">${html(patient.supportId)} · The identity name is locked while editing its clinical profile.</span></div></div>
-      <input type="hidden" name="displayName" value="${html(patient.displayName)}">`
-    : '<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>';
+  const identityField = profileIdentityFields(patient);
   const actions = patient
     ? `<button type="submit" name="action" value="save">Save profile changes</button>
         <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
@@ -1987,6 +2246,7 @@ function enrolmentPage({
         </form>`;
     return `<tr>
     <td>${html(patient.displayName)}</td>
+    <td>${html(patient.bpPatientId || '—')}</td>
     <td>${html(patient.supportId)}</td>
     <td>${status}${status ? '<br>' : ''}${html(profileDescription(patient.clinicalProfile))}</td>
     <td>${patient.activeDevices}${patient.observedBuilds ? `<br><span class="muted">${html(patient.observedBuilds)}</span>` : ''}</td>
@@ -1996,8 +2256,8 @@ function enrolmentPage({
   const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient, profileMode)}
   <section class="panel"><h2>Existing clinic identities</h2>
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
-    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
-    <tbody>${patientRows || '<tr><td colspan="5">No patient identities yet.</td></tr>'}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
+    <tbody>${patientRows || '<tr><td colspan="6">No patient identities yet.</td></tr>'}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
@@ -2344,6 +2604,10 @@ app.post('/admin/disorders/set-symptoms',requireAdmin,requireAdminCsrf,(req,res)
 
 app.get('/admin/export.csv',requireAdmin,(req,res)=>res.download(csvPath,'neurosol_symptom_entries.csv'));
 
+app.get('/admin/patient-search',requireAdmin,(req,res)=>{
+  res.send(patientSearchPage(req.query.q));
+});
+
 app.get('/admin/enrolments',requireAdmin,(req,res)=>{
   res.send(enrolmentPage({
     editPatientId: String(req.query.editPatientId || '').trim(),
@@ -2500,6 +2764,7 @@ app.post('/admin/enrolments/save-profile',requireAdmin,requireAdminCsrf,(req,res
       displayName: formMode === 'edit'
         ? existingPatient.displayName
         : String(req.body.displayName || '').trim(),
+      bpPatientId: req.body.bpPatientId,
       clinicalProfile,
     });
     if (req.body.action === 'save-and-issue') {
@@ -2576,6 +2841,7 @@ function patientManagementPage({ error = '', message = '' } = {}) {
         </form>`;
     return `<tr>
       <td>${html(patient.displayName)}</td>
+      <td>${html(patient.bpPatientId || '—')}</td>
       <td>${html(patient.supportId)}</td>
       <td>${submissions}</td>
       <td>${deletion}</td>
@@ -2591,8 +2857,8 @@ function patientManagementPage({ error = '', message = '' } = {}) {
     <section class="panel"><h2>Delete a patient record</h2>
       <p class="flag">Deletion removes the patient’s portal identity, device access, unused enrolment codes, and submitted rows. It cannot be undone through the portal.</p>
       <p class="muted">A timestamped server backup is created first. Records imported without a PatientId are deliberately excluded from this screen.</p>
-      <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Support ID</th><th>Check-ins</th><th>Confirmation</th></tr></thead>
-      <tbody>${tableRows || '<tr><td colspan="4">No identified patients found.</td></tr>'}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>BP Patient ID</th><th>Support ID</th><th>Check-ins</th><th>Confirmation</th></tr></thead>
+      <tbody>${tableRows || '<tr><td colspan="5">No identified patients found.</td></tr>'}</tbody></table></div>
     </section>`);
 }
 
@@ -2688,6 +2954,9 @@ app.get('/admin/report.pdf',requireAdmin,(req,res)=>{
   res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','inline; filename="neurosol-clinical-report.pdf"');doc.pipe(res);
   doc.fontSize(20).text('NeuroSol Clinical Report');doc.moveDown();
   doc.fontSize(11).text(`Patient: ${selectedPatient?.displayName||'Cohort'}`);
+  if (selectedPatient?.bpPatientId) {
+    doc.text(`BP Patient ID: ${selectedPatient.bpPatientId}`);
+  }
   if (selectedPatient) doc.text(`Support ID: ${selectedPatient.supportId}`);
   doc.text(`Disorder: ${disorderLabel(allRows,selectedDisorderId)||'All'}`);doc.text(`Generated: ${new Date().toLocaleString('en-AU')}`);doc.moveDown();
   const dates=unique(rows,'Date');doc.text(`Date range: ${dates[0]||'-'} to ${dates[dates.length-1]||'-'}`);doc.text(`Submission rows: ${rows.length}`);doc.moveDown();
@@ -2718,7 +2987,7 @@ app.get('/admin',requireAdmin,(req,res)=>{
   const latest=[...filtered].sort((a,b)=>`${b.Date}${b.Time}`.localeCompare(`${a.Date}${a.Time}`)).slice(0,120);
   const disorderOptionsHtml='<option value="">All</option>'+disorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
   const patientOptions=patients.map(patient=>`<option value="${html(patient.patientId)}" ${patient.patientId===patientId?'selected':''}>${html(patient.label)}</option>`).join('');
-  const body=`<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${round1(mean(wellness))}%</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${avgSym}/10</div></div></div>
+  const body=`<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">BP Patient ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.bpPatientId||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${round1(mean(wellness))}%</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${avgSym}/10</div></div></div>
   <form class="panel toolbar"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Calendar range</label><select name="calendarDays">${[30,60,90].map(days=>`<option value="${days}" ${days===calendarDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
   <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Weekly aggregation is the default to reduce day-to-day noise. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
   <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,calendarDays)}</section>
@@ -2778,10 +3047,14 @@ module.exports = {
   disorderCatalog,
   disorderChoices,
   disorderKey,
+  diaryEntriesForPatient,
   identityStore,
   patientDirectory,
+  patientMatchesSearch,
   patientSeries,
+  mobileLocalToday,
   buildCalendarDays,
   renderMetricCalendar,
   todayIso,
+  validatePatientSelectedDate,
 };
