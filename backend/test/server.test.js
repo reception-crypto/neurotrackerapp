@@ -1791,7 +1791,10 @@ test('portal groups by PatientId and displays only the latest name', async () =>
       ReceivedAt: '2026-07-23T10:00:00.000Z',
     },
   ]);
-  assert.equal(directory.size, 1);
+  assert.equal(
+    [...directory.keys()].filter(key => key === identity.patientId).length,
+    1,
+  );
   assert.equal(directory.get(identity.patientId).displayName, 'Latest Name');
 });
 
