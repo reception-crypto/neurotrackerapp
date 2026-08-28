@@ -799,6 +799,7 @@ function patientDirectory(rows) {
         patientId: key,
         displayName,
         latestTimestamp: timestamp,
+        hasDiaryEntries: true,
         supportId: shortId,
         label: isLegacy ? `${displayName} (legacy record)` : `${displayName} (${shortId})`,
       });
@@ -807,17 +808,24 @@ function patientDirectory(rows) {
   const patients = identityStore.snapshot().patients;
   for (const [patientId, patient] of Object.entries(patients)) {
     const current = directory.get(patientId);
-    if (!current || !patient.displayName) continue;
+    if (!patient.displayName) continue;
     const shortId = supportId(patientId);
+    const hasDiaryEntries = Boolean(current?.hasDiaryEntries);
+    const label = patient.quarantinedAt
+      ? `[QUARANTINED COLLISION] ${patient.displayName} (${shortId})`
+      : hasDiaryEntries
+      ? `${patient.displayName} (${shortId})`
+      : `${patient.displayName} (${shortId}) — no diary entries yet`;
     directory.set(patientId, {
       ...current,
+      patientId,
       displayName: patient.displayName,
       bpPatientId: normaliseBpPatientId(patient.bpPatientId),
+      hasDiaryEntries,
+      latestTimestamp: current?.latestTimestamp || '',
       supportId: shortId,
       quarantined: Boolean(patient.quarantinedAt),
-      label: patient.quarantinedAt
-        ? `[QUARANTINED COLLISION] ${patient.displayName} (${shortId})`
-        : `${patient.displayName} (${shortId})`,
+      label,
     });
   }
   return directory;
@@ -2985,13 +2993,17 @@ app.get('/admin',requireAdmin,(req,res)=>{
   const avgSym=round1(mean(filtered.map(r=>r.ScoreNumber)));
   const wellness=[...new Map(filtered.filter(r=>r.WellnessNumber>0).map(r=>[`${patientKey(r)}|${r.Date}`,r.WellnessNumber])).values()];
   const latest=[...filtered].sort((a,b)=>`${b.Date}${b.Time}`.localeCompare(`${a.Date}${a.Time}`)).slice(0,120);
+  const noDiaryEntries=Boolean(selectedPatient&&!selectedPatient.hasDiaryEntries);
+  const diaryStatusNotice=noDiaryEntries
+    ? `<div class="notice"><strong>No diary entries yet.</strong> This patient is enrolled and can be reviewed here as soon as their first symptom diary submission reaches the clinic.</div>`
+    : '';
   const disorderOptionsHtml='<option value="">All</option>'+disorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
   const patientOptions=patients.map(patient=>`<option value="${html(patient.patientId)}" ${patient.patientId===patientId?'selected':''}>${html(patient.label)}</option>`).join('');
-  const body=`<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">BP Patient ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.bpPatientId||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${round1(mean(wellness))}%</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${avgSym}/10</div></div></div>
+  const body=`${diaryStatusNotice}<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">BP Patient ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.bpPatientId||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${wellness.length?`${round1(mean(wellness))}%`:'-'}</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${filtered.length?`${avgSym}/10`:'-'}</div></div></div>
   <form class="panel toolbar"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Calendar range</label><select name="calendarDays">${[30,60,90].map(days=>`<option value="${days}" ${days===calendarDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
   <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Weekly aggregation is the default to reduce day-to-day noise. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
   <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,calendarDays)}</section>
-  <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div><a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(rowDisorderLabel(r))}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join('')}</tbody></table></div></section>`;
+  <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div>${noDiaryEntries?'':`<a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a>`}</div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.length?latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(rowDisorderLabel(r))}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join(''):'<tr><td colspan="7">No diary entries have been received for this patient.</td></tr>'}</tbody></table></div></section>`;
   res.send(pageShell('Patient review',body));
 });
 

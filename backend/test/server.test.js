@@ -1795,6 +1795,29 @@ test('portal groups by PatientId and displays only the latest name', async () =>
   assert.equal(directory.get(identity.patientId).displayName, 'Latest Name');
 });
 
+test('patient review lists an enrolled patient before their first diary entry', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-enrolled-no-diary-entries',
+    displayName: 'Enrolled No Entries',
+  });
+
+  const directory = patientDirectory([]);
+  const patient = directory.get(identity.patientId);
+  assert.equal(patient.displayName, 'Enrolled No Entries');
+  assert.equal(patient.hasDiaryEntries, false);
+  assert.match(patient.label, /no diary entries yet/);
+
+  const response = await fetch(
+    `${baseUrl}/admin?patientId=${encodeURIComponent(identity.patientId)}`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(response.status, 200);
+  const page = await response.text();
+  assert.match(page, /No diary entries yet/);
+  assert.match(page, /Enrolled No Entries/);
+  assert.doesNotMatch(page, /Generate PDF/);
+});
+
 test('a recovery code keeps the PatientId and revoked devices are rejected', async () => {
   const original = await enrol({
     patientId: 'pt-recovery-test',
