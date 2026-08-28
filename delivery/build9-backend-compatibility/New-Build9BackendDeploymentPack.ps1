@@ -168,6 +168,7 @@ $backendFiles = @(
     'identity_store.js',
     'package-lock.json',
     'package.json',
+    'portal_users.js',
     'server.js',
     'start-neurosol.cmd'
 )

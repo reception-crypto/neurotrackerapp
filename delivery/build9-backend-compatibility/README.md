@@ -13,8 +13,9 @@ keeps the active Build 8 configuration and all Build 7 compatibility:
 - Build 9 can exercise the diary contract but is not advertised until store
   release
 
-The package adds optional unique BP Patient IDs, authenticated portal search,
-patient-scoped diary history, and validated seven-day backdating. Existing
+The package adds optional unique BP Patient IDs, permission-scoped clinician
+accounts, authenticated portal search, patient-scoped diary history, and
+validated seven-day backdating. Existing
 submission idempotency, one-entry-per-patient/date enforcement, identity
 recovery, clinical profile revisions, and Build 7/8 payload contracts remain
 intact.

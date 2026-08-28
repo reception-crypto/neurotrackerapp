@@ -69,6 +69,7 @@ jobs:
       - run: node --check identity_store.js
       - run: node --check clinical_profiles.js
       - run: node --check disorder_catalog.js
+      - run: node --check portal_users.js
       - name: Verify reconciled backend identity
         run: |
           grep -n -E '"version": "0\.11\.0"' package.json
@@ -77,6 +78,8 @@ jobs:
           grep -n -E 'submission_id_conflict' server.js
           grep -n -F '/api/diary' server.js
           grep -n -F '/admin/patient-search' server.js
+          grep -n -F '/admin/users' server.js
+          grep -n -F 'createPortalUserStore' portal_users.js
           grep -n -F 'entry_date_out_of_range' server.js
           grep -n -F 'https://apps.apple.com/app/id6796575355' .env.example
       - run: npm test
