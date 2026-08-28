@@ -46,28 +46,18 @@ void main() {
       headache: 2,
       nausea: 3,
     ),
-    entry(
-      id: 'ten-days',
-      date: '2026-08-18',
-      wellness: 60,
-      headache: 5,
-    ),
-    entry(
-      id: 'forty-days',
-      date: '2026-07-19',
-      wellness: 40,
-      headache: 8,
-    ),
+    entry(id: 'ten-days', date: '2026-08-18', wellness: 60, headache: 5),
+    entry(id: 'forty-days', date: '2026-07-19', wellness: 40, headache: 8),
   ];
 
   test('30 day wellness series excludes older entries', () {
     final series = wellnessDiarySeries(entries, days: 30, now: now);
 
     expect(series.points.map((point) => point.value), [60, 80]);
-    expect(
-      series.points.map((point) => point.date.toIso8601String()),
-      ['2026-08-18T00:00:00.000Z', '2026-08-28T00:00:00.000Z'],
-    );
+    expect(series.points.map((point) => point.date.toIso8601String()), [
+      '2026-08-18T00:00:00.000Z',
+      '2026-08-28T00:00:00.000Z',
+    ]);
   });
 
   test('60 day symptom chart keeps separate symptom lines', () {
@@ -87,10 +77,7 @@ void main() {
     );
 
     expect(diaryDate(malformed.date), isNull);
-    expect(
-      diaryEntriesInRange([malformed], days: 90, now: now),
-      isEmpty,
-    );
+    expect(diaryEntriesInRange([malformed], days: 90, now: now), isEmpty);
   });
 
   test('missing legacy wellness is not plotted as zero', () {
@@ -101,9 +88,6 @@ void main() {
       headache: 4,
     );
 
-    expect(
-      wellnessDiarySeries([missing], days: 30, now: now).points,
-      isEmpty,
-    );
+    expect(wellnessDiarySeries([missing], days: 30, now: now).points, isEmpty);
   });
 }

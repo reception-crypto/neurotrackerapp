@@ -39,10 +39,12 @@ List<DailyEntry> diaryEntriesInRange(
   final current = now ?? DateTime.now();
   final end = DateTime.utc(current.year, current.month, current.day);
   final start = end.subtract(Duration(days: safeDays - 1));
-  return entries.where((entry) {
-    final date = diaryDate(entry.date);
-    return date != null && !date.isBefore(start) && !date.isAfter(end);
-  }).toList(growable: false);
+  return entries
+      .where((entry) {
+        final date = diaryDate(entry.date);
+        return date != null && !date.isBefore(start) && !date.isAfter(end);
+      })
+      .toList(growable: false);
 }
 
 DiaryChartSeries wellnessDiarySeries(
@@ -54,9 +56,9 @@ DiaryChartSeries wellnessDiarySeries(
   for (final entry in diaryEntriesInRange(entries, days: days, now: now)) {
     if (entry.wellnessPercent < 10 || entry.wellnessPercent > 100) continue;
     final date = diaryDate(entry.date)!;
-    values.putIfAbsent(date, () => <double>[]).add(
-      entry.wellnessPercent.toDouble(),
-    );
+    values
+        .putIfAbsent(date, () => <double>[])
+        .add(entry.wellnessPercent.toDouble());
   }
   return DiaryChartSeries(
     key: 'wellness',
@@ -99,8 +101,8 @@ List<DiaryChartSeries> symptomDiarySeries(
 
 List<DiaryChartPoint> _points(Map<DateTime, List<double>> values) {
   final points = values.entries.map((entry) {
-    final average = entry.value.reduce((left, right) => left + right) /
-        entry.value.length;
+    final average =
+        entry.value.reduce((left, right) => left + right) / entry.value.length;
     return DiaryChartPoint(date: entry.key, value: average);
   }).toList();
   points.sort((left, right) => left.date.compareTo(right.date));

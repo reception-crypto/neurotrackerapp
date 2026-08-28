@@ -38,7 +38,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          final result = snapshot.data ??
+          final result =
+              snapshot.data ??
               const DiaryHistoryResult(
                 entries: <DailyEntry>[],
                 clinicSynced: false,
@@ -48,14 +49,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
             result.entries,
             days: _days,
           );
-          final wellness = wellnessDiarySeries(
-            result.entries,
-            days: _days,
-          );
-          final symptoms = symptomDiarySeries(
-            result.entries,
-            days: _days,
-          );
+          final wellness = wellnessDiarySeries(result.entries, days: _days);
+          final symptoms = symptomDiarySeries(result.entries, days: _days);
           return RefreshIndicator(
             onRefresh: _refresh,
             child: ListView(

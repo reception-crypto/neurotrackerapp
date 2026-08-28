@@ -47,11 +47,9 @@ class CsvService {
       selected.day,
     );
     final daysBack = currentDay.difference(selectedDay).inDays;
-    if (
-      maximumBackdateDays < 1 ||
-      daysBack < 0 ||
-      daysBack > maximumBackdateDays
-    ) {
+    if (maximumBackdateDays < 1 ||
+        daysBack < 0 ||
+        daysBack > maximumBackdateDays) {
       throw StateError(
         'Choose today or one of the previous $maximumBackdateDays calendar days.',
       );
@@ -63,8 +61,7 @@ class CsvService {
     final idFragment = profile.patientId.length <= 8
         ? profile.patientId
         : profile.patientId.substring(0, 8);
-    final submissionId =
-        'NS-${createdAt.microsecondsSinceEpoch}-$idFragment';
+    final submissionId = 'NS-${createdAt.microsecondsSinceEpoch}-$idFragment';
 
     final records = assignments
         .map(

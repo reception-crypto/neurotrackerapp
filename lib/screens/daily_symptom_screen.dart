@@ -184,8 +184,7 @@ class _DailySymptomScreenState extends State<DailySymptomScreen> {
                               profile: widget.profile,
                               symptomScores: scores,
                               entryDate: _entryDate,
-                              maximumBackdateDays:
-                                  widget.maximumBackdateDays,
+                              maximumBackdateDays: widget.maximumBackdateDays,
                             ),
                           ),
                         )

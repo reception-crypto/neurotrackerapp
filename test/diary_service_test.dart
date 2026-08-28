@@ -51,9 +51,8 @@ void main() {
 
     final result = await DiaryService.loadHistory();
 
-    expect(
-      result.entries.map((entry) => entry.submissionId).toList(),
-      ['current-entry'],
-    );
+    expect(result.entries.map((entry) => entry.submissionId).toList(), [
+      'current-entry',
+    ]);
   });
 }

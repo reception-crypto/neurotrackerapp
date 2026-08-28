@@ -98,8 +98,7 @@ class _WellnessScreenState extends State<WellnessScreen> {
       await NotificationService.scheduleDailyReminder(
         hour: widget.profile.reminderTime.hour,
         minute: widget.profile.reminderTime.minute,
-        skipToday:
-            entry.date == StorageService.localDateKey(DateTime.now()),
+        skipToday: entry.date == StorageService.localDateKey(DateTime.now()),
       );
     } catch (_) {
       // The locally saved check-in remains valid if reminder scheduling fails.

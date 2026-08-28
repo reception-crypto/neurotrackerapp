@@ -68,27 +68,25 @@ class DiaryService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw const FormatException('Diary request was rejected.');
       }
-      final body = Map<String, dynamic>.from(
-        jsonDecode(response.body) as Map,
-      );
+      final body = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
       final rawEntries = body['entries'];
       if (rawEntries is! List) {
         throw const FormatException('Diary entries are missing.');
       }
-      final remoteEntries = rawEntries.map((raw) {
-        final entry = DailyEntry.fromJson(
-          Map<String, dynamic>.from(raw as Map),
-        );
-        if (
-          expectedPatientId.isEmpty ||
-          entry.patientId != expectedPatientId ||
-          entry.submissionId.trim().isEmpty ||
-          entry.records.isEmpty
-        ) {
-          throw const FormatException('Diary identity is invalid.');
-        }
-        return entry;
-      }).toList(growable: false);
+      final remoteEntries = rawEntries
+          .map((raw) {
+            final entry = DailyEntry.fromJson(
+              Map<String, dynamic>.from(raw as Map),
+            );
+            if (expectedPatientId.isEmpty ||
+                entry.patientId != expectedPatientId ||
+                entry.submissionId.trim().isEmpty ||
+                entry.records.isEmpty) {
+              throw const FormatException('Diary identity is invalid.');
+            }
+            return entry;
+          })
+          .toList(growable: false);
       // SharedPreferences history writes are read-modify-write operations, so
       // keep them sequential to avoid concurrent saves dropping an entry.
       for (final entry in remoteEntries) {
