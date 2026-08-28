@@ -5,9 +5,9 @@ with a CSV-backed clinician portal.
 
 ## Current release
 
-- Public mobile version: `1.0.0+7` (remains supported)
-- Build 8 release candidate: `1.1.0+8`
-- Reconciled backend source: `0.10.0` (deploy before Build 8 mobile)
+- Public mobile version: `1.1.0+8`
+- Accessibility hotfix candidate: `1.1.1+9`
+- Reconciled backend source: `0.10.0` (unchanged for the hotfix)
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
 - Production API: `https://tracker.melindapascoeneurology.com`
@@ -71,6 +71,33 @@ preserved recovered-device bridges. Mobile submissions are idempotent at both
 ends: exact network retries do not add rows, changed reuse of a SubmissionId is
 rejected, one PatientId/date is accepted once, and a locally staged entry can
 be reconstructed safely after an interrupted save or upload.
+
+## Version 1.1.1 Build 9 accessibility hotfix
+
+This mobile-only release fixes the Wellness Percentage page for iPhone users
+with Large Text or accessibility text scaling enabled. Wellness choices remain
+scrollable while the Submit button stays within the device safe area. A compact
+iPhone regression test verifies the button remains visible and tappable at
+twice-normal text scaling.
+
+No backend deployment, schema change, patient migration, or enrolment reset is
+required. Existing Build 7 and Build 8 compatibility remains unchanged.
+
+Build the signed Android artifacts with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delivery\build-neurosol-android-build9-hotfix.ps1
+```
+
+Build the signed iOS artifact in CodeMagic with:
+
+```bash
+./delivery/build-neurosol-ios-build9-hotfix.sh
+```
+
+Use [HOTFIX_RELEASE_CHECKLIST.md](HOTFIX_RELEASE_CHECKLIST.md) as the
+authoritative release gate. The larger feature bundle previously called Build
+9 must use mobile build number 10 or greater.
 
 ## Development checks
 

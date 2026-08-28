@@ -8,7 +8,7 @@ approve the final declarations and ensure they match the deployed service.
 - Store name: NeuroSol Symptom Diary
 - Android application ID: `au.com.pascoeneurology.neurosol`
 - Apple bundle ID: `au.com.pascoeneurology.neurosol`
-- Release version: `1.1.0+8`
+- Release version: `1.1.1+9`
 - Category: Medical
 - Support email: `reception@pascoeneurology.com`
 - Privacy policy:
@@ -71,8 +71,8 @@ for review.
 
 ## Build and review gates
 
-Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) as the authoritative Build 8
-gate. In particular, deploy and test backend `0.10.0` before uploading the AAB,
-provide only synthetic review access, preserve Build 7 compatibility, and do
-not activate independent profiles until Build 8 is downloadable from both
-stores.
+Use [HOTFIX_RELEASE_CHECKLIST.md](HOTFIX_RELEASE_CHECKLIST.md) as the
+authoritative `1.1.1+9` gate. This is a mobile-only accessibility hotfix: keep
+backend `0.10.0` and the existing Build 7/8 compatibility configuration
+unchanged, provide only synthetic review access, and preserve all current
+privacy and medical declarations.

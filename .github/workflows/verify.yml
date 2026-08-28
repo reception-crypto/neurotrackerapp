@@ -32,21 +32,24 @@ jobs:
             echo "Legacy shared mobile credential reference found."
             exit 1
           fi
-      - name: Verify clinic-managed Build 8 identity
+      - name: Verify clinic-managed Build 9 hotfix identity
         run: |
-          grep -n -E '^version: 1\.1\.0\+8$' pubspec.yaml
-          grep -n -E 'appBuildNumber = 8' lib/app_identity.dart
+          grep -n -E '^version: 1\.1\.1\+9$' pubspec.yaml
+          grep -n -E "appVersion = '1\.1\.1'" lib/app_identity.dart
+          grep -n -E 'appBuildNumber = 9' lib/app_identity.dart
           grep -n -E 'clinic-managed-v1' lib/app_identity.dart
           grep -n -E 'canonical-v1' lib/app_identity.dart
           grep -n -E 'independent-v1' lib/app_identity.dart
+          grep -n -E 'wellness-content-scroll' lib/screens/wellness_screen.dart
+          grep -n -E 'submit-wellness-check-in' lib/screens/wellness_screen.dart
           grep -n -E 'stageDailyEntry' lib/services/storage_service.dart
           grep -n -E 'completePendingEntry' lib/services/storage_service.dart
           if grep -R -n -E 'ProfileScreen|SymptomSelectionScreen|Edit patient profile' lib; then
             echo "Patient self-configuration remains reachable in source."
             exit 1
           fi
-      - name: Parse CodeMagic release script
-        run: bash -n delivery/build-neurosol-ios-build8.sh
+      - name: Parse CodeMagic hotfix release script
+        run: bash -n delivery/build-neurosol-ios-build9-hotfix.sh
 
   backend:
     runs-on: ubuntu-latest
@@ -99,7 +102,7 @@ jobs:
           $Scripts = Get-ChildItem `
             .\delivery\build8-backend-compatibility\*.ps1
           $Scripts += Get-Item `
-            .\delivery\build-neurosol-android-build8.ps1
+            .\delivery\build-neurosol-android-build9-hotfix.ps1
           foreach ($Script in $Scripts) {
             $Tokens = $null
             $Errors = $null
