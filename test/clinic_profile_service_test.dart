@@ -3,22 +3,40 @@ import 'package:neurotrackerapp/services/clinic_profile_service.dart';
 import 'package:neurotrackerapp/services/identity_service.dart';
 
 void main() {
-  test('Build 9 accepts an additive backend that still supports Build 7', () {
-    const current = MobileConfiguration(
-      minimumBuild: 7,
-      latestBuild: 8,
-      googlePlayUrl: '',
-      appStoreUrl: '',
-    );
-    const newerAvailable = MobileConfiguration(
+  test('newer builds are advisory while Build 9 remains supported', () {
+    const supported = MobileConfiguration(
       minimumBuild: 7,
       latestBuild: 10,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
 
+    expect(supported.updateRequired, isFalse);
+    expect(supported.updateAvailable, isTrue);
+  });
+
+  test('minimum build is the hard compatibility gate', () {
+    const unsupported = MobileConfiguration(
+      minimumBuild: 10,
+      latestBuild: 10,
+      googlePlayUrl: '',
+      appStoreUrl: '',
+    );
+
+    expect(unsupported.updateRequired, isTrue);
+    expect(unsupported.updateAvailable, isTrue);
+  });
+
+  test('current build reports no update available', () {
+    const current = MobileConfiguration(
+      minimumBuild: 7,
+      latestBuild: 9,
+      googlePlayUrl: '',
+      appStoreUrl: '',
+    );
+
     expect(current.updateRequired, isFalse);
-    expect(newerAvailable.updateRequired, isTrue);
+    expect(current.updateAvailable, isFalse);
   });
 
   test('mobile requests advertise every Build 9 capability', () {
