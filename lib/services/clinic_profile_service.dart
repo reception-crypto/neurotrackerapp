@@ -59,8 +59,12 @@ class MobileConfiguration {
     this.maximumBackdateDays = defaultMaximumBackdateDays,
   });
 
-  bool get updateRequired =>
-      appBuildNumber < minimumBuild || appBuildNumber < latestBuild;
+  /// A hard compatibility gate controlled by MIN_SUPPORTED_MOBILE_BUILD.
+  bool get updateRequired => appBuildNumber < minimumBuild;
+
+  /// An advisory signal that a newer store release exists. This must not
+  /// prevent a still-supported build from opening or submitting check-ins.
+  bool get updateAvailable => appBuildNumber < latestBuild;
 }
 
 class ClinicProfileService {
