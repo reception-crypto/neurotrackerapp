@@ -1848,7 +1848,9 @@ test('portal groups by PatientId and displays only the latest name', async () =>
     },
   ]);
   assert.equal(
-    [...directory.keys()].filter(key => key === identity.patientId).length,
+    [...directory.values()].filter(
+      patient => patient.patientId === identity.patientId,
+    ).length,
     1,
   );
   assert.equal(directory.get(identity.patientId).displayName, 'Latest Name');
@@ -1875,6 +1877,62 @@ test('patient review lists an enrolled patient before their first diary entry', 
   assert.match(page, /No diary entries yet/);
   assert.match(page, /Enrolled No Entries/);
   assert.doesNotMatch(page, /Generate PDF/);
+});
+
+test('enrolments, manage patients, and patient review provide local patient search', async () => {
+  const target = await enrolClinicManaged({
+    patientId: 'pt-local-search-target',
+    displayName: 'Zephyr Search Target',
+  });
+  await enrolClinicManaged({
+    patientId: 'pt-local-search-other',
+    displayName: 'Quartz Search Other',
+  });
+  identityStore.saveClinicalProfile({
+    patientId: target.patientId,
+    displayName: 'Zephyr Search Target',
+    bpPatientId: 'BP-ZEPHYR-731',
+    clinicalProfile: assignedClinicalProfile,
+  });
+
+  for (const route of ['/admin/enrolments', '/admin/patients', '/admin']) {
+    const response = await fetch(
+      `${baseUrl}${route}?q=${encodeURIComponent('BP-ZEPHYR-731')}`,
+      { headers: adminHeaders() },
+    );
+    assert.equal(response.status, 200);
+    const page = await response.text();
+    assert.match(page, /Zephyr Search Target/);
+    assert.doesNotMatch(page, /Quartz Search Other/);
+  }
+});
+
+test('patient review defaults to daily 30-day data and assigned profile metrics', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-review-profile-options',
+    displayName: 'Profile Options Patient',
+    clinicalProfile: {
+      primaryDisorder: 'Migraine',
+      primarySymptoms: ['Headache', 'Nausea', 'Fatigue'],
+      secondaryDisorder: null,
+      secondarySymptoms: [],
+    },
+  });
+
+  const response = await fetch(
+    `${baseUrl}/admin?patientId=${encodeURIComponent(identity.patientId)}`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(response.status, 200);
+  const page = await response.text();
+  assert.match(page, /<option value="daily" selected>Daily<\/option>/);
+  assert.match(page, /<option value="30" selected>Last 30 days<\/option>/);
+  assert.match(page, /value="symptom:Headache"/);
+  assert.match(page, /value="symptom:Nausea"/);
+  assert.match(page, /value="symptom:Fatigue"/);
+  assert.doesNotMatch(page, /value="symptom:Vomiting"/);
+  assert.match(page, /<option value="migraine" selected>Migraine<\/option>/);
+  assert.doesNotMatch(page, /<option value="dysautonomia"/);
 });
 
 test('a recovery code keeps the PatientId and revoked devices are rejected', async () => {

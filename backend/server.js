@@ -1932,6 +1932,17 @@ function patientMatchesSearch(patient, query) {
   });
 }
 
+function patientSearchQuery(query) {
+  return String(query || '').normalize('NFKC').trim().slice(0, 160);
+}
+
+function filterPatientsBySearch(patients, query) {
+  const q = patientSearchQuery(query);
+  return q
+    ? patients.filter(patient => patientMatchesSearch(patient, q))
+    : patients;
+}
+
 function patientSearchPage(query = '') {
   const rows = readRows();
   const q = String(query || '').normalize('NFKC').trim().slice(0, 160);
@@ -2291,10 +2302,13 @@ function enrolmentPage({
   message = '',
   editPatientId = '',
   profileMode = '',
+  query = '',
 } = {}) {
-  const patients = enrolmentPatients(readRows());
+  const allPatients = enrolmentPatients(readRows());
+  const q = patientSearchQuery(query);
+  const patients = filterPatientsBySearch(allPatients, q);
   const csrfToken = adminCsrfToken();
-  const editPatient = patients.find(
+  const editPatient = allPatients.find(
     patient => patient.patientId === editPatientId && !patient.quarantinedAt,
   ) || null;
   const notice = issued ? `<div class="notice">
@@ -2338,11 +2352,20 @@ function enrolmentPage({
     <td>${actions}</td>
   </tr>`;
   }).join('');
+  const searchSummary = q
+    ? `${patients.length} matching enrolment${patients.length === 1 ? '' : 's'}`
+    : `${patients.length} enrolment${patients.length === 1 ? '' : 's'}`;
   const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient, profileMode)}
   <section class="panel"><h2>Existing clinic identities</h2>
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
+    <form method="get" action="/admin/enrolments" class="toolbar">
+      <div class="field"><label>Search enrolments</label><input name="q" maxlength="160" value="${html(q)}" placeholder="Name, BP ID or Support ID"></div>
+      <div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>
+      ${q ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/enrolments">Clear search</a></div>' : ''}
+    </form>
+    <p class="muted">${html(searchSummary)}</p>
     <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
-    <tbody>${patientRows || '<tr><td colspan="6">No patient identities yet.</td></tr>'}</tbody></table></div>
+    <tbody>${patientRows || `<tr><td colspan="6">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
@@ -2697,6 +2720,7 @@ app.get('/admin/enrolments',requirePortalUser,requirePermission('enrolments'),(r
   res.send(enrolmentPage({
     editPatientId: String(req.query.editPatientId || '').trim(),
     profileMode: String(req.query.profileMode || '').trim(),
+    query: req.query.q,
   }));
 });
 
@@ -2908,9 +2932,10 @@ app.post('/admin/enrolments/revoke',requirePortalUser,requirePermission('enrolme
   }));
 });
 
-function patientManagementPage({ error = '', message = '' } = {}) {
+function patientManagementPage({ error = '', message = '', query = '' } = {}) {
   const rows = readRows();
-  const patients = enrolmentPatients(rows);
+  const q = patientSearchQuery(query);
+  const patients = filterPatientsBySearch(enrolmentPatients(rows), q);
   const csrfToken = adminCsrfToken();
   const tableRows = patients.map(patient => {
     const patientRows = rows.filter(row => patientKey(row) === patient.patientId);
@@ -2943,13 +2968,19 @@ function patientManagementPage({ error = '', message = '' } = {}) {
     <section class="panel"><h2>Delete a patient record</h2>
       <p class="flag">Deletion removes the patient’s portal identity, device access, unused enrolment codes, and submitted rows. It cannot be undone through the portal.</p>
       <p class="muted">A timestamped server backup is created first. Records imported without a PatientId are deliberately excluded from this screen.</p>
+      <form method="get" action="/admin/patients" class="toolbar">
+        <div class="field"><label>Search managed patients</label><input name="q" maxlength="160" value="${html(q)}" placeholder="Name, BP ID or Support ID"></div>
+        <div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>
+        ${q ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/patients">Clear search</a></div>' : ''}
+      </form>
+      <p class="muted">${q ? `${patients.length} matching patient${patients.length === 1 ? '' : 's'}` : `${patients.length} managed patient${patients.length === 1 ? '' : 's'}`}</p>
       <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>BP Patient ID</th><th>Support ID</th><th>Check-ins</th><th>Confirmation</th></tr></thead>
-      <tbody>${tableRows || '<tr><td colspan="5">No identified patients found.</td></tr>'}</tbody></table></div>
+      <tbody>${tableRows || `<tr><td colspan="5">${q ? 'No matching managed patients were found.' : 'No identified patients found.'}</td></tr>`}</tbody></table></div>
     </section>`);
 }
 
 app.get('/admin/patients',requirePortalUser,requirePermission('manage_patients'),(req,res)=>{
-  res.send(patientManagementPage());
+  res.send(patientManagementPage({ query: req.query.q }));
 });
 
 app.post('/admin/patients/delete',requirePortalUser,requirePermission('manage_patients'),requireAdminCsrf,(req,res)=>{
@@ -3157,23 +3188,88 @@ app.get('/admin/report.pdf',requirePortalUser,requirePermission('patient_review'
   doc.end();
 });
 
+function assignedProfileSelections(patient, patientRows = []) {
+  const profile = patient?.clinicalProfile;
+  if (profile) {
+    if (isIndependentClinicalProfile(profile)) {
+      return {
+        disorderIds: [...(profile.disorderIds || [])],
+        disorders: [...(profile.disorders || [])],
+        symptoms: [...(profile.symptoms || [])],
+      };
+    }
+    return {
+      disorderIds: [
+        profile.primaryDisorderId,
+        profile.secondaryDisorderId,
+      ].filter(Boolean),
+      disorders: [
+        profile.primaryDisorder,
+        profile.secondaryDisorder,
+      ].filter(Boolean),
+      symptoms: [...new Set([
+        ...(profile.primarySymptoms || []),
+        ...(profile.secondarySymptoms || []),
+      ])],
+    };
+  }
+  return {
+    disorderIds: [...new Set(patientRows.map(row => row.DisorderId).filter(Boolean))],
+    disorders: [...new Set(patientRows.map(row => row.Disorder).filter(Boolean))],
+    symptoms: unique(patientRows, 'Symptom'),
+  };
+}
+
+function rowsWithinReviewPeriod(rows, requestedDays, endDate = todayIso()) {
+  const days = [30, 60, 90].includes(Number(requestedDays))
+    ? Number(requestedDays)
+    : 30;
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(end.getTime())) return rows;
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+  const startDate = start.toISOString().slice(0, 10);
+  return rows.filter(row => row.Date >= startDate && row.Date <= endDate);
+}
+
 app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)=>{
   const rows=readRows(), directory=patientDirectory(rows), disorders=disorderChoices(rows);
-  const patients=[...directory.values()].sort((a,b)=>a.label.localeCompare(b.label));
-  const patientId=resolvePatientKey(rows,req.query.patientId,req.query.patient);
+  const allPatients=[...directory.values()].sort((a,b)=>a.label.localeCompare(b.label));
+  const q=patientSearchQuery(req.query.q);
+  const patients=filterPatientsBySearch(allPatients,q);
+  const requestedPatientId=String(req.query.patientId||'').trim();
+  let patientId=resolvePatientKey(rows,requestedPatientId,req.query.patient);
+  if (q && (!requestedPatientId || !patients.some(patient => patient.patientId === patientId))) {
+    patientId=patients[0]?.patientId||'';
+  }
   const selectedPatient=directory.get(patientId);
-  const disorderId=resolveDisorderKey(
-    rows,
+  const patientRows=rows.filter(row=>patientKey(row)===patientId);
+  const assigned=assignedProfileSelections(
+    identityStore.snapshot().patients[patientId] || selectedPatient,
+    patientRows,
+  );
+  const assignedDisorders=disorders.filter(item =>
+    assigned.disorderIds.includes(item.id) || assigned.disorders.includes(item.displayName)
+  );
+  let disorderId=resolveDisorderKey(
+    patientRows,
     req.query.disorderId,
     req.query.disorder,
   );
-  const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'weekly';
-  const calendarDays=[30,60,90].includes(Number(req.query.calendarDays))?Number(req.query.calendarDays):30;
+  if (!assignedDisorders.some(item=>item.id===disorderId)) {
+    disorderId=assignedDisorders[0]?.id||'';
+  }
+  const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'daily';
+  const reviewDays=[30,60,90].includes(Number(req.query.reviewDays||req.query.calendarDays))?Number(req.query.reviewDays||req.query.calendarDays):30;
   const requestedMetric=String(req.query.metric||'wellness');
-  const metric=requestedMetric==='symptom'||requestedMetric==='wellness'||requestedMetric.startsWith('symptom:')?requestedMetric:'wellness';
-  const filtered=rows.filter(r=>(!patientId||patientKey(r)===patientId)&&rowHasDisorder(r,disorderId));
+  const allowedMetrics=new Set(['wellness','symptom',...assigned.symptoms.map(symptom=>`symptom:${symptom}`)]);
+  const metric=allowedMetrics.has(requestedMetric)?requestedMetric:'wellness';
+  const filtered=rowsWithinReviewPeriod(
+    patientRows.filter(r=>rowHasDisorder(r,disorderId)),
+    reviewDays,
+  );
   const series=patientSeries(filtered,disorderId,metric,aggregation,patientId?[patientId]:[],directory);
-  const dates=unique(filtered,'Date'), symptoms=unique(filtered,'Symptom');
+  const dates=unique(filtered,'Date'), symptoms=assigned.symptoms;
   const avgSym=round1(mean(filtered.map(r=>r.ScoreNumber)));
   const wellness=[...new Map(filtered.filter(r=>r.WellnessNumber>0).map(r=>[`${patientKey(r)}|${r.Date}`,r.WellnessNumber])).values()];
   const latest=[...filtered].sort((a,b)=>`${b.Date}${b.Time}`.localeCompare(`${a.Date}${a.Time}`)).slice(0,120);
@@ -3181,12 +3277,13 @@ app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)
   const diaryStatusNotice=noDiaryEntries
     ? `<div class="notice"><strong>No diary entries yet.</strong> This patient is enrolled and can be reviewed here as soon as their first symptom diary submission reaches the clinic.</div>`
     : '';
-  const disorderOptionsHtml='<option value="">All</option>'+disorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
+  const disorderOptionsHtml=assignedDisorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
   const patientOptions=patients.map(patient=>`<option value="${html(patient.patientId)}" ${patient.patientId===patientId?'selected':''}>${html(patient.label)}</option>`).join('');
   const body=`${diaryStatusNotice}<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">BP Patient ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.bpPatientId||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${wellness.length?`${round1(mean(wellness))}%`:'-'}</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${filtered.length?`${avgSym}/10`:'-'}</div></div></div>
-  <form class="panel toolbar"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Calendar range</label><select name="calendarDays">${[30,60,90].map(days=>`<option value="${days}" ${days===calendarDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
-  <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Weekly aggregation is the default to reduce day-to-day noise. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
-  <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,calendarDays)}</section>
+  <section class="panel"><h2>Search Patient Review</h2><form method="get" action="/admin" class="toolbar"><div class="field"><label>Search patients</label><input name="q" maxlength="160" value="${html(q)}" placeholder="Name, BP ID or Support ID"></div><div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>${q?'<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin">Clear search</a></div>':''}</form><p class="muted">${q?`${patients.length} matching patient${patients.length===1?'':'s'}`:'Search narrows the Patient Review selector only.'}</p></section>
+  <form class="panel toolbar"><input type="hidden" name="q" value="${html(q)}"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Review period</label><select name="reviewDays">${[30,60,90].map(days=>`<option value="${days}" ${days===reviewDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
+  <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Daily aggregation and the last 30 days are the defaults. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
+  <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,reviewDays)}</section>
   <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div>${noDiaryEntries?'':`<a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a>`}</div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.length?latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(rowDisorderLabel(r))}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join(''):'<tr><td colspan="7">No diary entries have been received for this patient.</td></tr>'}</tbody></table></div></section>`;
   res.send(pageShell('Patient review',body));
 });
