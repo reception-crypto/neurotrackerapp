@@ -153,6 +153,12 @@ at most the requested 30, 60, or 90-day window. The mobile app merges those
 clinic-held entries with locally queued entries and renders wellness and
 symptom line graphs.
 
+In Patient Review, the primary metric continues to control the daily calendar.
+Clinicians can also select any available wellness, average-symptom, or assigned
+symptom metrics as additional trend lines on the same chart. Mixed charts use a
+fixed 0–100% wellness axis on the left and a fixed 0–10 symptom axis on the
+right, with a labelled colour legend for every selected line.
+
 Patients may record today or one of the previous `MAX_BACKDATE_DAYS` calendar
 days. Each Build 9 entry includes its creation timestamp, local UTC offset, and
 whether the date was selected as today or backdated. The backend validates

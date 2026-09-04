@@ -1298,6 +1298,43 @@ function svgChart(series, metric, aggregation, mode='summary', selectedPatient='
   </svg>`;
 }
 
+function layeredPatientChart(layers, aggregation) {
+  const width=1120, height=540, left=74, top=42, bottom=64;
+  const hasWellness=layers.some(layer=>layer.metric==='wellness');
+  const hasSymptoms=layers.some(layer=>layer.metric!=='wellness');
+  const right=hasWellness&&hasSymptoms?74:28;
+  const allDates=[...new Set(layers.flatMap(layer=>layer.series.map(point=>point.date)))].sort();
+  if (!allDates.length) return '<p class="empty">No matching data.</p>';
+  const index=new Map(allDates.map((date,i)=>[date,i]));
+  const x=date=>left+((index.get(date)||0)/Math.max(1,allDates.length-1))*(width-left-right);
+  const y=(value,metric)=>height-bottom-(value/(metric==='wellness'?100:10))*(height-top-bottom);
+  const leftMetric=hasWellness?'wellness':'symptom';
+  const leftTicks=leftMetric==='wellness'?[0,20,40,60,80,100]:[0,2,4,6,8,10];
+  const grid=leftTicks.map(tick=>`<line x1="${left}" x2="${width-right}" y1="${y(tick,leftMetric)}" y2="${y(tick,leftMetric)}" stroke="#e5e7eb"/><text x="${left-14}" y="${y(tick,leftMetric)+4}" text-anchor="end" class="axis">${tick}${leftMetric==='wellness'?'%':''}</text>`).join('');
+  const rightAxis=hasWellness&&hasSymptoms
+    ? [0,2,4,6,8,10].map(tick=>`<text x="${width-right+14}" y="${y(tick,'symptom')+4}" text-anchor="start" class="axis">${tick}</text>`).join('')+
+      `<line x1="${width-right}" x2="${width-right}" y1="${top}" y2="${height-bottom}" stroke="#9ca3af"/>`
+    : '';
+  const step=Math.max(1,Math.ceil(allDates.length/9));
+  const labels=allDates.map((date,i)=>(i%step===0||i===allDates.length-1)?`<text x="${x(date)}" y="${height-24}" text-anchor="middle" class="axis">${html(dateLabel(date,aggregation))}</text>`:'').join('');
+  const lines=layers.filter(layer=>layer.series.length).map(layer=>{
+    const unit=layer.metric==='wellness'?'%':'/10';
+    const points=layer.series.map(point=>`${x(point.date)},${y(point.value,layer.metric)}`).join(' ');
+    const dash=layer.dash?` stroke-dasharray="${layer.dash}"`:'';
+    const markers=layer.series.map(point=>`<circle cx="${x(point.date)}" cy="${y(point.value,layer.metric)}" r="3" fill="${layer.colour}"><title>${html(dateLabel(point.date,aggregation))} — ${html(layer.label)}: ${point.value}${unit}</title></circle>`).join('');
+    return `<g class="trend-layer" data-trend-metric="${html(layer.metric)}"><polyline fill="none" stroke="${layer.colour}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"${dash} points="${points}"><title>${html(layer.label)}</title></polyline>${markers}</g>`;
+  }).join('');
+  const description=layers.map(layer=>layer.label).join(', ');
+  return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="patient-trend-title patient-trend-description">
+    <title id="patient-trend-title">Layered patient trend chart</title><desc id="patient-trend-description">${html(description)}</desc>
+    <rect x="0" y="0" width="${width}" height="${height}" rx="14" fill="#ffffff"/>
+    ${grid}<line x1="${left}" x2="${left}" y1="${top}" y2="${height-bottom}" stroke="#9ca3af"/><line x1="${left}" x2="${width-right}" y1="${height-bottom}" y2="${height-bottom}" stroke="#9ca3af"/>${rightAxis}
+    ${lines}${labels}
+    <text x="18" y="${top-12}" class="axis-title">${leftMetric==='wellness'?'Wellness (%)':'Symptom score (/10)'}</text>
+    ${hasWellness&&hasSymptoms?`<text x="${width-18}" y="${top-12}" text-anchor="end" class="axis-title">Symptom score (/10)</text>`:''}
+  </svg>`;
+}
+
 function pageShell(title, body) {
   const portalUser = portalRequestContext.getStore()?.req?.portalUser;
   const can = permission => portalUser?.isAdmin ||
@@ -1346,7 +1383,7 @@ function pageShell(title, body) {
     .calendar-dot{transform:scale(.75)}
   }
   .incident-lock{background:#7f1d1d;color:#fff;padding:14px 24px;text-align:center;border-bottom:4px solid #fca5a5}
-  .signed-in{font-size:12px;color:#cbd5e1;text-align:right;margin-top:8px}
+  .signed-in{font-size:12px;color:#cbd5e1;text-align:right;margin-top:8px}.trend-picker{grid-column:1/-1;border:1px solid #cbd5e1;border-radius:10px;padding:12px}.trend-picker legend{padding:0 6px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.trend-options{display:flex;gap:9px;flex-wrap:wrap}.trend-option{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:8px 11px;background:#f8fafc;font-size:13px}.trend-option input{width:auto;margin:0}.trend-picker .muted{font-size:12px;margin:10px 0 0}
   </style></head><body><header><div class="portal-header"><h1>NeuroSol Clinician Portal</h1>${patientSearch}</div><div><nav>${navigation.join('')}</nav>${signedIn}</div></header>${incidentNotice}<main>${body}</main></body></html>`;
 }
 
@@ -3264,11 +3301,23 @@ app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)
   const requestedMetric=String(req.query.metric||'wellness');
   const allowedMetrics=new Set(['wellness','symptom',...assigned.symptoms.map(symptom=>`symptom:${symptom}`)]);
   const metric=allowedMetrics.has(requestedMetric)?requestedMetric:'wellness';
+  const requestedLayers=(Array.isArray(req.query.layer)?req.query.layer:[req.query.layer])
+    .map(value=>String(value||'').trim())
+    .filter(value=>allowedMetrics.has(value));
+  const trendMetrics=[...new Set([metric,...requestedLayers])];
   const filtered=rowsWithinReviewPeriod(
     patientRows.filter(r=>rowHasDisorder(r,disorderId)),
     reviewDays,
   );
-  const series=patientSeries(filtered,disorderId,metric,aggregation,patientId?[patientId]:[],directory);
+  const trendColours=['#2563eb','#7c3aed','#dc2626','#059669','#d97706','#0891b2','#be123c','#4f46e5'];
+  const trendDashes=['','10 5','3 4','12 4 3 4','2 3','14 5','8 3 2 3','5 4'];
+  const trendLayers=trendMetrics.map((trendMetric,index)=>({
+    metric:trendMetric,
+    label:metricLabel(trendMetric),
+    colour:trendColours[index%trendColours.length],
+    dash:trendDashes[index%trendDashes.length],
+    series:patientSeries(filtered,disorderId,trendMetric,aggregation,patientId?[patientId]:[],directory)[0]?.series||[],
+  }));
   const dates=unique(filtered,'Date'), symptoms=assigned.symptoms;
   const avgSym=round1(mean(filtered.map(r=>r.ScoreNumber)));
   const wellness=[...new Map(filtered.filter(r=>r.WellnessNumber>0).map(r=>[`${patientKey(r)}|${r.Date}`,r.WellnessNumber])).values()];
@@ -3279,10 +3328,13 @@ app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)
     : '';
   const disorderOptionsHtml=assignedDisorders.map(item=>`<option value="${html(item.id)}" ${item.id===disorderId?'selected':''}>${html(item.displayName)}</option>`).join('');
   const patientOptions=patients.map(patient=>`<option value="${html(patient.patientId)}" ${patient.patientId===patientId?'selected':''}>${html(patient.label)}</option>`).join('');
+  const additionalTrendOptions=[...allowedMetrics].filter(candidate=>candidate!==metric).map(candidate=>`<label class="trend-option"><input type="checkbox" name="layer" value="${html(candidate)}" ${trendMetrics.includes(candidate)?'checked':''}><span>${html(metricLabel(candidate))}</span></label>`).join('');
+  const mixedTrendAxes=trendMetrics.includes('wellness')&&trendMetrics.some(candidate=>candidate!=='wellness');
+  const trendLegend=trendLayers.map(layer=>`<span><i class="swatch" style="background:${layer.colour}"></i>${html(layer.label)} (${layer.metric==='wellness'?'%, left axis':`/10, ${mixedTrendAxes?'right':'left'} axis`})${layer.series.length?'':' — no data in period'}</span>`).join('');
   const body=`${diaryStatusNotice}<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">BP Patient ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.bpPatientId||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${wellness.length?`${round1(mean(wellness))}%`:'-'}</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${filtered.length?`${avgSym}/10`:'-'}</div></div></div>
   <section class="panel"><h2>Search Patient Review</h2><form method="get" action="/admin" class="toolbar"><div class="field"><label>Search patients</label><input name="q" maxlength="160" value="${html(q)}" placeholder="Name, BP ID or Support ID"></div><div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>${q?'<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin">Clear search</a></div>':''}</form><p class="muted">${q?`${patients.length} matching patient${patients.length===1?'':'s'}`:'Search narrows the Patient Review selector only.'}</p></section>
-  <form class="panel toolbar"><input type="hidden" name="q" value="${html(q)}"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Review period</label><select name="reviewDays">${[30,60,90].map(days=>`<option value="${days}" ${days===reviewDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div></form>
-  <section class="panel"><h2>${metric==='wellness'?'Wellness trend':metric.startsWith('symptom:')?`${html(metric.slice('symptom:'.length))} trend`:'Average symptom trend'}</h2><p class="muted">Daily aggregation and the last 30 days are the defaults. Y-axis is fixed for direct clinical comparison.</p>${svgChart(series,metric,aggregation,'overlay',patientId)}<div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Selected patient</span></div></section>
+  <form class="panel toolbar"><input type="hidden" name="q" value="${html(q)}"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Primary metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Review period</label><select name="reviewDays">${[30,60,90].map(days=>`<option value="${days}" ${days===reviewDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div><fieldset class="trend-picker"><legend>Additional trend lines</legend><div class="trend-options">${additionalTrendOptions}</div><p class="muted">The primary metric also controls the daily calendar below. Select any additional metrics to layer on the same chart.</p></fieldset></form>
+  <section class="panel"><h2>${trendMetrics.length>1?'Layered patient trends':`${html(metricLabel(metric))} trend`}</h2><p class="muted">Daily aggregation and the last 30 days are the defaults. Wellness is fixed at 0–100%; symptom scores are fixed at 0–10.</p>${layeredPatientChart(trendLayers,aggregation)}<div class="legend">${trendLegend}</div></section>
   <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,reviewDays)}</section>
   <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div>${noDiaryEntries?'':`<a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a>`}</div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.length?latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(rowDisorderLabel(r))}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join(''):'<tr><td colspan="7">No diary entries have been received for this patient.</td></tr>'}</tbody></table></div></section>`;
   res.send(pageShell('Patient review',body));

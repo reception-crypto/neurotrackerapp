@@ -27,6 +27,7 @@ const {
   identityStore,
   patientDirectory,
   portalUserStore,
+  todayIso,
 } = require('../server');
 const { supportId } = require('../identity_store');
 
@@ -1933,6 +1934,68 @@ test('patient review defaults to daily 30-day data and assigned profile metrics'
   assert.doesNotMatch(page, /value="symptom:Vomiting"/);
   assert.match(page, /<option value="migraine" selected>Migraine<\/option>/);
   assert.doesNotMatch(page, /<option value="dysautonomia"/);
+});
+
+test('patient review layers selected metrics on fixed wellness and symptom axes', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-review-layered-trends',
+    displayName: 'Layered Trends Patient',
+  });
+  const currentDate = todayIso();
+  const previousDateValue = new Date(`${currentDate}T00:00:00Z`);
+  previousDateValue.setUTCDate(previousDateValue.getUTCDate() - 1);
+  const previousDate = previousDateValue.toISOString().slice(0, 10);
+
+  const earlier = validSubmission({
+    submissionId: 'NS-layered-trends-earlier',
+    patientId: identity.patientId,
+    patientName: 'Layered Trends Patient',
+    date: previousDate,
+  });
+  earlier.wellnessPercent = 40;
+  earlier.records[0].score = 3;
+  assert.equal((await post(earlier, identity.accessToken)).status, 201);
+
+  const latest = validSubmission({
+    submissionId: 'NS-layered-trends-latest',
+    patientId: identity.patientId,
+    patientName: 'Layered Trends Patient',
+    date: currentDate,
+  });
+  latest.wellnessPercent = 80;
+  latest.records[0].score = 7;
+  assert.equal((await post(latest, identity.accessToken)).status, 201);
+
+  const query = new URLSearchParams({
+    patientId: identity.patientId,
+    metric: 'wellness',
+    aggregation: 'daily',
+    reviewDays: '30',
+  });
+  query.append('layer', 'wellness');
+  query.append('layer', 'symptom');
+  query.append('layer', 'symptom:Headache');
+  query.append('layer', 'symptom:Vomiting');
+  const response = await fetch(`${baseUrl}/admin?${query}`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(response.status, 200);
+  const page = await response.text();
+
+  assert.match(page, /<h2>Layered patient trends<\/h2>/);
+  assert.match(page, /name="layer" value="symptom" checked/);
+  assert.match(page, /name="layer" value="symptom:Headache" checked/);
+  assert.equal((page.match(/data-trend-metric=/g) || []).length, 3);
+  assert.match(page, /data-trend-metric="wellness"/);
+  assert.match(page, /data-trend-metric="symptom"/);
+  assert.match(page, /data-trend-metric="symptom:Headache"/);
+  assert.doesNotMatch(page, /data-trend-metric="symptom:Vomiting"/);
+  assert.match(page, /Wellness \(%\)/);
+  assert.match(page, /Symptom score \(\/10\)/);
+  assert.match(page, /Wellness \(%, left axis\)/);
+  assert.match(page, /Average symptom score \(\/10, right axis\)/);
+  assert.match(page, /Headache \(\/10, right axis\)/);
+  assert.match(page, /<h2>Wellness daily calendar<\/h2>/);
 });
 
 test('a recovery code keeps the PatientId and revoked devices are rejected', async () => {
