@@ -22,6 +22,7 @@ process.env.LATEST_MOBILE_BUILD = '7';
 
 const {
   app,
+  comparePatientDisplayNames,
   csvPath,
   disorderCatalog,
   identityStore,
@@ -929,7 +930,7 @@ test('consecutive portal enrolments create distinct identities without a refresh
   assert.match(editForm, /name="formMode" value="edit"/);
   assert.match(
     editForm,
-    /type="hidden" name="displayName" value="Sequential Patient One"/,
+    /name="displayName" required maxlength="160" value="Sequential Patient One"/,
   );
   assert.doesNotMatch(editForm, /name="action" value="save-and-issue"/);
 
@@ -1855,6 +1856,158 @@ test('portal groups by PatientId and displays only the latest name', async () =>
     1,
   );
   assert.equal(directory.get(identity.patientId).displayName, 'Latest Name');
+});
+
+test('patient display names sort by surname and then given names', () => {
+  const names = [
+    'Aaron Young',
+    'Zoe Baker',
+    'John Smith Jr.',
+    'Carlos de la Cruz',
+    'Mia Adams',
+    'Alice Smith',
+    'Amy Baker',
+  ];
+  assert.deepEqual(names.sort(comparePatientDisplayNames), [
+    'Mia Adams',
+    'Amy Baker',
+    'Zoe Baker',
+    'Carlos de la Cruz',
+    'Alice Smith',
+    'John Smith Jr.',
+    'Aaron Young',
+  ]);
+});
+
+test('portal patient selectors and lists use surname order', async () => {
+  for (const [patientId, displayName] of [
+    ['pt-surname-order-young', 'Amy Surnameorder Young'],
+    ['pt-surname-order-adams', 'Zelda Surnameorder Adams'],
+    ['pt-surname-order-baker', 'Quinn Surnameorder Baker'],
+  ]) {
+    await enrolClinicManaged({ patientId, displayName });
+  }
+
+  const reviewPage = await fetch(
+    `${baseUrl}/admin?q=${encodeURIComponent('Surnameorder')}`,
+    { headers: adminHeaders() },
+  ).then(response => response.text());
+  const patientOptions = reviewPage.match(
+    /<select name="patientId">([\s\S]*?)<\/select>/,
+  )?.[1] || '';
+  const adamsIndex = patientOptions.indexOf('Zelda Surnameorder Adams');
+  const bakerIndex = patientOptions.indexOf('Quinn Surnameorder Baker');
+  const youngIndex = patientOptions.indexOf('Amy Surnameorder Young');
+  assert.ok(adamsIndex >= 0);
+  assert.ok(adamsIndex < bakerIndex);
+  assert.ok(bakerIndex < youngIndex);
+
+  for (const route of [
+    '/admin/enrolments',
+    '/admin/patients',
+    '/admin/patient-search',
+  ]) {
+    const page = await fetch(
+      `${baseUrl}${route}?q=${encodeURIComponent('Surnameorder')}`,
+      { headers: adminHeaders() },
+    ).then(response => response.text());
+    const listedAdams = page.indexOf('Zelda Surnameorder Adams');
+    const listedBaker = page.indexOf('Quinn Surnameorder Baker');
+    const listedYoung = page.indexOf('Amy Surnameorder Young');
+    assert.ok(listedAdams >= 0, `${route} should list Adams`);
+    assert.ok(
+      listedAdams < listedBaker,
+      `${route} should list Adams before Baker`,
+    );
+    assert.ok(
+      listedBaker < listedYoung,
+      `${route} should list Baker before Young`,
+    );
+  }
+});
+
+test('clinic staff can correct a display name without replacing the patient identity', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-display-name-correction',
+    displayName: 'Mistakn Patientname',
+  });
+  const editPage = await fetch(
+    `${baseUrl}/admin/enrolments?editPatientId=${encodeURIComponent(identity.patientId)}`,
+    { headers: adminHeaders() },
+  ).then(response => response.text());
+  const csrfToken = editPage.match(
+    /name="csrfToken" value="([a-f0-9]+)"/,
+  )?.[1];
+  assert.ok(csrfToken);
+  assert.match(
+    editPage,
+    /name="displayName" required maxlength="160" value="Mistakn Patientname"/,
+  );
+
+  const before = identityStore.snapshot();
+  const patientBefore = before.patients[identity.patientId];
+  const form = new URLSearchParams({
+    csrfToken,
+    formMode: 'edit',
+    patientId: identity.patientId,
+    displayName: 'Corrected Patientname',
+    bpPatientId: patientBefore.bpPatientId || '',
+    profileModel: 'legacy-v1',
+    primaryDisorderId: patientBefore.clinicalProfile.primaryDisorderId,
+    secondaryDisorderId:
+      patientBefore.clinicalProfile.secondaryDisorderId || '',
+    action: 'save',
+  });
+  for (const symptomId of patientBefore.clinicalProfile.primarySymptomIds) {
+    form.append('primarySymptomIds', symptomId);
+  }
+  for (
+    const symptomId of patientBefore.clinicalProfile.secondarySymptomIds || []
+  ) {
+    form.append('secondarySymptomIds', symptomId);
+  }
+
+  const response = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: form,
+  });
+  assert.equal(response.status, 200);
+  assert.match(
+    await response.text(),
+    /Patient details saved for Corrected Patientname/,
+  );
+
+  const after = identityStore.snapshot();
+  const patientAfter = after.patients[identity.patientId];
+  assert.equal(patientAfter.patientId, identity.patientId);
+  assert.equal(patientAfter.displayName, 'Corrected Patientname');
+  assert.deepEqual(patientAfter.clinicalProfile, patientBefore.clinicalProfile);
+  assert.deepEqual(patientAfter.displayNameHistory.slice(-1), [{
+    displayName: 'Mistakn Patientname',
+    replacedAt: patientAfter.updatedAt,
+  }]);
+  assert.deepEqual(Object.keys(after.devices), Object.keys(before.devices));
+  assert.deepEqual(
+    Object.keys(after.enrolmentCodes),
+    Object.keys(before.enrolmentCodes),
+  );
+  assert.equal(
+    patientDirectory([]).get(identity.patientId).displayName,
+    'Corrected Patientname',
+  );
+
+  const profileResponse = await fetch(`${baseUrl}/api/profile`, {
+    headers: build7Headers(identity.accessToken, false),
+  });
+  assert.equal(profileResponse.status, 200);
+  assert.equal(
+    (await profileResponse.json()).displayName,
+    'Corrected Patientname',
+  );
 });
 
 test('patient review lists an enrolled patient before their first diary entry', async () => {

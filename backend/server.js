@@ -828,6 +828,66 @@ function html(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 }
 
+const patientNameCollator = new Intl.Collator('en-AU', {
+  sensitivity: 'base',
+  numeric: true,
+  ignorePunctuation: true,
+});
+const patientSurnameParticles = new Set([
+  'al', 'bin', 'da', 'das', 'de', 'del', 'della', 'der', 'di', 'dos',
+  'du', 'la', 'le', 'st', 'van', 'von',
+]);
+const patientNameSuffixPattern = /^(?:jr|sr|ii|iii|iv|v)\.?$/i;
+
+function patientNameSortParts(value) {
+  const fullName = String(value || '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const commaIndex = fullName.indexOf(',');
+  if (commaIndex > 0) {
+    return {
+      surname: fullName.slice(0, commaIndex).trim(),
+      givenNames: fullName.slice(commaIndex + 1).trim(),
+      fullName,
+    };
+  }
+
+  const words = fullName ? fullName.split(' ') : [];
+  const suffixes = [];
+  while (
+    words.length > 1 &&
+    patientNameSuffixPattern.test(words[words.length - 1])
+  ) {
+    suffixes.unshift(words.pop());
+  }
+  let surnameStart = Math.max(0, words.length - 1);
+  while (
+    surnameStart > 0 &&
+    patientSurnameParticles.has(
+      words[surnameStart - 1].replace(/\.$/, '').toLocaleLowerCase('en-AU'),
+    )
+  ) {
+    surnameStart--;
+  }
+  return {
+    surname: words.slice(surnameStart).join(' '),
+    givenNames: [
+      ...words.slice(0, surnameStart),
+      ...suffixes,
+    ].join(' '),
+    fullName,
+  };
+}
+
+function comparePatientDisplayNames(left, right) {
+  const leftName = patientNameSortParts(left);
+  const rightName = patientNameSortParts(right);
+  return patientNameCollator.compare(leftName.surname, rightName.surname) ||
+    patientNameCollator.compare(leftName.givenNames, rightName.givenNames) ||
+    patientNameCollator.compare(leftName.fullName, rightName.fullName);
+}
+
 function patientKey(row) {
   const patientId = String(row?.PatientId || '').trim();
   if (patientId) return patientId;
@@ -1944,7 +2004,9 @@ function enrolmentPatients(rows) {
         ? null
         : suggestedClinicalProfile(rows, patientId),
     };
-  }).filter(Boolean).sort((a,b)=>a.displayName.localeCompare(b.displayName));
+  }).filter(Boolean).sort((left, right) =>
+    comparePatientDisplayNames(left.displayName, right.displayName)
+  );
 }
 
 function patientMatchesSearch(patient, query) {
@@ -2139,8 +2201,7 @@ function profileIdentityFields(patient = null) {
   if (!patient) {
     return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>${bpField}`;
   }
-  return `<div class="field"><label>Clinic identity</label><div><strong>${html(patient.displayName)}</strong><br><span class="muted">${html(patient.supportId)} · The identity name is locked while editing its clinical profile.</span></div></div>
-    <input type="hidden" name="displayName" value="${html(patient.displayName)}">${bpField}`;
+  return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient.displayName)}"><span class="muted">${html(patient.supportId)} · Correcting the name keeps this PatientId, diary history, devices, and clinical profile.</span></div>${bpField}`;
 }
 
 function legacyProfileEditor(patient = null) {
@@ -2430,12 +2491,10 @@ function enrolmentRecoveryPage({ error = '', recovered = null } = {}) {
       };
     })
     .filter(item => item.records.length > 1 || item.patient.quarantinedAt)
-    .sort((left, right) =>
-      String(left.patient.displayName || '').localeCompare(
-        String(right.patient.displayName || ''),
-        'en-AU',
-      )
-    );
+    .sort((left, right) => comparePatientDisplayNames(
+      left.patient.displayName,
+      right.patient.displayName,
+    ));
   const candidateRows = affectedRows.map(item => `<tr>
     <td>${html(item.patient.displayName || 'Unnamed patient')}</td>
     <td>${html(supportId(item.patient.patientId))}</td>
@@ -2908,9 +2967,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
     }
     const saved = identityStore.saveClinicalProfile({
       patientId,
-      displayName: formMode === 'edit'
-        ? existingPatient.displayName
-        : String(req.body.displayName || '').trim(),
+      displayName: String(req.body.displayName || '').trim(),
       bpPatientId: req.body.bpPatientId,
       clinicalProfile,
     });
@@ -2927,7 +2984,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       }));
     }
     return res.send(enrolmentPage({
-      message: `Profile saved for ${saved.displayName}. Enrolled phones will receive revision ${saved.clinicalProfile.revision}.`,
+      message: `Patient details saved for ${saved.displayName}. Enrolled phones will receive profile revision ${saved.clinicalProfile.revision}.`,
       editPatientId: saved.patientId,
       profileMode: requestedIndependent ? '' : 'legacy',
     }));
@@ -3271,7 +3328,9 @@ function rowsWithinReviewPeriod(rows, requestedDays, endDate = todayIso()) {
 
 app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)=>{
   const rows=readRows(), directory=patientDirectory(rows), disorders=disorderChoices(rows);
-  const allPatients=[...directory.values()].sort((a,b)=>a.label.localeCompare(b.label));
+  const allPatients=[...directory.values()].sort((left,right)=>
+    comparePatientDisplayNames(left.displayName,right.displayName)
+  );
   const q=patientSearchQuery(req.query.q);
   const patients=filterPatientsBySearch(allPatients,q);
   const requestedPatientId=String(req.query.patientId||'').trim();
@@ -3347,7 +3406,10 @@ app.get('/admin/population',requirePortalUser,requirePermission('population_anal
   const aggregation=['daily','weekly','fortnightly','monthly'].includes(req.query.aggregation)?req.query.aggregation:'weekly';
   const allPatients=[...new Set(rows.filter(r=>rowHasDisorder(r,disorderId)).map(patientKey).filter(Boolean))]
     .filter(patientId => !directory.get(patientId)?.quarantined)
-    .sort((a,b)=>(directory.get(a)?.label||a).localeCompare(directory.get(b)?.label||b));
+    .sort((left,right)=>comparePatientDisplayNames(
+      directory.get(left)?.displayName||left,
+      directory.get(right)?.displayName||right,
+    ));
   const selected=String(req.query.patients||'').split('|').filter(x=>allPatients.includes(x)).slice(0,10);
   const cohort=patientSeries(rows,disorderId,metric,aggregation,[],directory);
   const overlayPatients=selected.length?selected:allPatients.slice(0,10);
@@ -3394,6 +3456,7 @@ module.exports = {
   disorderKey,
   diaryEntriesForPatient,
   identityStore,
+  comparePatientDisplayNames,
   portalUserStore,
   patientDirectory,
   patientMatchesSearch,
