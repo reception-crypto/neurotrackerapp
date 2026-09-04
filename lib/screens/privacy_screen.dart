@@ -27,7 +27,7 @@ class PrivacyScreen extends StatelessWidget {
           _PolicySection(
             title: 'Storage and transmission',
             body:
-                'Your clinic-assigned profile and check-in history are stored on this device. The device credential is kept in protected operating-system storage. Profile updates and check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
+                'Your clinic-assigned profile and check-in history are stored on this device. The device credential is kept in protected operating-system storage. Profile updates, clinic-held diary history, and check-ins are transmitted over an encrypted connection to the clinic system. If a transmission fails, the app retains the pending check-in on this device and retries later.',
           ),
           _PolicySection(
             title: 'How information is used',
@@ -42,7 +42,7 @@ class PrivacyScreen extends StatelessWidget {
           _PolicySection(
             title: 'Important medical information',
             body:
-                'This app is not a medical device and does not diagnose, treat, cure, or prevent any medical condition. It does not replace professional medical advice and is not continuously monitored. Do not use it for urgent or emergency assistance. In an emergency, call 000.',
+                'This app is not a medical device and does not diagnose, treat, cure, or prevent any medical condition. It does not replace professional medical advice and is not continuously monitored. Do not use it for urgent or emergency assistance. In an emergency, contact local emergency services (000 in Australia).',
           ),
           _PolicySection(
             title: 'Contact',

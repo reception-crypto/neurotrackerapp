@@ -170,7 +170,7 @@ class _EnrolmentScreenState extends State<EnrolmentScreen> {
             ),
             const SizedBox(height: 18),
             const Text(
-              'Do not share your enrolment code. The app is not monitored for emergencies; call 000 in an emergency.',
+              'Do not share your enrolment code. The app is not monitored for emergencies; contact local emergency services (000 in Australia).',
             ),
           ],
         ),

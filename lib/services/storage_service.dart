@@ -174,23 +174,29 @@ class StorageService {
     await prefs.setString(_lastSubmissionDateKey, date);
   }
 
-  static Future<bool> hasSubmittedOn(String date) async {
+  static Future<Set<String>> submittedDates() async {
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getString(_lastSubmissionDateKey) == date) return true;
-
+    final dates = <String>{};
+    final lastDate = prefs.getString(_lastSubmissionDateKey)?.trim() ?? '';
+    if (lastDate.isNotEmpty) dates.add(lastDate);
     for (final key in [_entryHistoryKey, _pendingKey]) {
       final entries = prefs.getStringList(key) ?? <String>[];
-      if (entries.any((raw) {
+      for (final raw in entries) {
         try {
-          return (jsonDecode(raw) as Map<String, dynamic>)['date'] == date;
+          final date = (jsonDecode(raw) as Map<String, dynamic>)['date'];
+          if (date is String && date.trim().isNotEmpty) {
+            dates.add(date.trim());
+          }
         } catch (_) {
-          return false;
+          // Ignore malformed legacy data when building the date index.
         }
-      })) {
-        return true;
       }
     }
-    return false;
+    return dates;
+  }
+
+  static Future<bool> hasSubmittedOn(String date) async {
+    return (await submittedDates()).contains(date);
   }
 
   static String localDateKey([DateTime? value]) {

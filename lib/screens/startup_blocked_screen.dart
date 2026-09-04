@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_identity.dart';
 import '../models/patient_profile.dart';
@@ -14,6 +16,23 @@ class RequiredUpdateScreen extends StatelessWidget {
     this.appStoreUrl = '',
   });
 
+  ({String url, String storeName})? get _preferredStore {
+    if (defaultTargetPlatform == TargetPlatform.iOS && appStoreUrl.isNotEmpty) {
+      return (url: appStoreUrl, storeName: 'App Store');
+    }
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        googlePlayUrl.isNotEmpty) {
+      return (url: googlePlayUrl, storeName: 'Google Play');
+    }
+    if (googlePlayUrl.isNotEmpty) {
+      return (url: googlePlayUrl, storeName: 'Google Play');
+    }
+    if (appStoreUrl.isNotEmpty) {
+      return (url: appStoreUrl, storeName: 'App Store');
+    }
+    return null;
+  }
+
   Future<void> _copy(
     BuildContext context,
     String value,
@@ -26,8 +45,39 @@ class RequiredUpdateScreen extends StatelessWidget {
     ).showSnackBar(SnackBar(content: Text('$storeName link copied.')));
   }
 
+  Future<void> _openStore(BuildContext context) async {
+    final store = _preferredStore;
+    if (store == null) return;
+
+    final uri = Uri.tryParse(store.url);
+    if (uri != null) {
+      try {
+        final opened = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (opened) return;
+      } catch (_) {
+        // Copying the URL below remains a usable fallback.
+      }
+    }
+
+    if (!context.mounted) return;
+    await _copy(context, store.url, store.storeName);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${store.storeName} could not be opened automatically. The update link was copied instead.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final store = _preferredStore;
+
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -48,28 +98,26 @@ class RequiredUpdateScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               const Text(
-                'You must update NeuroSol Symptom Diary to the newest version before viewing your clinic profile or recording another check-in.',
+                'You must update NeuroSol Symptom Diary to a supported version before viewing your clinic profile or recording another check-in.',
                 textAlign: TextAlign.center,
               ),
-              if (googlePlayUrl.isNotEmpty) ...[
+              if (store != null) ...[
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: () => _copy(context, googlePlayUrl, 'Google Play'),
-                  icon: const Icon(Icons.copy),
-                  label: const Text('Copy Google Play link'),
+                  onPressed: () => _openStore(context),
+                  icon: const Icon(Icons.open_in_new),
+                  label: Text('Update NeuroSol in ${store.storeName}'),
                 ),
-              ],
-              if (appStoreUrl.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () => _copy(context, appStoreUrl, 'App Store'),
+                TextButton.icon(
+                  onPressed: () => _copy(context, store.url, store.storeName),
                   icon: const Icon(Icons.copy),
-                  label: const Text('Copy App Store link'),
+                  label: const Text('Copy update link'),
                 ),
               ],
               const SizedBox(height: 20),
               const Text(
-                'If the newest version is not yet visible in the store, wait a short time and check again. Contact the clinic if you need help.',
+                'If the required version is not yet visible in the store, check again later or contact the clinic for help.',
                 textAlign: TextAlign.center,
               ),
             ],

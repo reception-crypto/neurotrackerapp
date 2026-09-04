@@ -111,6 +111,53 @@ void main() {
     );
   });
 
+  test(
+    'Build 9 creates a globally safe backdated entry up to seven days ago',
+    () {
+      const profile = PatientProfile(
+        patientId: 'pt-backdated-profile',
+        fullName: 'Backdated Patient',
+        primaryDisorder: 'Migraine',
+        primarySymptoms: ['Headache', 'Nausea', 'Vomiting'],
+        reminderTime: TimeOfDay(hour: 19, minute: 0),
+        profileRevision: 2,
+      );
+      final now = DateTime(2026, 8, 28, 19, 30);
+      final entry = CsvService.generateDailyEntry(
+        profile: profile,
+        symptomScores: const {
+          'Primary|Migraine|Headache': 1,
+          'Primary|Migraine|Nausea': 2,
+          'Primary|Migraine|Vomiting': 3,
+        },
+        wellnessPercent: 70,
+        entryDate: DateTime(2026, 8, 21),
+        now: now,
+      );
+
+      expect(entry.date, '2026-08-21');
+      expect(entry.clientEntryVersion, 2);
+      expect(entry.createdAtUtc, now.toUtc().toIso8601String());
+      expect(entry.localUtcOffsetMinutes, now.timeZoneOffset.inMinutes);
+      expect(entry.entryDateSource, 'backdated');
+
+      expect(
+        () => CsvService.generateDailyEntry(
+          profile: profile,
+          symptomScores: const {
+            'Primary|Migraine|Headache': 1,
+            'Primary|Migraine|Nausea': 2,
+            'Primary|Migraine|Vomiting': 3,
+          },
+          wellnessPercent: 70,
+          entryDate: DateTime(2026, 8, 20),
+          now: now,
+        ),
+        throwsStateError,
+      );
+    },
+  );
+
   test('missing profile schema is interpreted as the Build 7 model', () {
     final profile = PatientProfile.fromClinicResponse({
       'patientId': 'pt-clinic-profile',

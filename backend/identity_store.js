@@ -28,6 +28,17 @@ function supportId(patientId) {
   return `NS-${suffix.match(/.{1,4}/g).join('-')}`;
 }
 
+function normaliseBpPatientId(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function bpPatientIdKey(value) {
+  return normaliseBpPatientId(value).toLocaleLowerCase('en-AU');
+}
+
 function randomCode() {
   const bytes = crypto.randomBytes(12);
   let code = '';
@@ -51,7 +62,7 @@ function createIdentityStore({
 
   function emptyStore() {
     return {
-      version: 3,
+      version: 4,
       patients: {},
       enrolmentCodes: {},
       devices: {},
@@ -71,7 +82,7 @@ function createIdentityStore({
     return {
       ...emptyStore(),
       ...parsed,
-      version: Math.max(Number(parsed.version) || 1, 3),
+      version: Math.max(Number(parsed.version) || 1, 4),
       patients: parsed.patients || {},
       enrolmentCodes: parsed.enrolmentCodes || {},
       devices: parsed.devices || {},
@@ -113,6 +124,9 @@ function createIdentityStore({
       device.supportsIndependentProfiles =
         compatibility.supportsIndependentProfiles;
     }
+    if (typeof compatibility?.supportsPatientDiary === 'boolean') {
+      device.supportsPatientDiary = compatibility.supportsPatientDiary;
+    }
     if ([1, 2, 3].includes(payloadSchema)) {
       device.lastPayloadSchemaVersion = payloadSchema;
     }
@@ -121,7 +135,8 @@ function createIdentityStore({
       [1, 2, 3].includes(payloadSchema) ||
       typeof compatibility?.supportsClinicManagedProfile === 'boolean' ||
       typeof compatibility?.supportsCanonicalDisorders === 'boolean' ||
-      typeof compatibility?.supportsIndependentProfiles === 'boolean'
+      typeof compatibility?.supportsIndependentProfiles === 'boolean' ||
+      typeof compatibility?.supportsPatientDiary === 'boolean'
     ) {
       device.lastCompatibilityAt = observedAt;
     }
@@ -141,9 +156,30 @@ function createIdentityStore({
     return { id, name };
   }
 
+  function validateBpPatientId(store, patientId, value) {
+    const reference = normaliseBpPatientId(value);
+    if (!reference) return '';
+    if (reference.length > 80 || /[\u0000-\u001f\u007f]/.test(reference)) {
+      throw new Error('BP Patient ID must be 80 characters or fewer.');
+    }
+    const key = bpPatientIdKey(reference);
+    const duplicate = Object.entries(store.patients).find(
+      ([otherPatientId, patient]) =>
+        otherPatientId !== patientId &&
+        bpPatientIdKey(patient?.bpPatientId) === key,
+    );
+    if (duplicate) {
+      throw new Error(
+        'That BP Patient ID is already assigned to another clinic identity.',
+      );
+    }
+    return reference;
+  }
+
   function saveClinicalProfile({
     patientId = '',
     displayName = '',
+    bpPatientId,
     clinicalProfile = {},
   }) {
     const { id, name } = validatePatientIdentity(patientId, displayName);
@@ -158,6 +194,9 @@ function createIdentityStore({
         'This clinic identity is quarantined and cannot be edited.',
       );
     }
+    const savedBpPatientId = bpPatientId === undefined
+      ? normaliseBpPatientId(existing?.bpPatientId)
+      : validateBpPatientId(store, id, bpPatientId);
     const previousProfile = existing?.clinicalProfile || null;
     const changed = !previousProfile ||
       !sameClinicalProfile(previousProfile, profile);
@@ -191,6 +230,7 @@ function createIdentityStore({
       ...existing,
       patientId: id,
       displayName: name,
+      bpPatientId: savedBpPatientId,
       displayNameHistory,
       createdAt: existing?.createdAt || savedAt,
       updatedAt: savedAt,
@@ -202,6 +242,7 @@ function createIdentityStore({
     return {
       patientId: id,
       displayName: name,
+      bpPatientId: savedBpPatientId,
       supportId: supportId(id),
       clinicalProfile: savedProfile,
     };
@@ -283,6 +324,7 @@ function createIdentityStore({
       supportsClinicManagedProfile = false,
       supportsCanonicalDisorders = false,
       supportsIndependentProfiles = false,
+      supportsPatientDiary = false,
       supportedMobileBuild = null,
     } = {},
   ) {
@@ -359,6 +401,7 @@ function createIdentityStore({
       supportsClinicManagedProfile,
       supportsCanonicalDisorders,
       supportsIndependentProfiles,
+      supportsPatientDiary,
     }, redeemedAt);
     store.devices[tokenHash] = device;
     writeStore(store);
@@ -580,6 +623,7 @@ function createIdentityStore({
     supportsClinicManagedProfile = false,
     supportsCanonicalDisorders = false,
     supportsIndependentProfiles = false,
+    supportsPatientDiary = false,
   } = {}) {
     const id = String(patientId || '').trim();
     const name = String(displayName || '').trim();
@@ -640,6 +684,7 @@ function createIdentityStore({
       supportsClinicManagedProfile,
       supportsCanonicalDisorders,
       supportsIndependentProfiles,
+      supportsPatientDiary,
     }, enrolledAt);
     store.devices[tokenHash] = device;
     writeStore(store);
@@ -872,7 +917,7 @@ function createIdentityStore({
     const store = {
       ...emptyStore(),
       ...parsed,
-      version: 3,
+      version: 4,
       patients: parsed.patients || {},
       enrolmentCodes: parsed.enrolmentCodes || {},
       devices: parsed.devices || {},
@@ -983,7 +1028,7 @@ function createIdentityStore({
     const stamp = now().toISOString().replace(/[:.]/g, '-');
     const backupPath = path.join(
       backupDir,
-      `identity_store.pre-build8-${stamp}.json`,
+      `identity_store.pre-build9-${stamp}.json`,
     );
     fs.copyFileSync(identityPath, backupPath);
     writeStore(store);
@@ -1047,6 +1092,9 @@ function createIdentityStore({
       independentProfileDevices: activeDevices.filter(
         device => device.supportsIndependentProfiles === true,
       ).length,
+      patientDiaryDevices: activeDevices.filter(
+        device => device.supportsPatientDiary === true,
+      ).length,
     };
   }
 
@@ -1073,8 +1121,10 @@ function createIdentityStore({
 }
 
 module.exports = {
+  bpPatientIdKey,
   createIdentityStore,
   formatCode,
+  normaliseBpPatientId,
   normaliseCode,
   supportId,
 };

@@ -37,6 +37,10 @@ class SymptomScoreRecord {
 }
 
 class DailyEntry {
+  final int clientEntryVersion;
+  final String createdAtUtc;
+  final int? localUtcOffsetMinutes;
+  final String entryDateSource;
   final int schemaVersion;
   final String submissionId;
   final String date;
@@ -50,6 +54,10 @@ class DailyEntry {
   final int wellnessPercent;
 
   const DailyEntry({
+    this.clientEntryVersion = 1,
+    this.createdAtUtc = '',
+    this.localUtcOffsetMinutes,
+    this.entryDateSource = '',
     this.schemaVersion = 1,
     required this.submissionId,
     required this.date,
@@ -64,6 +72,12 @@ class DailyEntry {
   });
 
   Map<String, dynamic> toJson() => {
+    if (clientEntryVersion >= 2) ...{
+      'clientEntryVersion': clientEntryVersion,
+      'createdAtUtc': createdAtUtc,
+      'localUtcOffsetMinutes': localUtcOffsetMinutes,
+      'entryDateSource': entryDateSource,
+    },
     'schemaVersion': schemaVersion,
     'submissionId': submissionId,
     'date': date,
@@ -84,6 +98,10 @@ class DailyEntry {
 
   factory DailyEntry.fromJson(Map<String, dynamic> json) {
     return DailyEntry(
+      clientEntryVersion: (json['clientEntryVersion'] as num?)?.toInt() ?? 1,
+      createdAtUtc: json['createdAtUtc'] as String? ?? '',
+      localUtcOffsetMinutes: (json['localUtcOffsetMinutes'] as num?)?.toInt(),
+      entryDateSource: json['entryDateSource'] as String? ?? '',
       // Missing schema data is deliberately interpreted as the public Build 7
       // payload model so queued submissions survive an app upgrade unchanged.
       schemaVersion: (json['schemaVersion'] as num?)?.toInt() ?? 1,

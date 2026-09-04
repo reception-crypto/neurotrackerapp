@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neurotrackerapp/main.dart';
+import 'package:neurotrackerapp/models/daily_entry.dart';
 import 'package:neurotrackerapp/models/patient_profile.dart';
 import 'package:neurotrackerapp/models/symptom_data.dart';
 import 'package:neurotrackerapp/screens/home_screen.dart';
@@ -143,8 +144,21 @@ void main() {
     await tester.tap(find.byKey(const Key('start-daily-check-in')));
     await tester.pumpAndSettle();
 
+    final today = StorageService.localDateKey();
+    final checkInDateDialog = find.byType(SimpleDialog);
+    expect(checkInDateDialog, findsOneWidget);
+    expect(
+      find.descendant(
+        of: checkInDateDialog,
+        matching: find.text('Choose check-in date'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(Key('check-in-date-$today')));
+    await tester.pumpAndSettle();
+
     expect(find.text('Daily Check-in'), findsOneWidget);
-    expect(find.text('Today’s Symptoms'), findsOneWidget);
+    expect(find.byKey(const Key('check-in-selected-date')), findsOneWidget);
   });
 
   testWidgets('home locks check-in after today is complete', (
@@ -159,9 +173,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Today’s check-in is complete'), findsOneWidget);
-    expect(find.byKey(const Key('start-daily-check-in')), findsNothing);
+    expect(find.byKey(const Key('start-daily-check-in')), findsOneWidget);
     expect(
-      find.text('Your next check-in will be available tomorrow.'),
+      find.textContaining('record a missed day from the previous 7 days'),
       findsOneWidget,
     );
   });
@@ -176,6 +190,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('start-daily-check-in')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(Key('check-in-date-${StorageService.localDateKey()}')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Clinic-assigned disorders'), findsOneWidget);
@@ -256,7 +274,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Today’s check-in is ready'), findsOneWidget);
-    expect(find.text('Today’s Symptoms'), findsNothing);
+    expect(find.byKey(const Key('check-in-selected-date')), findsNothing);
   });
 
   testWidgets('notification launch opens an incomplete daily check-in', (
@@ -270,7 +288,51 @@ void main() {
     await tester.pumpWidget(const NeuroSolApp(openCheckIn: true));
     await tester.pumpAndSettle();
 
-    expect(find.text('Today’s Symptoms'), findsOneWidget);
+    expect(find.byKey(const Key('check-in-selected-date')), findsOneWidget);
+  });
+
+  testWidgets('patient diary shows 30, 60 and 90 day line graphs', (
+    WidgetTester tester,
+  ) async {
+    await StorageService.saveProfile(testProfile);
+    final today = StorageService.localDateKey();
+    await StorageService.saveEntryToHistory(
+      DailyEntry(
+        submissionId: 'diary-widget-entry',
+        patientId: testProfile.patientId,
+        date: today,
+        time: '19:00',
+        patientName: testProfile.fullName,
+        records: const [
+          SymptomScoreRecord(
+            track: 'Primary',
+            disorder: 'Migraine',
+            symptom: 'Headache',
+            score: 4,
+          ),
+        ],
+        wellnessPercent: 70,
+      ),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(home: HomeScreen(profile: testProfile)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Patient diary'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Overall wellness'), findsOneWidget);
+    expect(find.text('30 days'), findsOneWidget);
+    expect(find.text('60 days'), findsOneWidget);
+    expect(find.text('90 days'), findsOneWidget);
+    expect(find.byType(CustomPaint), findsWidgets);
+    await tester.scrollUntilVisible(
+      find.text('Symptoms'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Symptoms'), findsOneWidget);
   });
 
   testWidgets('notification launch cannot reopen a completed check-in', (

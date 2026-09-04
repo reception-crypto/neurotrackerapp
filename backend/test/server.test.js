@@ -26,6 +26,8 @@ const {
   disorderCatalog,
   identityStore,
   patientDirectory,
+  portalUserStore,
+  todayIso,
 } = require('../server');
 const { supportId } = require('../identity_store');
 
@@ -161,6 +163,61 @@ function adminHeaders() {
   );
   return { authorization: `Basic ${credentials}` };
 }
+
+function portalHeaders(username, password) {
+  return {
+    authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`,
+  };
+}
+
+test('Dr Pascoe has clinical functions without destructive or admin access', async () => {
+  portalUserStore.save({
+    username: 'Dr Pascoe',
+    password: 'dr-pascoe-test-password',
+    permissions: [
+      'patient_review',
+      'population_analytics',
+      'enrolments',
+      'disorders_symptoms',
+    ],
+  });
+  const headers = portalHeaders('Dr Pascoe', 'dr-pascoe-test-password');
+  for (const route of [
+    '/admin',
+    '/admin/population',
+    '/admin/enrolments',
+    '/admin/disorders',
+    '/admin/symptoms',
+  ]) {
+    const response = await fetch(`${baseUrl}${route}`, { headers });
+    assert.equal(response.status, 200, route);
+  }
+  for (const route of [
+    '/admin/enrolments/recovery',
+    '/admin/patients',
+    '/admin/export.csv',
+    '/admin/users',
+  ]) {
+    const response = await fetch(`${baseUrl}${route}`, { headers });
+    assert.equal(response.status, 403, route);
+  }
+  const portal = await fetch(`${baseUrl}/admin`, { headers }).then(r => r.text());
+  assert.match(portal, /Signed in as Dr Pascoe/);
+  assert.doesNotMatch(portal, /CSV export/);
+  assert.doesNotMatch(portal, /Manage patients/);
+  assert.doesNotMatch(portal, /User accounts/);
+});
+
+test('admin retains full access and can open user management', async () => {
+  const response = await fetch(`${baseUrl}/admin/users`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /Existing user accounts/);
+  assert.match(body, /Dr Pascoe/);
+  assert.match(body, /CSV export/);
+});
 
 test('production refuses placeholder deployment secrets', () => {
   const configDataDir = fs.mkdtempSync(
@@ -1775,7 +1832,7 @@ test('portal groups by PatientId and displays only the latest name', async () =>
   assert.match(page, /Latest Name \(NS-/);
   assert.doesNotMatch(page, />Earlier Name \(NS-/);
   assert.equal(
-    page.split(`value="${identity.patientId}"`).length - 1,
+    page.split(`<option value="${identity.patientId}"`).length - 1,
     1,
   );
 
@@ -1791,8 +1848,154 @@ test('portal groups by PatientId and displays only the latest name', async () =>
       ReceivedAt: '2026-07-23T10:00:00.000Z',
     },
   ]);
-  assert.equal(directory.size, 1);
+  assert.equal(
+    [...directory.values()].filter(
+      patient => patient.patientId === identity.patientId,
+    ).length,
+    1,
+  );
   assert.equal(directory.get(identity.patientId).displayName, 'Latest Name');
+});
+
+test('patient review lists an enrolled patient before their first diary entry', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-enrolled-no-diary-entries',
+    displayName: 'Enrolled No Entries',
+  });
+
+  const directory = patientDirectory([]);
+  const patient = directory.get(identity.patientId);
+  assert.equal(patient.displayName, 'Enrolled No Entries');
+  assert.equal(patient.hasDiaryEntries, false);
+  assert.match(patient.label, /no diary entries yet/);
+
+  const response = await fetch(
+    `${baseUrl}/admin?patientId=${encodeURIComponent(identity.patientId)}`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(response.status, 200);
+  const page = await response.text();
+  assert.match(page, /No diary entries yet/);
+  assert.match(page, /Enrolled No Entries/);
+  assert.doesNotMatch(page, /Generate PDF/);
+});
+
+test('enrolments, manage patients, and patient review provide local patient search', async () => {
+  const target = await enrolClinicManaged({
+    patientId: 'pt-local-search-target',
+    displayName: 'Zephyr Search Target',
+  });
+  await enrolClinicManaged({
+    patientId: 'pt-local-search-other',
+    displayName: 'Quartz Search Other',
+  });
+  identityStore.saveClinicalProfile({
+    patientId: target.patientId,
+    displayName: 'Zephyr Search Target',
+    bpPatientId: 'BP-ZEPHYR-731',
+    clinicalProfile: assignedClinicalProfile,
+  });
+
+  for (const route of ['/admin/enrolments', '/admin/patients', '/admin']) {
+    const response = await fetch(
+      `${baseUrl}${route}?q=${encodeURIComponent('BP-ZEPHYR-731')}`,
+      { headers: adminHeaders() },
+    );
+    assert.equal(response.status, 200);
+    const page = await response.text();
+    assert.match(page, /Zephyr Search Target/);
+    assert.doesNotMatch(page, /Quartz Search Other/);
+  }
+});
+
+test('patient review defaults to daily 30-day data and assigned profile metrics', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-review-profile-options',
+    displayName: 'Profile Options Patient',
+    clinicalProfile: {
+      primaryDisorder: 'Migraine',
+      primarySymptoms: ['Headache', 'Nausea', 'Fatigue'],
+      secondaryDisorder: null,
+      secondarySymptoms: [],
+    },
+  });
+
+  const response = await fetch(
+    `${baseUrl}/admin?patientId=${encodeURIComponent(identity.patientId)}`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(response.status, 200);
+  const page = await response.text();
+  assert.match(page, /<option value="daily" selected>Daily<\/option>/);
+  assert.match(page, /<option value="30" selected>Last 30 days<\/option>/);
+  assert.match(page, /value="symptom:Headache"/);
+  assert.match(page, /value="symptom:Nausea"/);
+  assert.match(page, /value="symptom:Fatigue"/);
+  assert.doesNotMatch(page, /value="symptom:Vomiting"/);
+  assert.match(page, /<option value="migraine" selected>Migraine<\/option>/);
+  assert.doesNotMatch(page, /<option value="dysautonomia"/);
+});
+
+test('patient review layers selected metrics on fixed wellness and symptom axes', async () => {
+  const identity = await enrolClinicManaged({
+    patientId: 'pt-review-layered-trends',
+    displayName: 'Layered Trends Patient',
+  });
+  const currentDate = todayIso();
+  const previousDateValue = new Date(`${currentDate}T00:00:00Z`);
+  previousDateValue.setUTCDate(previousDateValue.getUTCDate() - 1);
+  const previousDate = previousDateValue.toISOString().slice(0, 10);
+
+  const earlier = validSubmission({
+    submissionId: 'NS-layered-trends-earlier',
+    patientId: identity.patientId,
+    patientName: 'Layered Trends Patient',
+    date: previousDate,
+  });
+  earlier.wellnessPercent = 40;
+  earlier.records[0].score = 3;
+  assert.equal((await post(earlier, identity.accessToken)).status, 201);
+
+  const latest = validSubmission({
+    submissionId: 'NS-layered-trends-latest',
+    patientId: identity.patientId,
+    patientName: 'Layered Trends Patient',
+    date: currentDate,
+  });
+  latest.wellnessPercent = 80;
+  latest.records[0].score = 7;
+  assert.equal((await post(latest, identity.accessToken)).status, 201);
+
+  const query = new URLSearchParams({
+    patientId: identity.patientId,
+    metric: 'wellness',
+    aggregation: 'daily',
+    reviewDays: '30',
+  });
+  query.append('layer', 'wellness');
+  query.append('layer', 'symptom');
+  query.append('layer', 'symptom:Headache');
+  query.append('layer', 'symptom:Vomiting');
+  const response = await fetch(`${baseUrl}/admin?${query}`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(response.status, 200);
+  const page = await response.text();
+
+  assert.match(page, /<h2>Layered patient trends<\/h2>/);
+  assert.match(page, /name="layer" value="symptom" checked/);
+  assert.match(page, /name="layer" value="symptom:Headache" checked/);
+  assert.equal((page.match(/data-trend-metric=/g) || []).length, 3);
+  assert.match(page, /data-trend-metric="wellness"/);
+  assert.match(page, /data-trend-metric="symptom"/);
+  assert.match(page, /data-trend-metric="symptom:Headache"/);
+  assert.doesNotMatch(page, /data-trend-metric="symptom:Vomiting"/);
+  assert.match(page, /Wellness \(%\)/);
+  assert.match(page, /Symptom score \(\/10\)/);
+  assert.match(page, /Wellness \(%, left axis\)/);
+  assert.match(page, /Average symptom score \(\/10, right axis\)/);
+  assert.match(page, /Headache \(\/10, right axis\)/);
+  assert.match(page, /<h2>Wellness daily calendar<\/h2>/);
 });
 
 test('a recovery code keeps the PatientId and revoked devices are rejected', async () => {

@@ -1,8 +1,9 @@
-# NeuroSol clinic backend 0.10.0
+# NeuroSol clinic backend 0.11.0
 
 Node/Express backend for canonical disorder definitions, staff-managed patient
 profiles, secure mobile enrolment, symptom submission, CSV storage, clinician
-review, population analytics, deletion safeguards, and PDF reports.
+review, patient search, mobile diary history, guarded backdated check-ins,
+population analytics, deletion safeguards, and PDF reports.
 
 ## Configure and verify
 
@@ -20,25 +21,46 @@ Production must use:
 - a unique `ADMIN_PASSWORD` of at least 16 characters;
 - `HOST=127.0.0.1`, exposed only through the clinic HTTPS reverse proxy;
 - `DATA_DIR` outside the source directory where practical;
-- `LATEST_MOBILE_BUILD=7` before Build 8 is released, then `8`;
-- `MIN_SUPPORTED_MOBILE_BUILD=7` throughout the Build 8 rollout;
-- `ENABLE_CUSTOM_DISORDERS=false` until Build 8 is available from both stores.
-  This gate also prevents a Build 8-only custom symptom from being assigned to
-  a patient profile during the compatibility rollout.
-- `ENABLE_INDEPENDENT_PROFILES=false` during backend predeployment. Enable it
-  only after Build 8 is downloadable from both stores.
+- `LATEST_MOBILE_BUILD=8` while the Build 9 backend is predeployed, then `9`
+  only after Build 9 is downloadable from both stores;
+- `MIN_SUPPORTED_MOBILE_BUILD=7` throughout the Build 9 rollout;
+- `ENABLE_CUSTOM_DISORDERS=true` and `ENABLE_INDEPENDENT_PROFILES=true` so the
+  active Build 8 profile model remains available;
+- `MAX_BACKDATE_DAYS=7` unless the clinic explicitly approves another value
+  between 1 and 30.
 
 Do not replace the existing production `IDENTITY_SECRET`: doing so invalidates
 every device credential and unused enrolment code.
 
+## Clinician portal user accounts
+
+The environment-backed `ADMIN_USER` account is the protected system
+administrator. It always has all portal functionality and cannot be edited or
+deleted through the portal.
+
+Sign in as that account and open `/admin/users` to create additional users.
+Passwords must contain at least 12 characters and are stored as salted scrypt
+hashes in `DATA_DIR\portal_users.json`; plaintext passwords are never written
+to disk. Each account can be independently granted patient review, population
+analytics, enrolments, disorder/symptom management, identity recovery, patient
+deletion, and CSV export. The server checks permissions on every protected GET
+and POST route as well as hiding unavailable navigation links.
+
+The page includes a dedicated **Create Dr Pascoe** preset. The administrator
+chooses the initial password; the preset grants only patient review, population
+analytics, enrolments, and disorder/symptom management. It does not grant
+identity recovery, patient deletion, CSV export, or user administration.
+
 ## Create and maintain a patient
 
-While `ENABLE_INDEPENDENT_PROFILES=false`, the portal intentionally retains the
-legacy Build 7 editor. The following workflow becomes active only after the
-Build 8 mobile releases are live and the gate is enabled.
+Production keeps `ENABLE_INDEPENDENT_PROFILES=true`, so the independent Build 8
+editor remains active during Build 9. The legacy nested editor is retained only
+for compatibility if that feature gate is deliberately disabled in a
+non-production recovery environment.
 
 1. Open `/admin/enrolments`.
-2. Enter the clinic display name.
+2. Enter the clinic display name and, where available, the optional unique BP
+   Patient ID.
 3. Select one or more disorders from the controlled disorder list.
 4. Select between one and six symptoms independently from the controlled
    symptom list. A symptom is rated once even when several disorders are
@@ -52,7 +74,7 @@ Opening the HTTPS invitation page does not redeem the code and shows no patient
 name or clinical details.
 
 Use **Edit profile** for later clinical changes. The revision increments only
-when disorders or symptoms change; a name-only correction keeps the same
+when disorders or symptoms change; a BP Patient ID-only edit keeps the same
 clinical revision. Converting a nested Build 7 profile to the independent model
 creates a new schema-3 revision and retains every earlier revision unchanged.
 The portal blocks that conversion while the patient still has an active device
@@ -100,17 +122,8 @@ still preserves canonical disorder/symptom IDs and historical labels. If an
 existing profile cannot be resolved, the identity migration aborts without
 overwriting the source file.
 
-Safe rollout order:
-
-1. Deploy this backend with `LATEST_MOBILE_BUILD=7`,
-   `MIN_SUPPORTED_MOBILE_BUILD=7`, `ENABLE_CUSTOM_DISORDERS=false`, and
-   `ENABLE_INDEPENDENT_PROFILES=false`.
-2. Confirm health, existing Build 7 profile sync, submissions, portal reports,
-   and migration backups.
-3. Release Build 8 on Google Play and the App Store.
-4. After both releases are downloadable, set `LATEST_MOBILE_BUILD=8`, then
-   enable `ENABLE_INDEPENDENT_PROFILES=true` and
-   `ENABLE_CUSTOM_DISORDERS=true`. Keep `MIN_SUPPORTED_MOBILE_BUILD=7`.
+The guarded Build 8 rollout is complete. Do not repeat its preactivation step
+or turn either Build 8 profile gate off during Build 9 deployment.
 
 Build 7 remains a supported production client. The mobile configuration route
 advertises Build 7 as the latest compatible build to Build 7 because that app
@@ -126,6 +139,50 @@ patients continue normally. Do not convert an existing profile until every
 active device for that patient has been observed with the required Build 8
 capabilities. The profile editor enforces this. Revoke a genuinely obsolete
 device rather than bypassing the safeguard.
+
+## Build 9 patient identity search and diary
+
+The authenticated portal header searches clinic display name, BP Patient ID,
+Support ID, and internal PatientId. BP Patient ID is optional clinic metadata,
+is unique without regard to case, and does not change the clinical profile
+revision. It is never returned by a public or mobile API.
+
+Build 9 adds an authenticated `/api/diary` endpoint. It derives the patient
+only from the enrolled device credential, returns no other identity, and sends
+at most the requested 30, 60, or 90-day window. The mobile app merges those
+clinic-held entries with locally queued entries and renders wellness and
+symptom line graphs.
+
+In Patient Review, the primary metric continues to control the daily calendar.
+Clinicians can also select any available wellness, average-symptom, or assigned
+symptom metrics as additional trend lines on the same chart. Mixed charts use a
+fixed 0–100% wellness axis on the left and a fixed 0–10 symptom axis on the
+right, with a labelled colour legend for every selected line.
+
+Patients may record today or one of the previous `MAX_BACKDATE_DAYS` calendar
+days. Each Build 9 entry includes its creation timestamp, local UTC offset, and
+whether the date was selected as today or backdated. The backend validates
+those fields while retaining the legacy path for genuine Build 7/8 queue items
+created before upgrade. Existing one-submission-per-patient-per-date and exact
+submission-id idempotency protections remain unchanged.
+
+Build 9 uses the additive capability header:
+
+```text
+X-NeuroSol-Build: 9
+X-NeuroSol-Diary: patient-diary-v1
+X-NeuroSol-UTC-Offset-Minutes: <current device offset from UTC>
+```
+
+The offset header lets the diary endpoint apply an exact local 30/60/90-day
+window for patients in every time zone; it does not replace the timestamp and
+offset validation on submitted check-ins.
+
+Predeploy backend `0.11.0` with `LATEST_MOBILE_BUILD=8`. After Build 9 is live
+on both stores, change only `LATEST_MOBILE_BUILD` to `9`. The build-specific
+advertising contract continues returning latest 7 to Build 7, latest 8 to
+Build 8, and latest 9 to Build 9; no older supported client is forced to
+upgrade.
 
 For a reinstall or replacement phone, use **New device code** on the existing
 Support ID. Do not create a second patient identity.
@@ -233,6 +290,7 @@ automatically.
 - CSV export: `/admin/export.csv`
 - Health: `/health`
 - Mobile configuration: `/api/mobile-config`
+- Patient-scoped mobile diary: `/api/diary`
 
 PatientId is the patient grouping, filtering, daily uniqueness, and deletion
 key. The clinic-stored name is only a display label. `DisorderId` and
