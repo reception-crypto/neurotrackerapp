@@ -26,6 +26,7 @@ const {
   csvPath,
   disorderCatalog,
   identityStore,
+  profileRequestStore,
   patientDirectory,
   portalUserStore,
   todayIso,
@@ -2383,4 +2384,117 @@ test('patient deletion supports PatientId records missing from the identity stor
   assert.equal(csv.includes(patientId), false);
   assert.equal(csv.includes(legacySubmission), true);
   assert.equal(identityStore.snapshot().patients[patientId], undefined);
+});
+
+test('QR download page creates one pending profile request and pre-fills the current enrolment flow', async () => {
+  const download = await fetch(`${baseUrl}/download`);
+  assert.equal(download.status, 200);
+  const downloadPage = await download.text();
+  assert.match(downloadPage, /Request your profile/);
+  assert.match(downloadPage, /action="\/profile-request"/);
+  assert.match(downloadPage, /Download for Android/);
+
+  const submit = () => fetch(`${baseUrl}/profile-request`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ displayName: '  QR   Test Patient  ' }),
+  });
+  const created = await submit();
+  assert.equal(created.status, 201);
+  assert.match(await created.text(), /Request sent/);
+
+  const duplicate = await submit();
+  assert.equal(duplicate.status, 200);
+  assert.equal(
+    profileRequestStore.listPending()
+      .filter(item => item.displayName === 'QR Test Patient').length,
+    1,
+  );
+  const request = profileRequestStore.listPending()
+    .find(item => item.displayName === 'QR Test Patient');
+  assert.ok(request);
+
+  const enrolments = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(enrolments.status, 200);
+  const enrolmentsPage = await enrolments.text();
+  assert.match(enrolmentsPage, /Enrolments \(1\)/);
+  assert.match(enrolmentsPage, /QR Test Patient/);
+  assert.match(enrolmentsPage, new RegExp(`profileRequestId=${request.id}`));
+
+  const createPageResponse = await fetch(
+    `${baseUrl}/admin/enrolments?profileRequestId=${request.id}`,
+    { headers: adminHeaders() },
+  );
+  const createPage = await createPageResponse.text();
+  const csrfToken = createPage.match(
+    /name="csrfToken" value="([a-f0-9]+)"/,
+  )?.[1];
+  assert.ok(csrfToken);
+  assert.match(createPage, /name="displayName"[^>]*value="QR Test Patient"/);
+  assert.match(createPage, new RegExp(
+    `name="profileRequestId" value="${request.id}"`,
+  ));
+
+  const requestProfileForm = new URLSearchParams({
+    csrfToken,
+    patientId: '',
+    formMode: 'create',
+    profileRequestId: request.id,
+    profileModel: 'legacy-v1',
+    displayName: 'QR Test Patient',
+    primaryDisorderId: 'migraine',
+    secondaryDisorderId: '',
+    action: 'save-and-issue',
+  });
+  ['headache', 'nausea', 'fatigue'].forEach(symptomId =>
+    requestProfileForm.append('primarySymptomIds', symptomId));
+  const saved = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
+    method: 'POST',
+    headers: {
+      ...adminHeaders(),
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: requestProfileForm,
+  });
+  assert.equal(saved.status, 201);
+  assert.match(await saved.text(), /One-time enrolment code for QR Test Patient/);
+  assert.equal(profileRequestStore.getPending(request.id), null);
+});
+
+test('portal staff can dismiss a profile request without creating a patient', async () => {
+  const created = await fetch(`${baseUrl}/profile-request`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ displayName: 'Dismiss This Request' }),
+  });
+  assert.equal(created.status, 201);
+  const request = profileRequestStore.listPending()
+    .find(item => item.displayName === 'Dismiss This Request');
+  assert.ok(request);
+
+  const page = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  const csrfToken = (await page.text())
+    .match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+  const dismissed = await fetch(
+    `${baseUrl}/admin/enrolments/dismiss-request`,
+    {
+      method: 'POST',
+      headers: {
+        ...adminHeaders(),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        csrfToken,
+        profileRequestId: request.id,
+      }),
+    },
+  );
+  assert.equal(dismissed.status, 200);
+  assert.match(await dismissed.text(), /profile request was dismissed/i);
+  assert.equal(profileRequestStore.getPending(request.id), null);
 });

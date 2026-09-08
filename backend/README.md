@@ -58,15 +58,22 @@ editor remains active during Build 9. The legacy nested editor is retained only
 for compatibility if that feature gate is deliberately disabled in a
 non-production recovery environment.
 
-1. Open `/admin/enrolments`.
-2. Enter the clinic display name and, where available, the optional unique BP
+1. Give the patient the clinic QR code for
+   `https://tracker.melindapascoeneurology.com/download`.
+2. The patient downloads the app and enters their full name. The portal shows
+   the request count beside **Enrolments** and lists it under **Profile requests**.
+3. Verify the person against the clinic record, then choose **Create profile**.
+   The supplied name is pre-filled but remains editable. A request alone never
+   creates a PatientId or clinical record; duplicate pending names are folded
+   into one request, and irrelevant requests can be dismissed.
+4. Enter the clinic display name and, where available, the optional unique BP
    Patient ID.
-3. Select one or more disorders from the controlled disorder list.
-4. Select between one and six symptoms independently from the controlled
+5. Select one or more disorders from the controlled disorder list.
+6. Select between one and six symptoms independently from the controlled
    symptom list. A symptom is rated once even when several disorders are
    selected.
-5. Choose **Save and create enrolment code**.
-6. Copy the one-time HTTPS link or code and send it through the clinic’s
+7. Choose **Create patient and enrolment code**.
+8. Copy the one-time HTTPS link or code and send it through the clinic’s
    existing communication system.
 
 Codes expire after seven days and work once. Only an HMAC digest is stored.

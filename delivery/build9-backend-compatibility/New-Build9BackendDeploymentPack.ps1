@@ -169,6 +169,7 @@ $backendFiles = @(
     'package-lock.json',
     'package.json',
     'portal_users.js',
+    'profile_requests.js',
     'server.js',
     'start-neurosol.cmd'
 )

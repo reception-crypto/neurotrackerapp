@@ -32,6 +32,7 @@ const {
   drPascoePermissions,
   permissionDefinitions,
 } = require('./portal_users');
+const { createProfileRequestStore } = require('./profile_requests');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -83,6 +84,7 @@ const identityStore = createIdentityStore({
   disorderCatalog,
 });
 const portalUserStore = createPortalUserStore({ dataDir });
+const profileRequestStore = createProfileRequestStore({ dataDir });
 const portalRequestContext = new AsyncLocalStorage();
 
 const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision','DisorderId','SymptomId','PayloadSchemaVersion','ProfileDisorderIds','ProfileDisorders'];
@@ -1399,10 +1401,13 @@ function pageShell(title, body) {
   const portalUser = portalRequestContext.getStore()?.req?.portalUser;
   const can = permission => portalUser?.isAdmin ||
     portalUser?.permissions?.includes(permission);
+  const pendingProfileRequests = can('enrolments')
+    ? profileRequestStore.listPending().length
+    : 0;
   const navigation = [
     ['patient_review', '/admin', 'Patient review'],
     ['population_analytics', '/admin/population', 'Population analytics'],
-    ['enrolments', '/admin/enrolments', 'Enrolments'],
+    ['enrolments', '/admin/enrolments', `Enrolments${pendingProfileRequests ? ` (${pendingProfileRequests})` : ''}`],
     ['identity_recovery', '/admin/enrolments/recovery', 'Identity recovery'],
     ['disorders_symptoms', '/admin/disorders', 'Disorders'],
     ['disorders_symptoms', '/admin/symptoms', 'Symptoms'],
@@ -1506,6 +1511,86 @@ app.get('/api/mobile-config',(req,res)=>{
     maximumBackdateDays,
     enrolmentIncidentLockdown,
   });
+});
+
+function publicDownloadPage({ submitted = false, error = '', displayName = '' } = {}) {
+  const storeButtons = [
+    googlePlayUrl
+      ? `<a class="button" href="${html(googlePlayUrl)}" rel="noreferrer">Download for Android</a>`
+      : '',
+    appStoreUrl
+      ? `<a class="button secondary" href="${html(appStoreUrl)}" rel="noreferrer">Download for iPhone</a>`
+      : '',
+  ].filter(Boolean).join('');
+  const form = submitted
+    ? `<div class="success"><strong>Request sent.</strong><p>The clinic has been notified that ${html(displayName)} would like a NeuroSol profile. You can install the app now. The clinic will create your profile and give you a one-time enrolment code.</p></div>`
+    : `<form method="post" action="/profile-request" autocomplete="name">
+        <label for="displayName">Your full name</label>
+        <input id="displayName" name="displayName" required minlength="2" maxlength="160" value="${html(displayName)}" autocomplete="name">
+        <button type="submit">Ask the clinic to create my profile</button>
+      </form>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download NeuroSol Symptom Diary</title><style>
+    :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f3f4f6;color:#111827;font-family:Inter,Segoe UI,Arial,sans-serif}.card{max-width:620px;margin:8vh auto;background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(15,23,42,.08)}h1{margin-top:0}h2{margin-top:28px}label{display:block;font-weight:700;margin:18px 0 7px}input{display:block;width:100%;padding:12px;border:1px solid #94a3b8;border-radius:9px;font-size:16px}.actions{display:grid;gap:10px;margin:18px 0}.button,button{display:block;width:100%;padding:12px;border:0;border-radius:9px;background:#2563eb;color:#fff;font-size:16px;font-weight:700;text-decoration:none;text-align:center;cursor:pointer}.secondary{background:#374151}form button{margin-top:12px}.muted{color:#4b5563;font-size:14px}.error{color:#991b1b;background:#fef2f2;border:1px solid #fca5a5;border-radius:9px;padding:12px}.success{color:#065f46;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:12px;padding:16px}.success p{margin-bottom:0}@media(max-width:680px){.card{margin:0;min-height:100vh;border:0;border-radius:0;padding:22px}}</style></head><body><main class="card">
+      <h1>NeuroSol Symptom Diary</h1>
+      <p>Download the app, then ask Pascoe Neurology to prepare your personal symptom diary profile.</p>
+      <div class="actions">${storeButtons}</div>
+      <h2>Request your profile</h2>
+      ${error ? `<p class="error">${html(error)}</p>` : ''}${form}
+      <p class="muted">Entering your name does not create a medical record or enrol this phone. Clinic staff will verify your identity and choose your diary settings before issuing a private, one-time enrolment code.</p>
+    </main></body></html>`;
+}
+
+const profileRequestAttempts = new Map();
+function limitProfileRequests(req, res, next) {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const windowStart = now - 60 * 60 * 1000;
+  const attempts = (profileRequestAttempts.get(key) || [])
+    .filter(value => value > windowStart);
+  if (attempts.length >= 5) {
+    res.set('Retry-After', '3600');
+    return res.status(429).send(publicDownloadPage({
+      error: 'Too many requests have been sent from this connection. Please contact the clinic directly.',
+    }));
+  }
+  attempts.push(now);
+  profileRequestAttempts.set(key, attempts);
+  next();
+}
+
+app.get('/download',(req,res)=>{
+  res.set({
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  });
+  res.send(publicDownloadPage());
+});
+
+app.post('/profile-request',limitProfileRequests,(req,res)=>{
+  res.set({
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  });
+  try {
+    const result = profileRequestStore.create({
+      displayName: req.body?.displayName,
+    });
+    return res.status(result.created ? 201 : 200).send(publicDownloadPage({
+      submitted: true,
+      displayName: result.request.displayName,
+    }));
+  } catch (error) {
+    return res.status(400).send(publicDownloadPage({
+      error: error.message,
+      displayName: String(req.body?.displayName || '').trim(),
+    }));
+  }
 });
 
 app.get('/enrol',(req,res)=>{
@@ -2196,15 +2281,15 @@ function symptomSelectors(
   ).join('');
 }
 
-function profileIdentityFields(patient = null) {
+function profileIdentityFields(patient = null, requestedName = '') {
   const bpField = `<div class="field"><label>BP Patient ID (optional)</label><input name="bpPatientId" maxlength="80" value="${html(patient?.bpPatientId || '')}" placeholder="Best Practice patient reference"></div>`;
   if (!patient) {
-    return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value=""></div>${bpField}`;
+    return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(requestedName)}"></div>${bpField}`;
   }
   return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient.displayName)}"><span class="muted">${html(patient.supportId)} · Correcting the name keeps this PatientId, diary history, devices, and clinical profile.</span></div>${bpField}`;
 }
 
-function legacyProfileEditor(patient = null) {
+function legacyProfileEditor(patient = null, profileRequest = null) {
   const profile = patient?.clinicalProfile ||
     patient?.suggestedProfile || {
       primaryDisorder: 'Migraine',
@@ -2217,7 +2302,7 @@ function legacyProfileEditor(patient = null) {
       secondarySymptomIds: [],
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
-  const identityField = profileIdentityFields(patient);
+  const identityField = profileIdentityFields(patient, profileRequest?.displayName);
   const actions = patient
     ? `<button type="submit" name="action" value="save">Save profile changes</button>
         <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
@@ -2231,6 +2316,7 @@ function legacyProfileEditor(patient = null) {
       <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
       <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
       <input type="hidden" name="formMode" value="${patient ? 'edit' : 'create'}">
+      <input type="hidden" name="profileRequestId" value="${html(patient ? '' : profileRequest?.id || '')}">
       <input type="hidden" name="profileModel" value="legacy-v1">
       ${identityField}
       <h3>Primary disorder</h3>
@@ -2316,7 +2402,7 @@ function availableSymptoms(selectedIds = []) {
   );
 }
 
-function independentProfileEditor(patient = null) {
+function independentProfileEditor(patient = null, profileRequest = null) {
   const sourceProfile = patient?.clinicalProfile || patient?.suggestedProfile;
   const selected = independentProfileSelections(sourceProfile);
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
@@ -2326,7 +2412,7 @@ function independentProfileEditor(patient = null) {
   );
   const disorderChoices = availableDisorders(selected.disorderIds);
   const symptomChoices = availableSymptoms(selected.symptomIds);
-  const identityField = profileIdentityFields(patient);
+  const identityField = profileIdentityFields(patient, profileRequest?.displayName);
   const actions = patient
     ? `<button type="submit" name="action" value="save">Save profile changes</button>
         <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
@@ -2341,6 +2427,7 @@ function independentProfileEditor(patient = null) {
       <input type="hidden" name="csrfToken" value="${adminCsrfToken()}">
       <input type="hidden" name="patientId" value="${html(patient?.patientId || '')}">
       <input type="hidden" name="formMode" value="${patient ? 'edit' : 'create'}">
+      <input type="hidden" name="profileRequestId" value="${html(patient ? '' : profileRequest?.id || '')}">
       <input type="hidden" name="schemaVersion" value="3">
       <input type="hidden" name="profileModel" value="independent-v1">
       ${identityField}
@@ -2383,15 +2470,15 @@ function independentProfileEditor(patient = null) {
   </section>`;
 }
 
-function profileEditor(patient = null, requestedMode = '') {
-  if (!independentProfilesEnabled) return legacyProfileEditor(patient);
+function profileEditor(patient = null, requestedMode = '', profileRequest = null) {
+  if (!independentProfilesEnabled) return legacyProfileEditor(patient, profileRequest);
   const canMaintainLegacy = Boolean(
     patient?.clinicalProfile &&
     !isIndependentClinicalProfile(patient.clinicalProfile),
   );
   return requestedMode === 'legacy' && canMaintainLegacy
-    ? legacyProfileEditor(patient)
-    : independentProfileEditor(patient);
+    ? legacyProfileEditor(patient, profileRequest)
+    : independentProfileEditor(patient, profileRequest);
 }
 
 function enrolmentPage({
@@ -2400,6 +2487,7 @@ function enrolmentPage({
   message = '',
   editPatientId = '',
   profileMode = '',
+  profileRequestId = '',
   query = '',
 } = {}) {
   const allPatients = enrolmentPatients(readRows());
@@ -2409,6 +2497,9 @@ function enrolmentPage({
   const editPatient = allPatients.find(
     patient => patient.patientId === editPatientId && !patient.quarantinedAt,
   ) || null;
+  const profileRequest = editPatient
+    ? null
+    : profileRequestStore.getPending(profileRequestId);
   const notice = issued ? `<div class="notice">
     <strong>One-time enrolment code for ${html(issued.displayName)}</strong>
     <div class="code">${html(issued.code)}</div>
@@ -2453,7 +2544,22 @@ function enrolmentPage({
   const searchSummary = q
     ? `${patients.length} matching enrolment${patients.length === 1 ? '' : 's'}`
     : `${patients.length} enrolment${patients.length === 1 ? '' : 's'}`;
-  const body = `${notice}${errorNotice}${messageNotice}${profileEditor(editPatient, profileMode)}
+  const pendingRequests = profileRequestStore.listPending();
+  const requestRows = pendingRequests.map(request => `<tr>
+    <td>${html(request.displayName)}</td>
+    <td>${html(new Date(request.requestedAt).toLocaleString('en-AU'))}</td>
+    <td><a class="button" style="width:auto;padding:7px 10px" href="/admin/enrolments?profileRequestId=${encodeURIComponent(request.id)}#profileForm">Create profile</a>
+      <form class="inline-form" method="post" action="/admin/enrolments/dismiss-request">
+        <input type="hidden" name="csrfToken" value="${csrfToken}">
+        <input type="hidden" name="profileRequestId" value="${html(request.id)}">
+        <button class="button secondary" type="submit">Dismiss</button>
+      </form></td>
+  </tr>`).join('');
+  const requestPanel = `<section class="panel"><h2>Profile requests${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</h2>
+    <p class="muted">Patients submitted these names from the QR-code download page. Verify each person against the clinic record before creating a profile.</p>
+    <div class="table-wrap"><table><thead><tr><th>Name supplied</th><th>Requested</th><th>Actions</th></tr></thead><tbody>${requestRows || '<tr><td colspan="3">No pending profile requests.</td></tr>'}</tbody></table></div>
+  </section>`;
+  const body = `${notice}${errorNotice}${messageNotice}${requestPanel}${profileEditor(editPatient, profileMode, profileRequest)}
   <section class="panel"><h2>Existing clinic identities</h2>
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
     <form method="get" action="/admin/enrolments" class="toolbar">
@@ -2815,6 +2921,7 @@ app.get('/admin/patient-search',requirePortalUser,requirePermission('patient_rev
 app.get('/admin/enrolments',requirePortalUser,requirePermission('enrolments'),(req,res)=>{
   res.send(enrolmentPage({
     editPatientId: String(req.query.editPatientId || '').trim(),
+    profileRequestId: String(req.query.profileRequestId || '').trim(),
     profileMode: String(req.query.profileMode || '').trim(),
     query: req.query.q,
   }));
@@ -2862,6 +2969,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
   try {
     const patientId = String(req.body.patientId || '').trim();
     const formMode = String(req.body.formMode || '').trim();
+    const profileRequestId = String(req.body.profileRequestId || '').trim();
     const existingPatient = patientId
       ? identityStore.snapshot().patients[patientId]
       : null;
@@ -2873,6 +2981,12 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
     if (formMode === 'create' && patientId) {
       throw new Error(
         'A new-patient form cannot contain an existing PatientId. Reload the enrolments page.',
+      );
+    }
+    if (profileRequestId &&
+        (formMode !== 'create' || !profileRequestStore.getPending(profileRequestId))) {
+      throw new Error(
+        'This profile request is no longer pending. Reload the enrolments page.',
       );
     }
     if (formMode === 'edit' && (!patientId || !existingPatient)) {
@@ -2971,6 +3085,9 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       bpPatientId: req.body.bpPatientId,
       clinicalProfile,
     });
+    if (profileRequestId) {
+      profileRequestStore.complete(profileRequestId, saved.patientId);
+    }
     if (req.body.action === 'save-and-issue') {
       const issued = identityStore.issueEnrolmentCode({
         patientId: saved.patientId,
@@ -2987,6 +3104,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       message: `Patient details saved for ${saved.displayName}. Enrolled phones will receive profile revision ${saved.clinicalProfile.revision}.`,
       editPatientId: saved.patientId,
       profileMode: requestedIndependent ? '' : 'legacy',
+      profileRequestId: '',
     }));
   } catch (error) {
     return res.status(400).send(enrolmentPage({
@@ -2995,8 +3113,17 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
         ? String(req.body.patientId || '').trim()
         : '',
       profileMode: requestedIndependent ? '' : 'legacy',
+      profileRequestId: String(req.body.profileRequestId || '').trim(),
     }));
   }
+});
+
+app.post('/admin/enrolments/dismiss-request',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,(req,res)=>{
+  const dismissed = profileRequestStore.dismiss(req.body.profileRequestId);
+  res.send(enrolmentPage({
+    message: dismissed ? 'The profile request was dismissed.' : '',
+    error: dismissed ? '' : 'That profile request is no longer pending.',
+  }));
 });
 
 app.post('/admin/enrolments/issue',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,(req,res)=>{
@@ -3456,6 +3583,7 @@ module.exports = {
   disorderKey,
   diaryEntriesForPatient,
   identityStore,
+  profileRequestStore,
   comparePatientDisplayNames,
   portalUserStore,
   patientDirectory,

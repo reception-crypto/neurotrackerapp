@@ -14,16 +14,22 @@ with a CSV-backed clinician portal.
 
 ## Build 7 clinic-managed workflow
 
-1. Dr Pascoe or authorised clinic staff create the patient in
-   `/admin/enrolments`.
-2. Staff select one or two disorders and exactly three symptoms for each.
-3. The portal produces a seven-day, one-time enrolment link and code. The
+1. The patient scans the clinic QR code, which opens `/download`, and installs
+   the Android or iPhone app.
+2. The patient enters their full name on that page. A pending profile request
+   appears in `/admin/enrolments`; this does not create a clinical identity.
+3. Clinic staff verify the person against the clinic record and select
+   **Create profile**. The existing new-patient form opens with the supplied
+   name pre-filled.
+4. Staff enter the optional BP Patient ID, choose the disorders and symptoms,
+   and create the profile.
+5. The portal produces a seven-day, one-time enrolment link and code. The
    clinic sends either through its existing email or SMS process.
-4. The patient installs the newest app and enters the code. The link itself
+6. The patient enters the code in the app. The link itself
    displays no patient information and does not consume the code.
-5. The app receives the versioned clinic profile. Patients may change only the
+7. The app receives the versioned clinic profile. Patients may change only the
    daily reminder time.
-6. Later staff changes synchronise to the app on launch, resume, or refresh.
+8. Later staff changes synchronise to the app on launch, resume, or refresh.
    Pending entries retain the profile revision under which they were recorded.
 
 The app retains its once-per-day home-screen workflow, notification entry

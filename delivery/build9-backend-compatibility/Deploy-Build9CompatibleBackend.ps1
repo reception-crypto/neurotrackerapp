@@ -213,7 +213,8 @@ foreach ($sourceFile in @(
     'identity_store.js',
     'clinical_profiles.js',
     'disorder_catalog.js',
-    'portal_users.js'
+    'portal_users.js',
+    'profile_requests.js'
 )) {
     $sourcePath = Join-Path $payloadPath $sourceFile
     if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
@@ -239,6 +240,7 @@ $managedFiles = @(
     'package.json',
     'package-lock.json',
     'portal_users.js',
+    'profile_requests.js',
     'README.md',
     '.env.example',
     'start-neurosol.cmd'

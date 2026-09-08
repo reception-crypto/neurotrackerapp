@@ -59,6 +59,7 @@ $sourceFiles = @(
     'clinical_profiles.js',
     'disorder_catalog.js',
     'portal_users.js',
+    'profile_requests.js',
     'package.json',
     'package-lock.json'
 )
