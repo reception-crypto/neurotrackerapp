@@ -39,6 +39,26 @@ function bpPatientIdKey(value) {
   return normaliseBpPatientId(value).toLocaleLowerCase('en-AU');
 }
 
+function normaliseEmail(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase('en-AU');
+}
+
+function validateEmail(value) {
+  const email = normaliseEmail(value);
+  if (!email) return '';
+  if (
+    email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+    /[\u0000-\u001f\u007f]/.test(email)
+  ) {
+    throw new Error('Enter a valid patient email address.');
+  }
+  return email;
+}
+
 function randomCode() {
   const bytes = crypto.randomBytes(12);
   let code = '';
@@ -180,6 +200,7 @@ function createIdentityStore({
     patientId = '',
     displayName = '',
     bpPatientId,
+    email,
     clinicalProfile = {},
   }) {
     const { id, name } = validatePatientIdentity(patientId, displayName);
@@ -197,6 +218,9 @@ function createIdentityStore({
     const savedBpPatientId = bpPatientId === undefined
       ? normaliseBpPatientId(existing?.bpPatientId)
       : validateBpPatientId(store, id, bpPatientId);
+    const savedEmail = email === undefined
+      ? normaliseEmail(existing?.email)
+      : validateEmail(email);
     const previousProfile = existing?.clinicalProfile || null;
     const changed = !previousProfile ||
       !sameClinicalProfile(previousProfile, profile);
@@ -231,6 +255,7 @@ function createIdentityStore({
       patientId: id,
       displayName: name,
       bpPatientId: savedBpPatientId,
+      email: savedEmail,
       displayNameHistory,
       createdAt: existing?.createdAt || savedAt,
       updatedAt: savedAt,
@@ -243,6 +268,7 @@ function createIdentityStore({
       patientId: id,
       displayName: name,
       bpPatientId: savedBpPatientId,
+      email: savedEmail,
       supportId: supportId(id),
       clinicalProfile: savedProfile,
     };
@@ -1126,5 +1152,6 @@ module.exports = {
   formatCode,
   normaliseBpPatientId,
   normaliseCode,
+  normaliseEmail,
   supportId,
 };

@@ -2522,3 +2522,56 @@ test('portal staff can dismiss a profile request without creating a patient', as
   assert.match(await dismissed.text(), /profile request was dismissed/i);
   assert.equal(profileRequestStore.getPending(request.id), null);
 });
+
+test('existing enrolments display their email and can email a fresh enrolment pack', async () => {
+  const saved = identityStore.saveClinicalProfile({
+    patientId: 'pt-existing-email-pack',
+    displayName: 'Existing Email Patient',
+    email: 'Existing.Patient@Example.com',
+    clinicalProfile: assignedClinicalProfile,
+  });
+  identityStore.issueEnrolmentCode({
+    patientId: saved.patientId,
+    displayName: saved.displayName,
+    requireClinicalProfile: true,
+  });
+  const page = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(page.status, 200);
+  const body = await page.text();
+  assert.match(body, /<th>Email<\/th>/);
+  assert.match(body, /existing\.patient@example\.com/);
+  assert.match(body, /action="\/admin\/enrolments\/email-pack"/);
+  assert.match(body, />Email enrolment pack<\/button>/);
+  const csrfToken = body.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+
+  const sent = [];
+  const originalSend = enrolmentMailer.sendEnrolmentPack;
+  enrolmentMailer.sendEnrolmentPack = async message => sent.push(message);
+  try {
+    const response = await fetch(`${baseUrl}/admin/enrolments/email-pack`, {
+      method: 'POST',
+      headers: {
+        ...adminHeaders(),
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        csrfToken,
+        patientId: saved.patientId,
+      }),
+    });
+    assert.equal(response.status, 201);
+    assert.match(
+      await response.text(),
+      /Enrolment pack emailed to existing\.patient@example\.com/,
+    );
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].to, 'existing.patient@example.com');
+    assert.equal(sent[0].displayName, 'Existing Email Patient');
+    assert.match(sent[0].enrolmentUrl, /\/enrol#[A-Z0-9]{12}$/);
+  } finally {
+    enrolmentMailer.sendEnrolmentPack = originalSend;
+  }
+});

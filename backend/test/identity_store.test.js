@@ -196,6 +196,50 @@ test('BP Patient IDs are optional, normalised, and unique per clinic identity', 
   }
 });
 
+test('patient email addresses are normalised, validated, and retained on profile edits', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
+  try {
+    const identityStore = createIdentityStore({
+      dataDir,
+      secret,
+      disorderCatalog: createDisorderCatalogStore({ dataDir }),
+    });
+    const clinicalProfile = {
+      primaryDisorderId: 'migraine',
+      primarySymptomIds: ['headache', 'nausea', 'vomiting'],
+    };
+    const saved = identityStore.saveClinicalProfile({
+      patientId: 'pt-email-test',
+      displayName: 'Email Test',
+      email: ' Patient.Email@Example.COM ',
+      clinicalProfile,
+    });
+    assert.equal(saved.email, 'patient.email@example.com');
+    assert.equal(
+      identityStore.snapshot().patients['pt-email-test'].email,
+      'patient.email@example.com',
+    );
+
+    const edited = identityStore.saveClinicalProfile({
+      patientId: 'pt-email-test',
+      displayName: 'Email Test Updated',
+      clinicalProfile,
+    });
+    assert.equal(edited.email, 'patient.email@example.com');
+    assert.throws(
+      () => identityStore.saveClinicalProfile({
+        patientId: 'pt-invalid-email',
+        displayName: 'Invalid Email',
+        email: 'not-an-email',
+        clinicalProfile,
+      }),
+      /valid patient email address/,
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('retired Migraine Visual aura remains valid for a Build 7 profile revision', () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-identity-'));
   try {

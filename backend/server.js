@@ -2084,6 +2084,7 @@ function enrolmentPatients(rows) {
     return {
       patientId,
       displayName: fromStore?.displayName || fromData?.displayName || 'Unnamed patient',
+      email: String(fromStore?.email || '').trim(),
       bpPatientId: normaliseBpPatientId(fromStore?.bpPatientId),
       supportId: supportId(patientId),
       activeDevices: activeDeviceRecords.length,
@@ -2110,6 +2111,7 @@ function patientMatchesSearch(patient, query) {
   if (!normalisedQuery) return false;
   const fields = [
     patient.displayName,
+    patient.email,
     normaliseBpPatientId(patient.bpPatientId),
     patient.supportId,
     patient.patientId,
@@ -2289,12 +2291,14 @@ function symptomSelectors(
   ).join('');
 }
 
-function profileIdentityFields(patient = null, requestedName = '') {
+function profileIdentityFields(patient = null, profileRequest = null) {
   const bpField = `<div class="field"><label>BP Patient ID (optional)</label><input name="bpPatientId" maxlength="80" value="${html(patient?.bpPatientId || '')}" placeholder="Best Practice patient reference"></div>`;
+  const email = patient?.email || profileRequest?.email || '';
+  const emailField = `<div class="field"><label>Patient email address</label><input name="email" type="email" maxlength="254" value="${html(email)}" autocomplete="email" placeholder="patient@example.com"></div>`;
   if (!patient) {
-    return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(requestedName)}"></div>${bpField}`;
+    return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(profileRequest?.displayName || '')}"></div>${bpField}${emailField}`;
   }
-  return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient.displayName)}"><span class="muted">${html(patient.supportId)} · Correcting the name keeps this PatientId, diary history, devices, and clinical profile.</span></div>${bpField}`;
+  return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient.displayName)}"><span class="muted">${html(patient.supportId)} · Correcting the name keeps this PatientId, diary history, devices, and clinical profile.</span></div>${bpField}${emailField}`;
 }
 
 function legacyProfileEditor(patient = null, profileRequest = null) {
@@ -2310,8 +2314,8 @@ function legacyProfileEditor(patient = null, profileRequest = null) {
       secondarySymptomIds: [],
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
-  const identityField = profileIdentityFields(patient, profileRequest?.displayName);
-  const emailAction = profileRequest?.email && enrolmentMailer.enabled
+  const identityField = profileIdentityFields(patient, profileRequest);
+  const emailAction = enrolmentMailer.enabled
     ? '<button type="submit" name="action" value="save-issue-and-email">Create patient and email enrolment pack</button>'
     : '';
   const actions = patient
@@ -2424,8 +2428,8 @@ function independentProfileEditor(patient = null, profileRequest = null) {
   );
   const disorderChoices = availableDisorders(selected.disorderIds);
   const symptomChoices = availableSymptoms(selected.symptomIds);
-  const identityField = profileIdentityFields(patient, profileRequest?.displayName);
-  const emailAction = profileRequest?.email && enrolmentMailer.enabled
+  const identityField = profileIdentityFields(patient, profileRequest);
+  const emailAction = enrolmentMailer.enabled
     ? '<button type="submit" name="action" value="save-issue-and-email">Create patient and email enrolment pack</button>'
     : '';
   const actions = patient
@@ -2542,7 +2546,12 @@ function enrolmentPage({
           <input type="hidden" name="csrfToken" value="${csrfToken}">
           <input type="hidden" name="patientId" value="${html(patient.patientId)}">
           <button type="submit">New device code</button>
-        </form>` : '<strong class="flag">Profile required</strong>'}
+        </form>
+        ${patient.email && enrolmentMailer.enabled ? `<form class="inline-form" method="post" action="/admin/enrolments/email-pack">
+          <input type="hidden" name="csrfToken" value="${csrfToken}">
+          <input type="hidden" name="patientId" value="${html(patient.patientId)}">
+          <button type="submit">Email enrolment pack</button>
+        </form>` : ''}` : '<strong class="flag">Profile required</strong>'}
         <form class="inline-form" method="post" action="/admin/enrolments/revoke" onsubmit="return confirm('Revoke every enrolled device for this patient?')">
           <input type="hidden" name="csrfToken" value="${csrfToken}">
           <input type="hidden" name="patientId" value="${html(patient.patientId)}">
@@ -2550,6 +2559,7 @@ function enrolmentPage({
         </form>`;
     return `<tr>
     <td>${html(patient.displayName)}</td>
+    <td>${html(patient.email || '—')}</td>
     <td>${html(patient.bpPatientId || '—')}</td>
     <td>${html(patient.supportId)}</td>
     <td>${status}${status ? '<br>' : ''}${html(profileDescription(patient.clinicalProfile))}</td>
@@ -2585,8 +2595,8 @@ function enrolmentPage({
       ${q ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/enrolments">Clear search</a></div>' : ''}
     </form>
     <p class="muted">${html(searchSummary)}</p>
-    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
-    <tbody>${patientRows || `<tr><td colspan="6">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Email</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
+    <tbody>${patientRows || `<tr><td colspan="7">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
@@ -3103,6 +3113,9 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       patientId,
       displayName: String(req.body.displayName || '').trim(),
       bpPatientId: req.body.bpPatientId,
+      email: req.body.email === undefined
+        ? profileRequest?.email
+        : req.body.email,
       clinicalProfile,
     });
     if (['save-and-issue', 'save-issue-and-email'].includes(req.body.action)) {
@@ -3114,12 +3127,12 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       let emailMessage = '';
       let emailError = '';
       if (req.body.action === 'save-issue-and-email') {
-        if (!profileRequest?.email) {
-          emailError = 'The profile request does not contain an email address. The code was created but no email was sent.';
+        if (!saved.email) {
+          emailError = 'The patient profile does not contain an email address. The code was created but no email was sent.';
         } else {
           try {
             await enrolmentMailer.sendEnrolmentPack({
-              to: profileRequest.email,
+              to: saved.email,
               displayName: saved.displayName,
               code: issued.code,
               enrolmentUrl: `${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`,
@@ -3127,7 +3140,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
               googlePlayUrl,
               appStoreUrl,
             });
-            emailMessage = `Enrolment pack emailed to ${profileRequest.email}.`;
+            emailMessage = `Enrolment pack emailed to ${saved.email}.`;
           } catch (error) {
             emailError = `The code was created, but the enrolment email could not be sent: ${error.message}`;
           }
@@ -3187,6 +3200,51 @@ app.post('/admin/enrolments/issue',requirePortalUser,requirePermission('enrolmen
     res.status(201).send(enrolmentPage({ issued, editPatientId: patientId }));
   } catch (error) {
     res.status(400).send(enrolmentPage({ error: error.message }));
+  }
+});
+
+app.post('/admin/enrolments/email-pack',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,async (req,res)=>{
+  let issued = null;
+  let patient = null;
+  try {
+    if (!enrolmentMailer.enabled) {
+      throw new Error('Automatic enrolment email is not configured.');
+    }
+    const patientId = String(req.body.patientId || '').trim();
+    patient = identityStore.snapshot().patients[patientId];
+    if (!patient) throw new Error('The patient identity was not found.');
+    if (!patient.email) {
+      throw new Error('Add an email address to this patient profile before sending an enrolment pack.');
+    }
+    issued = identityStore.issueEnrolmentCode({
+      patientId,
+      displayName: patient.displayName,
+      requireClinicalProfile: true,
+      replacesPatientId: patient.recoveredFrom?.patientId || '',
+    });
+    await enrolmentMailer.sendEnrolmentPack({
+      to: patient.email,
+      displayName: patient.displayName,
+      code: issued.code,
+      enrolmentUrl: `${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`,
+      expiresAt: issued.expiresAt,
+      googlePlayUrl,
+      appStoreUrl,
+    });
+    res.status(201).send(enrolmentPage({
+      issued,
+      message: `Enrolment pack emailed to ${patient.email}.`,
+      editPatientId: patientId,
+    }));
+  } catch (error) {
+    const emailFailedAfterIssue = Boolean(issued);
+    res.status(emailFailedAfterIssue ? 502 : 400).send(enrolmentPage({
+      issued,
+      error: emailFailedAfterIssue
+        ? `The code was created, but the enrolment email could not be sent: ${error.message}`
+        : error.message,
+      editPatientId: patient?.patientId || '',
+    }));
   }
 });
 
