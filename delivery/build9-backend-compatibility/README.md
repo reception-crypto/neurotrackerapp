@@ -23,6 +23,18 @@ intact.
 It contains no `.env`, credentials, patient data, `node_modules`, or mobile
 binary, and it requires no package downloads on the terminal server.
 
+For a package containing automatic enrolment email, install the locked backend
+dependencies once on the terminal server before running the guarded deployment:
+
+```powershell
+Set-Location 'C:\Projects\neurotrackerapp\backend'
+npm install nodemailer@7.0.6 --no-save
+node -e "require.resolve('nodemailer'); console.log('nodemailer ready')"
+```
+
+This does not activate email or change `.env`; it only makes the mail transport
+available for the preflight checks and subsequent service restart.
+
 ## 1. Create the package on the development PC
 
 Run in an ordinary PowerShell window from the clean, committed repository:

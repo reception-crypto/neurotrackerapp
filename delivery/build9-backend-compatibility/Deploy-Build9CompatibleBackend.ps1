@@ -199,7 +199,7 @@ Wait-NeuroSolHealth -BaseUri $localBaseUri -TimeoutSeconds 30 | Out-Null
 
 $dependencyScript = @'
 const root = process.argv[1];
-for (const name of ['express', 'dotenv', 'basic-auth', 'pdfkit']) {
+for (const name of ['express', 'dotenv', 'basic-auth', 'nodemailer', 'pdfkit']) {
   require.resolve(name, { paths: [root] });
 }
 '@
@@ -213,6 +213,7 @@ foreach ($sourceFile in @(
     'identity_store.js',
     'clinical_profiles.js',
     'disorder_catalog.js',
+    'enrolment_mailer.js',
     'portal_users.js',
     'profile_requests.js'
 )) {
@@ -237,6 +238,7 @@ $managedFiles = @(
     'identity_store.js',
     'clinical_profiles.js',
     'disorder_catalog.js',
+    'enrolment_mailer.js',
     'package.json',
     'package-lock.json',
     'portal_users.js',
