@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const schemaVersion = 1;
+const schemaVersion = 2;
 
 function normaliseName(value) {
   return String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -10,6 +10,16 @@ function normaliseName(value) {
 
 function validName(value) {
   return value.length >= 2 && value.length <= 160 &&
+    !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function normaliseEmail(value) {
+  return String(value || '').normalize('NFKC').trim().toLocaleLowerCase('en-AU');
+}
+
+function validEmail(value) {
+  return value.length >= 3 && value.length <= 254 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) &&
     !/[\u0000-\u001f\u007f]/.test(value);
 }
 
@@ -25,10 +35,11 @@ function createProfileRequestStore({ dataDir }) {
     fs.mkdirSync(dataDir, { recursive: true });
     if (!fs.existsSync(requestPath)) return emptyState();
     const parsed = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
-    if (parsed?.schemaVersion !== schemaVersion || !parsed.requests ||
+    if (![1, schemaVersion].includes(parsed?.schemaVersion) || !parsed.requests ||
         typeof parsed.requests !== 'object' || Array.isArray(parsed.requests)) {
       throw new Error('The profile request file is invalid.');
     }
+    parsed.schemaVersion = schemaVersion;
     return parsed;
   }
 
@@ -49,21 +60,27 @@ function createProfileRequestStore({ dataDir }) {
       .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt));
   }
 
-  function create({ displayName }) {
+  function create({ displayName, email }) {
     const name = normaliseName(displayName);
+    const normalisedEmail = normaliseEmail(email);
     if (!validName(name)) {
       throw new Error('Enter your full name using between 2 and 160 characters.');
+    }
+    if (!validEmail(normalisedEmail)) {
+      throw new Error('Enter a valid email address.');
     }
     const state = read();
     const duplicate = Object.values(state.requests).find(item =>
       item.status === 'pending' &&
       normaliseName(item.displayName).toLocaleLowerCase('en-AU') ===
-        name.toLocaleLowerCase('en-AU')
+        name.toLocaleLowerCase('en-AU') &&
+      normaliseEmail(item.email) === normalisedEmail
     );
     if (duplicate) return { request: duplicate, created: false };
     const request = {
       id: `pr-${crypto.randomUUID()}`,
       displayName: name,
+      email: normalisedEmail,
       status: 'pending',
       requestedAt: new Date().toISOString(),
     };
@@ -101,4 +118,8 @@ function createProfileRequestStore({ dataDir }) {
   return { create, complete, dismiss, getPending, listPending, requestPath };
 }
 
-module.exports = { createProfileRequestStore, normaliseName };
+module.exports = {
+  createProfileRequestStore,
+  normaliseEmail,
+  normaliseName,
+};

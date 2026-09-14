@@ -33,6 +33,7 @@ const {
   permissionDefinitions,
 } = require('./portal_users');
 const { createProfileRequestStore } = require('./profile_requests');
+const { createEnrolmentMailer } = require('./enrolment_mailer');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -85,6 +86,7 @@ const identityStore = createIdentityStore({
 });
 const portalUserStore = createPortalUserStore({ dataDir });
 const profileRequestStore = createProfileRequestStore({ dataDir });
+const enrolmentMailer = createEnrolmentMailer();
 const portalRequestContext = new AsyncLocalStorage();
 
 const csvColumns = ['ReceivedAt','Date','Time','Patient','Track','Disorder','Symptom','Score','WellnessPercent','SubmissionId','PatientId','ProfileRevision','DisorderId','SymptomId','PayloadSchemaVersion','ProfileDisorderIds','ProfileDisorders'];
@@ -1480,6 +1482,7 @@ app.get('/health',(req,res)=>res.json({
   backendVersion,
   storage:'csv',
   enrolmentIncidentLockdown,
+  enrolmentEmailEnabled: enrolmentMailer.enabled,
   disorderCatalogVersion: catalogVersion,
   customDisordersEnabled,
   independentProfilesEnabled,
@@ -1513,7 +1516,7 @@ app.get('/api/mobile-config',(req,res)=>{
   });
 });
 
-function publicDownloadPage({ submitted = false, error = '', displayName = '' } = {}) {
+function publicDownloadPage({ submitted = false, error = '', displayName = '', email = '' } = {}) {
   const storeButtons = [
     googlePlayUrl
       ? `<a class="button" href="${html(googlePlayUrl)}" rel="noreferrer">Download for Android</a>`
@@ -1524,9 +1527,11 @@ function publicDownloadPage({ submitted = false, error = '', displayName = '' } 
   ].filter(Boolean).join('');
   const form = submitted
     ? `<div class="success"><strong>Request sent.</strong><p>The clinic has been notified that ${html(displayName)} would like a NeuroSol profile. You can install the app now. The clinic will create your profile and give you a one-time enrolment code.</p></div>`
-    : `<form method="post" action="/profile-request" autocomplete="name">
+    : `<form method="post" action="/profile-request">
         <label for="displayName">Your full name</label>
         <input id="displayName" name="displayName" required minlength="2" maxlength="160" value="${html(displayName)}" autocomplete="name">
+        <label for="email">Your email address</label>
+        <input id="email" name="email" type="email" required maxlength="254" value="${html(email)}" autocomplete="email" inputmode="email">
         <button type="submit">Ask the clinic to create my profile</button>
       </form>`;
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download NeuroSol Symptom Diary</title><style>
@@ -1536,7 +1541,7 @@ function publicDownloadPage({ submitted = false, error = '', displayName = '' } 
       <div class="actions">${storeButtons}</div>
       <h2>Request your profile</h2>
       ${error ? `<p class="error">${html(error)}</p>` : ''}${form}
-      <p class="muted">Entering your name does not create a medical record or enrol this phone. Clinic staff will verify your identity and choose your diary settings before issuing a private, one-time enrolment code.</p>
+      <p class="muted">Entering your name and email does not create a medical record or enrol this phone. Clinic staff will verify your identity and choose your diary settings before emailing a private, one-time enrolment pack.</p>
     </main></body></html>`;
 }
 
@@ -1580,15 +1585,18 @@ app.post('/profile-request',limitProfileRequests,(req,res)=>{
   try {
     const result = profileRequestStore.create({
       displayName: req.body?.displayName,
+      email: req.body?.email,
     });
     return res.status(result.created ? 201 : 200).send(publicDownloadPage({
       submitted: true,
       displayName: result.request.displayName,
+      email: result.request.email,
     }));
   } catch (error) {
     return res.status(400).send(publicDownloadPage({
       error: error.message,
       displayName: String(req.body?.displayName || '').trim(),
+      email: String(req.body?.email || '').trim(),
     }));
   }
 });
@@ -2303,11 +2311,15 @@ function legacyProfileEditor(patient = null, profileRequest = null) {
     };
   const suggested = !patient?.clinicalProfile && patient?.suggestedProfile;
   const identityField = profileIdentityFields(patient, profileRequest?.displayName);
+  const emailAction = profileRequest?.email && enrolmentMailer.enabled
+    ? '<button type="submit" name="action" value="save-issue-and-email">Create patient and email enrolment pack</button>'
+    : '';
   const actions = patient
     ? `<button type="submit" name="action" value="save">Save profile changes</button>
         <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
     : `<button type="submit" name="action" value="save">Create patient without a code</button>
-        <button type="submit" name="action" value="save-and-issue">Create patient and enrolment code</button>`;
+        <button type="submit" name="action" value="save-and-issue">Create patient and enrolment code</button>
+        ${emailAction}`;
   return `<section class="panel"><h2>${patient ? 'Edit existing clinic identity' : 'Create a new patient identity'}</h2>
     <p class="muted">Build 7 compatibility editor: clinic staff control the patient name, disorders, and exactly three symptoms per disorder. Saving retains the nested schema for this patient.</p>
     ${patient ? '<div class="notice"><strong>Edit mode:</strong> changes apply to this existing patient. Use “Cancel editing and create a new patient” for anybody else.</div>' : '<div class="notice"><strong>New-patient mode:</strong> submitting this form creates a distinct PatientId. After a code is issued, the form resets for the next patient.</div>'}
@@ -2413,11 +2425,15 @@ function independentProfileEditor(patient = null, profileRequest = null) {
   const disorderChoices = availableDisorders(selected.disorderIds);
   const symptomChoices = availableSymptoms(selected.symptomIds);
   const identityField = profileIdentityFields(patient, profileRequest?.displayName);
+  const emailAction = profileRequest?.email && enrolmentMailer.enabled
+    ? '<button type="submit" name="action" value="save-issue-and-email">Create patient and email enrolment pack</button>'
+    : '';
   const actions = patient
     ? `<button type="submit" name="action" value="save">Save profile changes</button>
         <a class="button secondary" href="/admin/enrolments">Cancel editing and create a new patient</a>`
     : `<button type="submit" name="action" value="save">Create patient without a code</button>
-        <button type="submit" name="action" value="save-and-issue">Create patient and enrolment code</button>`;
+        <button type="submit" name="action" value="save-and-issue">Create patient and enrolment code</button>
+        ${emailAction}`;
   return `<section class="panel"><h2>${patient ? 'Edit existing clinic identity' : 'Create a new patient identity'}</h2>
     <p class="muted">Clinic staff independently select the patient’s disorders and between 1 and ${maximumIndependentSymptoms} symptoms. A symptom is rated once regardless of how many disorders are selected.</p>
     ${patient ? '<div class="notice"><strong>Edit mode:</strong> changes apply to this existing patient. Use “Cancel editing and create a new patient” for anybody else.</div>' : '<div class="notice"><strong>New-patient mode:</strong> submitting this form creates a distinct PatientId. After a code is issued, the form resets for the next patient.</div>'}
@@ -2547,6 +2563,7 @@ function enrolmentPage({
   const pendingRequests = profileRequestStore.listPending();
   const requestRows = pendingRequests.map(request => `<tr>
     <td>${html(request.displayName)}</td>
+    <td>${html(request.email || '—')}</td>
     <td>${html(new Date(request.requestedAt).toLocaleString('en-AU'))}</td>
     <td><a class="button" style="width:auto;padding:7px 10px" href="/admin/enrolments?profileRequestId=${encodeURIComponent(request.id)}#profileForm">Create profile</a>
       <form class="inline-form" method="post" action="/admin/enrolments/dismiss-request">
@@ -2556,8 +2573,8 @@ function enrolmentPage({
       </form></td>
   </tr>`).join('');
   const requestPanel = `<section class="panel"><h2>Profile requests${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</h2>
-    <p class="muted">Patients submitted these names from the QR-code download page. Verify each person against the clinic record before creating a profile.</p>
-    <div class="table-wrap"><table><thead><tr><th>Name supplied</th><th>Requested</th><th>Actions</th></tr></thead><tbody>${requestRows || '<tr><td colspan="3">No pending profile requests.</td></tr>'}</tbody></table></div>
+    <p class="muted">Patients submitted these names and email addresses from the QR-code download page. Verify each person against the clinic record before creating a profile.</p>
+    <div class="table-wrap"><table><thead><tr><th>Name supplied</th><th>Email supplied</th><th>Requested</th><th>Actions</th></tr></thead><tbody>${requestRows || '<tr><td colspan="4">No pending profile requests.</td></tr>'}</tbody></table></div>
   </section>`;
   const body = `${notice}${errorNotice}${messageNotice}${requestPanel}${profileEditor(editPatient, profileMode, profileRequest)}
   <section class="panel"><h2>Existing clinic identities</h2>
@@ -2962,7 +2979,7 @@ app.post(
   },
 );
 
-app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,(req,res)=>{
+app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('enrolments'),requireAdminCsrf,async (req,res)=>{
   const requestedIndependent =
     String(req.body.profileModel || '') === 'independent-v1' ||
     Number(req.body.schemaVersion) === 3;
@@ -2970,6 +2987,9 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
     const patientId = String(req.body.patientId || '').trim();
     const formMode = String(req.body.formMode || '').trim();
     const profileRequestId = String(req.body.profileRequestId || '').trim();
+    const profileRequest = profileRequestId
+      ? profileRequestStore.getPending(profileRequestId)
+      : null;
     const existingPatient = patientId
       ? identityStore.snapshot().patients[patientId]
       : null;
@@ -2984,7 +3004,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       );
     }
     if (profileRequestId &&
-        (formMode !== 'create' || !profileRequestStore.getPending(profileRequestId))) {
+        (formMode !== 'create' || !profileRequest)) {
       throw new Error(
         'This profile request is no longer pending. Reload the enrolments page.',
       );
@@ -2994,7 +3014,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
         'The clinic identity being edited was not found. Reload the enrolments page.',
       );
     }
-    if (formMode === 'edit' && req.body.action === 'save-and-issue') {
+    if (formMode === 'edit' && ['save-and-issue', 'save-issue-and-email'].includes(req.body.action)) {
       throw new Error(
         'An edit form cannot create a new-patient enrolment. Save the profile, then use New device code for this same patient.',
       );
@@ -3085,20 +3105,47 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
       bpPatientId: req.body.bpPatientId,
       clinicalProfile,
     });
-    if (profileRequestId) {
-      profileRequestStore.complete(profileRequestId, saved.patientId);
-    }
-    if (req.body.action === 'save-and-issue') {
+    if (['save-and-issue', 'save-issue-and-email'].includes(req.body.action)) {
       const issued = identityStore.issueEnrolmentCode({
         patientId: saved.patientId,
         displayName: saved.displayName,
         requireClinicalProfile: true,
       });
+      let emailMessage = '';
+      let emailError = '';
+      if (req.body.action === 'save-issue-and-email') {
+        if (!profileRequest?.email) {
+          emailError = 'The profile request does not contain an email address. The code was created but no email was sent.';
+        } else {
+          try {
+            await enrolmentMailer.sendEnrolmentPack({
+              to: profileRequest.email,
+              displayName: saved.displayName,
+              code: issued.code,
+              enrolmentUrl: `${publicBaseUrl}/enrol#${normaliseCode(issued.code)}`,
+              expiresAt: issued.expiresAt,
+              googlePlayUrl,
+              appStoreUrl,
+            });
+            emailMessage = `Enrolment pack emailed to ${profileRequest.email}.`;
+          } catch (error) {
+            emailError = `The code was created, but the enrolment email could not be sent: ${error.message}`;
+          }
+        }
+      }
+      if (profileRequestId) {
+        profileRequestStore.complete(profileRequestId, saved.patientId);
+      }
       return res.status(201).send(enrolmentPage({
         issued,
+        message: emailMessage,
+        error: emailError,
         editPatientId: '',
         profileMode: '',
       }));
+    }
+    if (profileRequestId) {
+      profileRequestStore.complete(profileRequestId, saved.patientId);
     }
     return res.send(enrolmentPage({
       message: `Patient details saved for ${saved.displayName}. Enrolled phones will receive profile revision ${saved.clinicalProfile.revision}.`,
@@ -3583,6 +3630,7 @@ module.exports = {
   disorderKey,
   diaryEntriesForPatient,
   identityStore,
+  enrolmentMailer,
   profileRequestStore,
   comparePatientDisplayNames,
   portalUserStore,

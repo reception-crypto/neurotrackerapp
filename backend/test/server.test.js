@@ -19,6 +19,9 @@ process.env.ENABLE_INDEPENDENT_PROFILES = 'false';
 // historical Build 6 data. Production startup separately enforces Build 7.
 process.env.MIN_SUPPORTED_MOBILE_BUILD = '6';
 process.env.LATEST_MOBILE_BUILD = '7';
+process.env.ENROLMENT_EMAIL_ENABLED = 'true';
+process.env.SMTP_HOST = 'smtp.test.invalid';
+process.env.SMTP_FROM = 'Pascoe Neurology <reception@pascoeneurology.com>';
 
 const {
   app,
@@ -26,6 +29,7 @@ const {
   csvPath,
   disorderCatalog,
   identityStore,
+  enrolmentMailer,
   profileRequestStore,
   patientDirectory,
   portalUserStore,
@@ -2392,12 +2396,16 @@ test('QR download page creates one pending profile request and pre-fills the cur
   const downloadPage = await download.text();
   assert.match(downloadPage, /Request your profile/);
   assert.match(downloadPage, /action="\/profile-request"/);
+  assert.match(downloadPage, /name="email"/);
   assert.match(downloadPage, /Download for Android/);
 
   const submit = () => fetch(`${baseUrl}/profile-request`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ displayName: '  QR   Test Patient  ' }),
+    body: new URLSearchParams({
+      displayName: '  QR   Test Patient  ',
+      email: ' QR.Patient@Example.com ',
+    }),
   });
   const created = await submit();
   assert.equal(created.status, 201);
@@ -2413,6 +2421,7 @@ test('QR download page creates one pending profile request and pre-fills the cur
   const request = profileRequestStore.listPending()
     .find(item => item.displayName === 'QR Test Patient');
   assert.ok(request);
+  assert.equal(request.email, 'qr.patient@example.com');
 
   const enrolments = await fetch(`${baseUrl}/admin/enrolments`, {
     headers: adminHeaders(),
@@ -2421,6 +2430,7 @@ test('QR download page creates one pending profile request and pre-fills the cur
   const enrolmentsPage = await enrolments.text();
   assert.match(enrolmentsPage, /Enrolments \(1\)/);
   assert.match(enrolmentsPage, /QR Test Patient/);
+  assert.match(enrolmentsPage, /qr\.patient@example\.com/);
   assert.match(enrolmentsPage, new RegExp(`profileRequestId=${request.id}`));
 
   const createPageResponse = await fetch(
@@ -2433,6 +2443,7 @@ test('QR download page creates one pending profile request and pre-fills the cur
   )?.[1];
   assert.ok(csrfToken);
   assert.match(createPage, /name="displayName"[^>]*value="QR Test Patient"/);
+  assert.match(createPage, /Create patient and email enrolment pack/);
   assert.match(createPage, new RegExp(
     `name="profileRequestId" value="${request.id}"`,
   ));
@@ -2446,10 +2457,13 @@ test('QR download page creates one pending profile request and pre-fills the cur
     displayName: 'QR Test Patient',
     primaryDisorderId: 'migraine',
     secondaryDisorderId: '',
-    action: 'save-and-issue',
+    action: 'save-issue-and-email',
   });
   ['headache', 'nausea', 'fatigue'].forEach(symptomId =>
     requestProfileForm.append('primarySymptomIds', symptomId));
+  const sent = [];
+  const originalSend = enrolmentMailer.sendEnrolmentPack;
+  enrolmentMailer.sendEnrolmentPack = async message => sent.push(message);
   const saved = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
     method: 'POST',
     headers: {
@@ -2459,7 +2473,14 @@ test('QR download page creates one pending profile request and pre-fills the cur
     body: requestProfileForm,
   });
   assert.equal(saved.status, 201);
-  assert.match(await saved.text(), /One-time enrolment code for QR Test Patient/);
+  const savedPage = await saved.text();
+  assert.match(savedPage, /One-time enrolment code for QR Test Patient/);
+  assert.match(savedPage, /Enrolment pack emailed to qr\.patient@example\.com/);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'qr.patient@example.com');
+  assert.equal(sent[0].displayName, 'QR Test Patient');
+  assert.match(sent[0].enrolmentUrl, /\/enrol#[A-Z0-9]{12}$/);
+  enrolmentMailer.sendEnrolmentPack = originalSend;
   assert.equal(profileRequestStore.getPending(request.id), null);
 });
 
@@ -2467,7 +2488,10 @@ test('portal staff can dismiss a profile request without creating a patient', as
   const created = await fetch(`${baseUrl}/profile-request`, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ displayName: 'Dismiss This Request' }),
+    body: new URLSearchParams({
+      displayName: 'Dismiss This Request',
+      email: 'dismiss@example.com',
+    }),
   });
   assert.equal(created.status, 201);
   const request = profileRequestStore.listPending()

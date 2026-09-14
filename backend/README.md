@@ -5,6 +5,11 @@ profiles, secure mobile enrolment, symptom submission, CSV storage, clinician
 review, patient search, mobile diary history, guarded backdated check-ins,
 population analytics, deletion safeguards, and PDF reports.
 
+Patients request a profile with their full name and email address. Once staff
+verify the person and choose the clinical profile, the portal can create the
+patient, issue the one-time code, and email the complete enrolment pack in one
+action.
+
 ## Configure and verify
 
 ```cmd
@@ -28,6 +33,22 @@ Production must use:
   active Build 8 profile model remains available;
 - `MAX_BACKDATE_DAYS=7` unless the clinic explicitly approves another value
   between 1 and 30.
+
+### Automatic enrolment email
+
+Set `ENROLMENT_EMAIL_ENABLED=true` and configure the `SMTP_*` values in `.env`.
+For Google Workspace SMTP relay on the clinic server's allowlisted static IP,
+use `smtp-relay.gmail.com` on port `587`, keep `SMTP_SECURE=false`, and leave
+`SMTP_USER` and `SMTP_PASSWORD` blank. Set the relay's permitted sender to the
+address used by `SMTP_FROM`. If the relay requires credentials instead, supply
+both `SMTP_USER` and `SMTP_PASSWORD`; never commit those values.
+
+When email is configured, a profile request shows **Create patient and email
+enrolment pack**. The message includes Android and iPhone download links, the
+private enrolment link, the manual code, expiry, and the emergency disclaimer.
+The plaintext code is sent immediately and is still never persisted. If SMTP
+delivery fails, the portal displays the code and the delivery error so staff
+can recover without issuing a second identity.
 
 Do not replace the existing production `IDENTITY_SECRET`: doing so invalidates
 every device credential and unused enrolment code.
@@ -60,7 +81,7 @@ non-production recovery environment.
 
 1. Give the patient the clinic QR code for
    `https://tracker.melindapascoeneurology.com/download`.
-2. The patient downloads the app and enters their full name. The portal shows
+2. The patient downloads the app and enters their full name and email address. The portal shows
    the request count beside **Enrolments** and lists it under **Profile requests**.
 3. Verify the person against the clinic record, then choose **Create profile**.
    The supplied name is pre-filled but remains editable. A request alone never
@@ -72,9 +93,9 @@ non-production recovery environment.
 6. Select between one and six symptoms independently from the controlled
    symptom list. A symptom is rated once even when several disorders are
    selected.
-7. Choose **Create patient and enrolment code**.
-8. Copy the one-time HTTPS link or code and send it through the clinic’s
-   existing communication system.
+7. Choose **Create patient and email enrolment pack**. The backend issues the
+   one-time code and sends the pack directly. **Create patient and enrolment
+   code** remains available as a manual fallback.
 
 Codes expire after seven days and work once. Only an HMAC digest is stored.
 Opening the HTTPS invitation page does not redeem the code and shows no patient
