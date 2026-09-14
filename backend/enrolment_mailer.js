@@ -50,11 +50,11 @@ function createEnrolmentMailer({
       googlePlayUrl ? `Android: ${googlePlayUrl}` : '',
       appStoreUrl ? `iPhone: ${appStoreUrl}` : '',
     ].filter(Boolean).join('\n');
-    const text = `Hello ${displayName},\n\nYour NeuroSol Symptom Diary profile is ready.\n\n1. Download the app:\n${downloads}\n\n2. Open this private enrolment link:\n${enrolmentUrl}\n\nIf needed, enter this one-time code manually: ${code}\n\nThe code expires ${expiry} and can be used once. Please do not forward it.\n\nThe app is not monitored for emergencies. For urgent medical help, call 000.\n\nPascoe Neurology`;
-    const html = `<p>Hello ${escapeHtml(displayName)},</p><p>Your <strong>NeuroSol Symptom Diary</strong> profile is ready.</p><ol><li>Download the app: ${[
+    const text = `Hello ${displayName},\n\nYour NeuroSol Symptom Diary profile is ready.\n\nDownload the app:\n${downloads}\n\nOpen this private enrolment link:\n${enrolmentUrl}\n\nIf asked, enter this one-time code manually:\n${code}\n\nThe code expires ${expiry} and can be used once. Please do not forward it.\n\nIf your symptoms are allocated incorrectly (e.g. you have been assigned "neck pain" when it should be "dizziness") please let us know and we will update your profile.\n\nThe app is not monitored for emergencies. For urgent medical help, call 000.\n\nNeurology Solutions`;
+    const html = `<p>Hello ${escapeHtml(displayName)},</p><p>Your <strong>NeuroSol Symptom Diary</strong> profile is ready.</p><p><strong>Download the app:</strong><br>${[
       googlePlayUrl ? `<a href="${escapeHtml(googlePlayUrl)}">Android</a>` : '',
       appStoreUrl ? `<a href="${escapeHtml(appStoreUrl)}">iPhone</a>` : '',
-    ].filter(Boolean).join(' · ')}</li><li><a href="${escapeHtml(enrolmentUrl)}"><strong>Open your private enrolment link</strong></a></li></ol><p>If needed, enter this one-time code manually: <strong>${escapeHtml(code)}</strong></p><p>The code expires ${escapeHtml(expiry)} and can be used once. Please do not forward it.</p><p>The app is not monitored for emergencies. For urgent medical help, call 000.</p><p>Pascoe Neurology</p>`;
+    ].filter(Boolean).join('<br>')}</p><p><a href="${escapeHtml(enrolmentUrl)}"><strong>Open this private enrolment link</strong></a></p><p>If asked, enter this one-time code manually:</p><p><strong>${escapeHtml(code)}</strong></p><p>The code expires ${escapeHtml(expiry)} and can be used once. Please do not forward it.</p><p>If your symptoms are allocated incorrectly (e.g. you have been assigned &quot;neck pain&quot; when it should be &quot;dizziness&quot;) please let us know and we will update your profile.</p><p>The app is not monitored for emergencies. For urgent medical help, call 000.</p><p>Neurology Solutions</p>`;
     return smtpTransport.sendMail({
       from,
       replyTo: replyTo || undefined,

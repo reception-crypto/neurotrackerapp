@@ -36,6 +36,12 @@ test('enrolment mail contains the private link, manual code, downloads, and expi
   assert.match(messages[0].text, /https:\/\/play\.example\/app/);
   assert.match(messages[0].text, /https:\/\/apps\.example\/app/);
   assert.match(messages[0].text, /Monday, 21 September 2026 at 10:00 am/);
+  assert.match(messages[0].text, /symptoms are allocated incorrectly/);
+  assert.match(messages[0].text, /"neck pain" when it should be "dizziness"/);
+  assert.match(messages[0].text, /Neurology Solutions$/);
+  assert.doesNotMatch(messages[0].text, /Pascoe Neurology/);
+  assert.match(messages[0].html, /symptoms are allocated incorrectly/);
+  assert.match(messages[0].html, /Neurology Solutions<\/p>$/);
 });
 
 test('enrolment email remains disabled until SMTP is deliberately configured', async () => {
