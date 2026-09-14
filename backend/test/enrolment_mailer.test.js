@@ -9,6 +9,7 @@ test('enrolment mail contains the private link, manual code, downloads, and expi
     env: {
       ENROLMENT_EMAIL_ENABLED: 'true',
       SMTP_HOST: 'smtp.test.invalid',
+      SMTP_NAME: 'tracker.example.com',
       SMTP_PORT: '587',
       SMTP_FROM: 'Pascoe Neurology <reception@pascoeneurology.com>',
       SMTP_REPLY_TO: 'reception@pascoeneurology.com',
@@ -44,4 +45,23 @@ test('enrolment email remains disabled until SMTP is deliberately configured', a
     mailer.sendEnrolmentPack({}),
     /not configured/,
   );
+});
+
+test('SMTP transport announces the configured public hostname', () => {
+  let options;
+  const mailer = createEnrolmentMailer({
+    env: {
+      ENROLMENT_EMAIL_ENABLED: 'true',
+      SMTP_HOST: 'smtp-relay.gmail.com',
+      SMTP_NAME: 'tracker.melindapascoeneurology.com',
+      SMTP_FROM: 'reception@pascoeneurology.com',
+    },
+    transportFactory: value => {
+      options = value;
+      return { sendMail: async () => {} };
+    },
+  });
+
+  assert.equal(mailer.enabled, true);
+  assert.equal(options.name, 'tracker.melindapascoeneurology.com');
 });

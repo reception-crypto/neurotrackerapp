@@ -40,7 +40,8 @@ Set `ENROLMENT_EMAIL_ENABLED=true` and configure the `SMTP_*` values in `.env`.
 For Google Workspace SMTP relay on the clinic server's allowlisted static IP,
 use `smtp-relay.gmail.com` on port `587`, keep `SMTP_SECURE=false`, and leave
 `SMTP_USER` and `SMTP_PASSWORD` blank. Set the relay's permitted sender to the
-address used by `SMTP_FROM`. If the relay requires credentials instead, supply
+address used by `SMTP_FROM`. Set `SMTP_NAME` to the backend's public hostname
+so the relay receives a valid public identity in `EHLO`. If the relay requires credentials instead, supply
 both `SMTP_USER` and `SMTP_PASSWORD`; never commit those values.
 
 When email is configured, a profile request shows **Create patient and email

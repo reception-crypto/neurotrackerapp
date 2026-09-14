@@ -4,9 +4,14 @@ function booleanSetting(value) {
   return /^(1|true|yes)$/i.test(String(value || '').trim());
 }
 
-function createEnrolmentMailer({ env = process.env, transport = null } = {}) {
+function createEnrolmentMailer({
+  env = process.env,
+  transport = null,
+  transportFactory = nodemailer.createTransport,
+} = {}) {
   const enabled = booleanSetting(env.ENROLMENT_EMAIL_ENABLED);
   const host = String(env.SMTP_HOST || '').trim();
+  const name = String(env.SMTP_NAME || '').trim();
   const port = Number(env.SMTP_PORT || 587);
   const from = String(env.SMTP_FROM || '').trim();
   const replyTo = String(env.SMTP_REPLY_TO || from).trim();
@@ -22,8 +27,9 @@ function createEnrolmentMailer({ env = process.env, transport = null } = {}) {
     throw new Error('SMTP_USER and SMTP_PASSWORD must be supplied together.');
   }
 
-  const smtpTransport = transport || (enabled ? nodemailer.createTransport({
+  const smtpTransport = transport || (enabled ? transportFactory({
     host,
+    ...(name ? { name } : {}),
     port,
     secure: booleanSetting(env.SMTP_SECURE),
     requireTLS: !booleanSetting(env.SMTP_SECURE),
