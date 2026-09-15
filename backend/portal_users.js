@@ -175,6 +175,8 @@ function createPortalUserStore({ dataDir }) {
     const cacheKey = authenticationCacheKey(username, password, record);
     const cachedUntil = authenticationCache.get(cacheKey) || 0;
     if (cachedUntil > Date.now()) {
+      authenticationCache.delete(cacheKey);
+      cacheSuccessfulAuthentication(cacheKey);
       return publicUser(record);
     }
     if (cachedUntil) authenticationCache.delete(cacheKey);
