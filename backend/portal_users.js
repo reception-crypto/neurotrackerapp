@@ -19,6 +19,8 @@ const drPascoePermissions = Object.freeze([
   'enrolments',
   'disorders_symptoms',
 ]);
+const authenticationCacheTtlMs = 15 * 60 * 1000;
+const authenticationCacheLimit = 100;
 
 function canonicalUsername(value) {
   return String(value || '').trim().toLocaleLowerCase('en-AU');
@@ -57,6 +59,29 @@ function emptyState() {
 function createPortalUserStore({ dataDir }) {
   if (!dataDir) throw new Error('Portal user storage requires a data directory.');
   const userPath = path.join(dataDir, 'portal_users.json');
+  const authenticationCacheSecret = crypto.randomBytes(32);
+  const authenticationCache = new Map();
+
+  function authenticationCacheKey(username, password, record) {
+    return crypto
+      .createHmac('sha256', authenticationCacheSecret)
+      .update(canonicalUsername(username))
+      .update('\0')
+      .update(String(password || ''))
+      .update('\0')
+      .update(String(record.salt || ''))
+      .update('\0')
+      .update(String(record.passwordHash || ''))
+      .digest('hex');
+  }
+
+  function cacheSuccessfulAuthentication(key) {
+    if (authenticationCache.size >= authenticationCacheLimit) {
+      const oldestKey = authenticationCache.keys().next().value;
+      if (oldestKey) authenticationCache.delete(oldestKey);
+    }
+    authenticationCache.set(key, Date.now() + authenticationCacheTtlMs);
+  }
 
   function read() {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -147,10 +172,16 @@ function createPortalUserStore({ dataDir }) {
     if (!record || record.active === false || !record.salt || !record.passwordHash) {
       return null;
     }
+    const cacheKey = authenticationCacheKey(username, password, record);
+    const cachedUntil = authenticationCache.get(cacheKey) || 0;
+    if (cachedUntil > Date.now()) {
+      return publicUser(record);
+    }
+    if (cachedUntil) authenticationCache.delete(cacheKey);
     const suppliedHash = passwordDigest(String(password || ''), record.salt);
-    return safeEqualText(suppliedHash, record.passwordHash)
-      ? publicUser(record)
-      : null;
+    if (!safeEqualText(suppliedHash, record.passwordHash)) return null;
+    cacheSuccessfulAuthentication(cacheKey);
+    return publicUser(record);
   }
 
   return { authenticate, get, list, remove, save, userPath };
