@@ -512,15 +512,30 @@ function repairCsvIfNeeded() {
   console.log(`NeuroSol CSV normalised: ${rows.length} rows. Backup: ${backupPath}`);
 }
 
+let rowCache = null;
+
 function readRows() {
   ensureCsvFile();
-  const parsed = parseCsv(fs.readFileSync(csvPath, 'utf8'));
+  const before = fs.statSync(csvPath);
+  const signature = `${before.size}:${before.mtimeMs}`;
+  if (rowCache?.signature === signature) return rowCache.rows;
+
+  const source = fs.readFileSync(csvPath, 'utf8');
+  const parsed = parseCsv(source);
   const rows = normaliseCsvRows(parsed);
-  return rows.map(row => ({
+  const preparedRows = rows.map(row => ({
     ...row,
     ScoreNumber: Number(row.Score),
     WellnessNumber: Number(row.WellnessPercent || 0),
   })).filter(row => Number.isFinite(row.ScoreNumber));
+  const after = fs.statSync(csvPath);
+  const finalSignature = `${after.size}:${after.mtimeMs}`;
+  if (finalSignature === signature) {
+    rowCache = { signature, rows: preparedRows };
+  } else {
+    rowCache = null;
+  }
+  return preparedRows;
 }
 
 function disorderKey(row) {
