@@ -2546,10 +2546,19 @@ function enrolmentPage({
   profileMode = '',
   profileRequestId = '',
   query = '',
+  deviceFilter = '',
 } = {}) {
   const allPatients = enrolmentPatients(readRows());
   const q = patientSearchQuery(query);
-  const patients = filterPatientsBySearch(allPatients, q);
+  const enrolmentStatus = ['none', 'enrolled'].includes(String(deviceFilter || '').trim())
+    ? String(deviceFilter).trim()
+    : '';
+  const statusFilteredPatients = enrolmentStatus === 'none'
+    ? allPatients.filter(patient => patient.activeDevices === 0)
+    : enrolmentStatus === 'enrolled'
+    ? allPatients.filter(patient => patient.activeDevices > 0)
+    : allPatients;
+  const patients = filterPatientsBySearch(statusFilteredPatients, q);
   const csrfToken = adminCsrfToken();
   const editPatient = allPatients.find(
     patient => patient.patientId === editPatientId && !patient.quarantinedAt,
@@ -2604,9 +2613,14 @@ function enrolmentPage({
     <td>${actions}</td>
   </tr>`;
   }).join('');
+  const filterLabel = enrolmentStatus === 'none'
+    ? ' without an enrolled device'
+    : enrolmentStatus === 'enrolled'
+    ? ' with an enrolled device'
+    : '';
   const searchSummary = q
-    ? `${patients.length} matching enrolment${patients.length === 1 ? '' : 's'}`
-    : `${patients.length} enrolment${patients.length === 1 ? '' : 's'}`;
+    ? `${patients.length} matching enrolment${patients.length === 1 ? '' : 's'}${filterLabel}`
+    : `${patients.length} enrolment${patients.length === 1 ? '' : 's'}${filterLabel}`;
   const pendingRequests = profileRequestStore.listPending();
   const requestRows = pendingRequests.map(request => `<tr>
     <td>${html(request.displayName)}</td>
@@ -2628,8 +2642,13 @@ function enrolmentPage({
     <p class="muted">Profile changes synchronise to enrolled phones. Use “New device code” after a reinstall or phone change so the PatientId remains stable.</p>
     <form method="get" action="/admin/enrolments" class="toolbar">
       <div class="field"><label>Search enrolments</label><input name="q" maxlength="160" value="${html(q)}" placeholder="Name, BP ID or Support ID"></div>
-      <div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>
-      ${q ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/enrolments">Clear search</a></div>' : ''}
+      <div class="field"><label>Device status</label><select name="deviceStatus">
+        <option value="" ${!enrolmentStatus ? 'selected' : ''}>All profiles</option>
+        <option value="none" ${enrolmentStatus === 'none' ? 'selected' : ''}>No enrolled device</option>
+        <option value="enrolled" ${enrolmentStatus === 'enrolled' ? 'selected' : ''}>Enrolled device</option>
+      </select></div>
+      <div class="field"><label>&nbsp;</label><button type="submit">Apply filters</button></div>
+      ${q || enrolmentStatus ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/enrolments">Clear filters</a></div>' : ''}
     </form>
     <p class="muted">${html(searchSummary)}</p>
     <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Email</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
@@ -2988,6 +3007,7 @@ app.get('/admin/enrolments',requirePortalUser,requirePermission('enrolments'),(r
     profileRequestId: String(req.query.profileRequestId || '').trim(),
     profileMode: String(req.query.profileMode || '').trim(),
     query: req.query.q,
+    deviceFilter: req.query.deviceStatus,
   }));
 });
 
