@@ -805,6 +805,33 @@ test('a recovery code is not consumed for the wrong existing PatientId', async (
   assert.equal((await correct.json()).patientId, issued.patientId);
 });
 
+test('clinic enrolments can filter profiles by active device status', async () => {
+  const pageResponse = await fetch(`${baseUrl}/admin/enrolments`, {
+    headers: adminHeaders(),
+  });
+  assert.equal(pageResponse.status, 200);
+  const page = await pageResponse.text();
+  assert.match(page, /<select name="deviceStatus">/);
+  assert.match(page, />No enrolled device<\/option>/);
+  assert.match(page, />Enrolled device<\/option>/);
+
+  const noDeviceResponse = await fetch(
+    `${baseUrl}/admin/enrolments?deviceStatus=none`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(noDeviceResponse.status, 200);
+  const noDevicePage = await noDeviceResponse.text();
+  assert.match(noDevicePage, /without an enrolled device/);
+
+  const enrolledResponse = await fetch(
+    `${baseUrl}/admin/enrolments?deviceStatus=enrolled`,
+    { headers: adminHeaders() },
+  );
+  assert.equal(enrolledResponse.status, 200);
+  const enrolledPage = await enrolledResponse.text();
+  assert.match(enrolledPage, /with an enrolled device/);
+});
+
 test('admin profile forms require CSRF and never store plaintext codes', async () => {
   const pageResponse = await fetch(`${baseUrl}/admin/enrolments`, {
     headers: adminHeaders(),
@@ -831,12 +858,12 @@ test('admin profile forms require CSRF and never store plaintext codes', async (
     csrfToken,
     formMode: 'create',
     displayName: 'Portal Enrolment Test',
-    primaryDisorder: 'Migraine',
-    secondaryDisorder: '',
+    primaryDisorderId: 'migraine',
+    secondaryDisorderId: '',
     action: 'save-and-issue',
   });
-  for (const symptom of ['Headache', 'Nausea', 'Vomiting']) {
-    form.append('primarySymptoms', symptom);
+  for (const symptomId of ['headache', 'nausea', 'vomiting']) {
+    form.append('primarySymptomIds', symptomId);
   }
   const issued = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
     method: 'POST',
@@ -1837,8 +1864,11 @@ test('portal groups by PatientId and displays only the latest name', async () =>
   const page = await response.text();
   assert.match(page, /Latest Name \(NS-/);
   assert.doesNotMatch(page, />Earlier Name \(NS-/);
+  const patientSelector = page.match(
+    /<select name="patientId">([\s\S]*?)<\/select>/,
+  )?.[1] || '';
   assert.equal(
-    page.split(`<option value="${identity.patientId}"`).length - 1,
+    patientSelector.split(`<option value="${identity.patientId}"`).length - 1,
     1,
   );
 
