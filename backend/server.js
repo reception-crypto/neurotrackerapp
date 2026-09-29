@@ -34,6 +34,7 @@ const {
 } = require('./portal_users');
 const { createProfileRequestStore } = require('./profile_requests');
 const { createEnrolmentMailer } = require('./enrolment_mailer');
+const { createEventsStore } = require('./events_store');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -86,6 +87,7 @@ const identityStore = createIdentityStore({
 });
 const portalUserStore = createPortalUserStore({ dataDir });
 const profileRequestStore = createProfileRequestStore({ dataDir });
+const eventsStore = createEventsStore({ dataDir });
 const enrolmentMailer = createEnrolmentMailer();
 const portalRequestContext = new AsyncLocalStorage();
 
@@ -1435,6 +1437,7 @@ function pageShell(title, body) {
     ['patient_review', '/admin', 'Patient review'],
     ['population_analytics', '/admin/population', 'Population analytics'],
     ['enrolments', '/admin/enrolments', `Enrolments${pendingProfileRequests ? ` (${pendingProfileRequests})` : ''}`],
+    ['enrolments', '/admin/events', 'Events'],
     ['identity_recovery', '/admin/enrolments/recovery', 'Identity recovery'],
     ['disorders_symptoms', '/admin/disorders', 'Disorders'],
     ['disorders_symptoms', '/admin/symptoms', 'Symptoms'],
@@ -1802,6 +1805,23 @@ app.get(
     });
   },
 );
+
+app.get('/api/events', requireIncidentClear, requireDeviceIdentity,
+  requireSupportedMobileBuild, (req, res) => res.json({
+    events: eventsStore.assigned(req.deviceIdentity.patientId),
+    entries: eventsStore.entries(req.deviceIdentity.patientId),
+  }));
+
+app.post('/api/events', requireIncidentClear, requireDeviceIdentity,
+  requireSupportedMobileBuild, (req, res) => {
+    try {
+      const offset = Number(req.get('x-neurosol-utc-offset-minutes') || 0);
+      const entry = eventsStore.record(req.deviceIdentity.patientId, req.body || {}, offset);
+      res.status(201).json({ entry });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
 app.get(
   '/api/diary',
@@ -2560,6 +2580,7 @@ function enrolmentPage({
     : allPatients;
   const patients = filterPatientsBySearch(statusFilteredPatients, q);
   const csrfToken = adminCsrfToken();
+  const availableEvents = eventsStore.definitions().filter(event => event.active);
   const editPatient = allPatients.find(
     patient => patient.patientId === editPatientId && !patient.quarantinedAt,
   ) || null;
@@ -2603,12 +2624,20 @@ function enrolmentPage({
           <input type="hidden" name="patientId" value="${html(patient.patientId)}">
           <button class="danger" type="submit">Revoke devices</button>
         </form>`;
+    const assignedEvents = eventsStore.assigned(patient.patientId);
+    const eventAssignments = patient.quarantinedAt ? '' : `<form method="post" action="/admin/enrolments/events">
+      <input type="hidden" name="csrfToken" value="${csrfToken}">
+      <input type="hidden" name="patientId" value="${html(patient.patientId)}">
+      ${availableEvents.map(event => `<label style="display:block;white-space:nowrap"><input style="width:auto" type="checkbox" name="eventIds" value="${html(event.id)}" ${assignedEvents.some(item => item.id === event.id) ? 'checked' : ''}> ${html(event.label)}</label>`).join('') || '<span class="muted">No active Events</span>'}
+      <button style="width:auto;padding:7px 10px" type="submit">Save Events</button>
+    </form>`;
     return `<tr>
     <td>${html(patient.displayName)}</td>
     <td>${html(patient.email || '—')}</td>
     <td>${html(patient.bpPatientId || '—')}</td>
     <td>${html(patient.supportId)}</td>
     <td>${status}${status ? '<br>' : ''}${html(profileDescription(patient.clinicalProfile))}</td>
+    <td>${eventAssignments}</td>
     <td>${patient.activeDevices}${patient.observedBuilds ? `<br><span class="muted">${html(patient.observedBuilds)}</span>` : ''}</td>
     <td>${actions}</td>
   </tr>`;
@@ -2651,8 +2680,8 @@ function enrolmentPage({
       ${q || enrolmentStatus ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/enrolments">Clear filters</a></div>' : ''}
     </form>
     <p class="muted">${html(searchSummary)}</p>
-    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Email</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
-    <tbody>${patientRows || `<tr><td colspan="7">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Email</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Events</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
+    <tbody>${patientRows || `<tr><td colspan="8">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
@@ -2999,6 +3028,37 @@ app.get('/admin/export.csv',requirePortalUser,requirePermission('csv_export'),(r
 
 app.get('/admin/patient-search',requirePortalUser,requirePermission('patient_review'),(req,res)=>{
   res.send(patientSearchPage(req.query.q));
+});
+
+function eventsPage(message = '') {
+  const definitions = eventsStore.definitions();
+  const edit = definitions.find(item => item.id === message) || null;
+  const rows = definitions.map(event => `<tr><td>${html(event.label)}</td><td>${html(event.question)}</td><td>${event.type === 'daily' ? 'Once per day' : 'Timed, repeatable'}</td><td>${event.active ? 'Active' : 'Archived'}</td><td><a href="/admin/events?edit=${encodeURIComponent(event.id)}">Edit</a> <form class="inline-form" method="post" action="/admin/events/active"><input type="hidden" name="csrfToken" value="${adminCsrfToken()}"><input type="hidden" name="id" value="${html(event.id)}"><input type="hidden" name="active" value="${event.active ? 'false' : 'true'}"><button type="submit">${event.active ? 'Archive' : 'Reactivate'}</button></form></td></tr>`).join('');
+  return pageShell('Events', `<section class="panel"><h2>Events</h2><p class="muted">Patients see only Events assigned to them in Enrolments. Archived Events keep their history.</p>${message && !edit ? `<p>${html(message)}</p>` : ''}<div class="table-wrap"><table><thead><tr><th>Label</th><th>Patient question</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No Events yet.</td></tr>'}</tbody></table></div></section><section class="panel"><h2>${edit ? 'Edit Event' : 'Create Event'}</h2><form method="post" action="/admin/events/save" class="toolbar"><input type="hidden" name="csrfToken" value="${adminCsrfToken()}"><input type="hidden" name="id" value="${html(edit?.id || '')}"><div class="field"><label>Label</label><input name="label" maxlength="80" required value="${html(edit?.label || '')}"></div><div class="field"><label>Patient question</label><input name="question" maxlength="160" required value="${html(edit?.question || '')}"></div><div class="field"><label>Type</label><select name="type"><option value="daily" ${edit?.type === 'daily' ? 'selected' : ''}>Once per day</option><option value="timed" ${edit?.type === 'timed' ? 'selected' : ''}>Timed, repeatable</option></select></div><button type="submit">Save Event</button></form></section>`);
+}
+
+app.get('/admin/events', requirePortalUser, requirePermission('enrolments'), (req, res) =>
+  res.send(eventsPage(String(req.query.edit || req.query.message || ''))));
+app.post('/admin/events/save', requirePortalUser, requirePermission('enrolments'), requireAdminCsrf, (req, res) => {
+  try {
+    eventsStore.saveDefinition(req.body);
+    res.redirect('/admin/events');
+  } catch (error) { res.status(400).send(eventsPage(error.message)); }
+});
+app.post('/admin/events/active', requirePortalUser, requirePermission('enrolments'), requireAdminCsrf, (req, res) => {
+  try {
+    eventsStore.setActive(req.body.id, req.body.active === 'true');
+    res.redirect('/admin/events');
+  } catch (error) { res.status(400).send(eventsPage(error.message)); }
+});
+app.post('/admin/enrolments/events', requirePortalUser, requirePermission('enrolments'), requireAdminCsrf, (req, res) => {
+  try {
+    const patientId = String(req.body.patientId || '');
+    const patient = identityStore.snapshot().patients[patientId];
+    if (!patient || patient.quarantinedAt || patient.reviewIdentity) throw new Error('Patient unavailable.');
+    eventsStore.assign(patientId, values(req.body.eventIds));
+    res.redirect(`/admin/enrolments?editPatientId=${encodeURIComponent(patientId)}`);
+  } catch (error) { res.status(400).send(enrolmentPage({ error: error.message })); }
 });
 
 app.get('/admin/enrolments',requirePortalUser,requirePermission('enrolments'),(req,res)=>{
@@ -3403,11 +3463,14 @@ app.post('/admin/patients/delete',requirePortalUser,requirePermission('manage_pa
     backupDirectory,
     `before-delete-${stamp}-identity_store.json`,
   );
+  const eventsBackup = path.join(backupDirectory, `before-delete-${stamp}-events.json`);
+  const hadEventsFile = fs.existsSync(eventsStore.file);
   fs.mkdirSync(backupDirectory, { recursive: true });
   ensureCsvFile();
   identityStore.snapshot();
   fs.copyFileSync(csvPath, csvBackup);
   fs.copyFileSync(identityStore.identityPath, identityBackup);
+  if (hadEventsFile) fs.copyFileSync(eventsStore.file, eventsBackup);
 
   try {
     const retainedRows = rows.filter(row => patientKey(row) !== patientId);
@@ -3419,12 +3482,15 @@ app.post('/admin/patients/delete',requirePortalUser,requirePermission('manage_pa
       throw new Error('Patient identity deletion failed.');
     }
     writeCsvAtomically(retainedRows);
+    eventsStore.removePatient(patientId);
     return res.send(patientManagementPage({
       message: `${patient.displayName} was deleted. ${removedRows} submitted row(s), ${deleted.devices} device credential(s), and ${deleted.codes} enrolment code(s) were removed. Backup: ${path.basename(csvBackup)}.`,
     }));
   } catch (error) {
     fs.copyFileSync(csvBackup, csvPath);
     fs.copyFileSync(identityBackup, identityStore.identityPath);
+    if (hadEventsFile) fs.copyFileSync(eventsBackup, eventsStore.file);
+    else if (fs.existsSync(eventsStore.file)) fs.unlinkSync(eventsStore.file);
     return res.status(500).send(patientManagementPage({
       error: `Deletion failed and the server backup was restored: ${error.message}`,
     }));
@@ -3679,11 +3745,18 @@ app.get('/admin',requirePortalUser,requirePermission('patient_review'),(req,res)
   const additionalTrendOptions=[...allowedMetrics].filter(candidate=>candidate!==metric).map(candidate=>`<label class="trend-option"><input type="checkbox" name="layer" value="${html(candidate)}" ${trendMetrics.includes(candidate)?'checked':''}><span>${html(metricLabel(candidate))}</span></label>`).join('');
   const mixedTrendAxes=trendMetrics.includes('wellness')&&trendMetrics.some(candidate=>candidate!=='wellness');
   const trendLegend=trendLayers.map(layer=>`<span><i class="swatch" style="background:${layer.colour}"></i>${html(layer.label)} (${layer.metric==='wellness'?'%, left axis':`/10, ${mixedTrendAxes?'right':'left'} axis`})${layer.series.length?'':' — no data in period'}</span>`).join('');
+  const eventEntries = patientId ? eventsStore.entries(patientId) : [];
+  const showEventTimes = String(req.query.showEventTimes || '') === '1';
+  const eventRows = eventEntries.map(entry => `<tr><td>${html(entry.localDate)}</td><td>${html(entry.label)}</td>${showEventTimes ? `<td>${html(new Date(entry.occurredAt).toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' }))}</td><td>${html(new Date(entry.submittedAt).toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' }))}</td>` : ''}</tr>`).join('');
+  const timesUrl = new URLSearchParams(req.query);
+  if (showEventTimes) timesUrl.delete('showEventTimes');
+  else timesUrl.set('showEventTimes', '1');
   const body=`${diaryStatusNotice}<div class="cards"><div class="stat"><div class="label">Patient</div><div class="value" style="font-size:19px">${html(selectedPatient?.displayName||'-')}</div></div><div class="stat"><div class="label">BP Patient ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.bpPatientId||'-')}</div></div><div class="stat"><div class="label">Support ID</div><div class="value" style="font-size:19px">${html(selectedPatient?.supportId||'-')}</div></div><div class="stat"><div class="label">Reporting days</div><div class="value">${dates.length}</div></div><div class="stat"><div class="label">Average wellness</div><div class="value">${wellness.length?`${round1(mean(wellness))}%`:'-'}</div></div><div class="stat"><div class="label">Average symptom</div><div class="value">${filtered.length?`${avgSym}/10`:'-'}</div></div></div>
   <section class="panel"><h2>Search Patient Review</h2><form method="get" action="/admin" class="toolbar"><div class="field"><label>Search patients</label><input name="q" maxlength="160" value="${html(q)}" placeholder="Name, BP ID or Support ID"></div><div class="field"><label>&nbsp;</label><button type="submit">Search</button></div>${q?'<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin">Clear search</a></div>':''}</form><p class="muted">${q?`${patients.length} matching patient${patients.length===1?'':'s'}`:'Search narrows the Patient Review selector only.'}</p></section>
   <form class="panel toolbar"><input type="hidden" name="q" value="${html(q)}"><div class="field"><label>Patient</label><select name="patientId">${patientOptions}</select></div><div class="field"><label>Disorder</label><select name="disorderId">${disorderOptionsHtml}</select></div><div class="field"><label>Primary metric</label><select name="metric"><option value="wellness" ${metric==='wellness'?'selected':''}>Wellness</option><option value="symptom" ${metric==='symptom'?'selected':''}>Average symptom score</option>${symptoms.map(sym=>`<option value="symptom:${html(sym)}" ${metric===`symptom:${sym}`?'selected':''}>${html(sym)}</option>`).join('')}</select></div><div class="field"><label>Aggregation</label><select name="aggregation">${['daily','weekly','fortnightly','monthly'].map(x=>`<option value="${x}" ${x===aggregation?'selected':''}>${x[0].toUpperCase()+x.slice(1)}</option>`).join('')}</select></div><div class="field"><label>Review period</label><select name="reviewDays">${[30,60,90].map(days=>`<option value="${days}" ${days===reviewDays?'selected':''}>Last ${days} days</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button>Update view</button></div><fieldset class="trend-picker"><legend>Additional trend lines</legend><div class="trend-options">${additionalTrendOptions}</div><p class="muted">The primary metric also controls the daily calendar below. Select any additional metrics to layer on the same chart.</p></fieldset></form>
   <section class="panel"><h2>${trendMetrics.length>1?'Layered patient trends':`${html(metricLabel(metric))} trend`}</h2><p class="muted">Daily aggregation and the last 30 days are the defaults. Wellness is fixed at 0–100%; symptom scores are fixed at 0–10.</p>${layeredPatientChart(trendLayers,aggregation)}<div class="legend">${trendLegend}</div></section>
   <section class="panel"><h2>${html(metricLabel(metric))} daily calendar</h2><p class="muted">Each box is one day. Marker size reflects the recorded value; hover over a day for the exact score.</p>${renderMetricCalendar(filtered,metric,reviewDays)}</section>
+  <section class="panel"><h2>Events</h2><p><a href="/admin?${html(timesUrl.toString())}">${showEventTimes ? 'Hide event times' : 'Show event times'}</a></p><div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th>${showEventTimes ? '<th>Reported occurrence</th><th>Submitted</th>' : ''}</tr></thead><tbody>${eventRows || `<tr><td colspan="${showEventTimes ? 4 : 2}">No Events recorded.</td></tr>`}</tbody></table></div></section>
   <section class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h2>Clinical record</h2><p class="muted">${html(symptoms.join(', '))}</p></div>${noDiaryEntries?'':`<a class="button" style="width:auto" target="_blank" href="/admin/report.pdf?patientId=${encodeURIComponent(patientId)}&disorderId=${encodeURIComponent(disorderId)}">Generate PDF</a>`}</div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Track</th><th>Disorder</th><th>Symptom</th><th>Score</th><th>Wellness</th></tr></thead><tbody>${latest.length?latest.map(r=>`<tr><td>${html(r.Date)}</td><td>${html(r.Time)}</td><td>${html(r.Track)}</td><td>${html(rowDisorderLabel(r))}</td><td>${html(r.Symptom)}</td><td>${r.ScoreNumber}</td><td>${r.WellnessNumber}%</td></tr>`).join(''):'<tr><td colspan="7">No diary entries have been received for this patient.</td></tr>'}</tbody></table></div></section>`;
   res.send(pageShell('Patient review',body));
 });

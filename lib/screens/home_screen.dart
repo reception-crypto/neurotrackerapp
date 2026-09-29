@@ -4,6 +4,7 @@ import '../app_identity.dart';
 import '../models/patient_profile.dart';
 import '../services/clinic_profile_service.dart';
 import '../services/diary_service.dart';
+import '../services/events_service.dart';
 import '../services/identity_service.dart';
 import '../services/storage_service.dart';
 import '../services/upload_service.dart';
@@ -11,6 +12,7 @@ import '../theme/app_theme.dart';
 import '../widgets/brand_identity.dart';
 import 'daily_symptom_screen.dart';
 import 'enrolment_screen.dart';
+import 'events_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
 import 'startup_blocked_screen.dart';
@@ -34,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Set<String> _submittedDates = <String>{};
   int _pendingUploads = 0;
   DateTime? _lastSync;
+  List<ClinicEvent> _assignedEvents = const [];
 
   @override
   void initState() {
@@ -153,6 +156,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final submittedDates = await StorageService.submittedDates();
     final pendingUploads = await StorageService.pendingCount();
     final lastSync = await StorageService.lastSuccessfulSync();
+    var assignedEvents = _assignedEvents;
+    if (await IdentityService.hasAccessToken()) {
+      try {
+        assignedEvents = await EventsService.assigned();
+      } catch (_) {
+        // Retain the last verified assignment while temporarily offline.
+      }
+    }
 
     if (!mounted) return;
     setState(() {
@@ -162,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _submittedDates = submittedDates;
       _pendingUploads = pendingUploads;
       _lastSync = lastSync;
+      _assignedEvents = assignedEvents;
       _loading = false;
     });
   }
@@ -411,6 +423,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
+            if (_assignedEvents.isNotEmpty)
+              Card(
+                child: ListTile(
+                  key: const Key('assigned-events'),
+                  leading: const Icon(Icons.event_note),
+                  title: const Text('Events'),
+                  subtitle: const Text('Record a clinic-assigned event'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const EventsScreen()),
+                  ),
+                ),
+              ),
             Card(
               child: ListTile(
                 leading: Icon(

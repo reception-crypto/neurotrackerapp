@@ -54,6 +54,49 @@ test.after(async () => {
   fs.rmSync(testDataDir, { recursive: true, force: true });
 });
 
+test('clinic Events are assigned per patient and event times are optional in review', async () => {
+  const identity = await enrolClinicManaged({ patientId: 'pt-events-synthetic', displayName: 'Events Synthetic' });
+  const token = identity.accessToken;
+  const eventsPage = await fetch(`${baseUrl}/admin/events`, { headers: adminHeaders() });
+  const csrfToken = (await eventsPage.text()).match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  assert.ok(csrfToken);
+  const save = await fetch(`${baseUrl}/admin/events/save`, {
+    method: 'POST', headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrfToken, label: 'Infusion', question: 'Infusion today?', type: 'daily' }),
+    redirect: 'manual',
+  });
+  assert.equal(save.status, 302);
+  const empty = await fetch(`${baseUrl}/api/events`, { headers: build7Headers(token) });
+  assert.deepEqual((await empty.json()).events, []);
+  const page = await fetch(`${baseUrl}/admin/enrolments`, { headers: adminHeaders() });
+  const match = (await page.text()).match(/name="eventIds" value="([a-f0-9-]+)"/);
+  assert.ok(match);
+  const eventId = match[1];
+  const payload = { eventId, occurredAt: new Date().toISOString(), localDate: todayIso() };
+  const unassigned = await fetch(`${baseUrl}/api/events`, {
+    method: 'POST', headers: build7Headers(token), body: JSON.stringify(payload),
+  });
+  assert.equal(unassigned.status, 400);
+  const assignment = await fetch(`${baseUrl}/admin/enrolments/events`, {
+    method: 'POST', headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrfToken, patientId: identity.saved.patientId, eventIds: eventId }),
+    redirect: 'manual',
+  });
+  assert.equal(assignment.status, 302);
+  const allowed = await fetch(`${baseUrl}/api/events`, { headers: build7Headers(token) });
+  assert.equal((await allowed.json()).events.length, 1);
+  const recorded = await fetch(`${baseUrl}/api/events`, {
+    method: 'POST', headers: build7Headers(token), body: JSON.stringify(payload),
+  });
+  assert.equal(recorded.status, 201);
+  const review = await fetch(`${baseUrl}/admin?patientId=${identity.saved.patientId}`, { headers: adminHeaders() });
+  const html = await review.text();
+  assert.match(html, /Show event times/);
+  assert.doesNotMatch(html, /Reported occurrence/);
+  const timed = await fetch(`${baseUrl}/admin?patientId=${identity.saved.patientId}&showEventTimes=1`, { headers: adminHeaders() });
+  assert.match(await timed.text(), /Reported occurrence/);
+});
+
 function validSubmission({
   submissionId = 'NS-test-001',
   patientId = 'pt-test-001',
