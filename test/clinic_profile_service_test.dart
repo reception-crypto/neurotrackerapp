@@ -3,10 +3,10 @@ import 'package:neurotrackerapp/services/clinic_profile_service.dart';
 import 'package:neurotrackerapp/services/identity_service.dart';
 
 void main() {
-  test('newer builds are advisory while Build 9 remains supported', () {
+  test('newer builds are advisory while Build 10 remains supported', () {
     const supported = MobileConfiguration(
       minimumBuild: 7,
-      latestBuild: 10,
+      latestBuild: 11,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
@@ -17,8 +17,8 @@ void main() {
 
   test('minimum build is the hard compatibility gate', () {
     const unsupported = MobileConfiguration(
-      minimumBuild: 10,
-      latestBuild: 10,
+      minimumBuild: 11,
+      latestBuild: 11,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
@@ -30,7 +30,7 @@ void main() {
   test('current build reports no update available', () {
     const current = MobileConfiguration(
       minimumBuild: 7,
-      latestBuild: 9,
+      latestBuild: 10,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
@@ -39,22 +39,25 @@ void main() {
     expect(current.updateAvailable, isFalse);
   });
 
-  test('mobile requests advertise every Build 9 capability', () {
-    final headers = IdentityService.mobileHeaders(
-      json: true,
-      accessToken: 'synthetic-token',
-    );
+  test(
+    'mobile requests advertise the Build 10 version and existing capabilities',
+    () {
+      final headers = IdentityService.mobileHeaders(
+        json: true,
+        accessToken: 'synthetic-token',
+      );
 
-    expect(headers['X-NeuroSol-Build'], '9');
-    expect(headers['X-NeuroSol-Profile'], 'clinic-managed-v1');
-    expect(headers['X-NeuroSol-Disorders'], 'canonical-v1');
-    expect(headers['X-NeuroSol-Profile-Model'], 'independent-v1');
-    expect(headers['X-NeuroSol-Diary'], 'patient-diary-v1');
-    expect(
-      int.tryParse(headers['X-NeuroSol-UTC-Offset-Minutes'] ?? ''),
-      inInclusiveRange(-840, 840),
-    );
-    expect(headers['Authorization'], 'Bearer synthetic-token');
-    expect(headers['Content-Type'], 'application/json');
-  });
+      expect(headers['X-NeuroSol-Build'], '10');
+      expect(headers['X-NeuroSol-Profile'], 'clinic-managed-v1');
+      expect(headers['X-NeuroSol-Disorders'], 'canonical-v1');
+      expect(headers['X-NeuroSol-Profile-Model'], 'independent-v1');
+      expect(headers['X-NeuroSol-Diary'], 'patient-diary-v1');
+      expect(
+        int.tryParse(headers['X-NeuroSol-UTC-Offset-Minutes'] ?? ''),
+        inInclusiveRange(-840, 840),
+      );
+      expect(headers['Authorization'], 'Bearer synthetic-token');
+      expect(headers['Content-Type'], 'application/json');
+    },
+  );
 }
