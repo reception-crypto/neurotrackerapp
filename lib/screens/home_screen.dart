@@ -483,16 +483,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   padding: const EdgeInsets.all(16),
                   child: FilledButton.icon(
                     key: Key('event-${event.id}'),
-                    onPressed: _loading || _savingEvent ||
+                    onPressed:
+                        _loading ||
+                            _savingEvent ||
                             (event.type == 'daily' && event.recordedToday)
                         ? null
                         : () => _recordEvent(event),
-                    icon: Icon(event.type == 'daily' && event.recordedToday
-                        ? Icons.check_circle
-                        : Icons.event_note),
-                    label: Text(event.type == 'daily' && event.recordedToday
-                        ? '${event.label} · Recorded today'
-                        : event.label),
+                    icon: Icon(
+                      event.type == 'daily' && event.recordedToday
+                          ? Icons.check_circle
+                          : Icons.event_note,
+                    ),
+                    label: Text(
+                      event.type == 'daily' && event.recordedToday
+                          ? '${event.label} · Recorded today'
+                          : event.label,
+                    ),
                   ),
                 ),
               ),

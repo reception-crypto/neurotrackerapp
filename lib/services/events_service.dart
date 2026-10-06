@@ -11,8 +11,17 @@ class ClinicEvent {
   final String question;
   final String type;
   final bool recordedToday;
-  const ClinicEvent(this.id, this.label, this.question, this.type, {this.recordedToday = false});
-  factory ClinicEvent.fromJson(Map<String, dynamic> value, {bool recordedToday = false}) => ClinicEvent(
+  const ClinicEvent(
+    this.id,
+    this.label,
+    this.question,
+    this.type, {
+    this.recordedToday = false,
+  });
+  factory ClinicEvent.fromJson(
+    Map<String, dynamic> value, {
+    bool recordedToday = false,
+  }) => ClinicEvent(
     value['id'] as String,
     value['label'] as String,
     value['question'] as String,
@@ -40,14 +49,21 @@ class EventsService {
     }
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     final now = DateTime.now();
-    final today = '${now.year.toString().padLeft(4, '0')}-'
+    final today =
+        '${now.year.toString().padLeft(4, '0')}-'
         '${now.month.toString().padLeft(2, '0')}-'
         '${now.day.toString().padLeft(2, '0')}';
     final recordedIds = (body['entries'] as List<dynamic>)
         .where((entry) => entry['localDate'] == today)
-        .map((entry) => entry['eventId']).toSet();
+        .map((entry) => entry['eventId'])
+        .toSet();
     return (body['events'] as List<dynamic>)
-        .map((item) => ClinicEvent.fromJson(item as Map<String, dynamic>, recordedToday: recordedIds.contains(item['id'])))
+        .map(
+          (item) => ClinicEvent.fromJson(
+            item as Map<String, dynamic>,
+            recordedToday: recordedIds.contains(item['id']),
+          ),
+        )
         .toList();
   }
 
