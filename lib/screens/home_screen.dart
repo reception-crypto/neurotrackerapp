@@ -12,7 +12,6 @@ import '../theme/app_theme.dart';
 import '../widgets/brand_identity.dart';
 import 'daily_symptom_screen.dart';
 import 'enrolment_screen.dart';
-import 'events_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
 import 'startup_blocked_screen.dart';
@@ -36,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Set<String> _submittedDates = <String>{};
   int _pendingUploads = 0;
   DateTime? _lastSync;
+  bool _savingEvent = false;
   List<ClinicEvent> _assignedEvents = const [];
 
   @override
@@ -264,6 +264,60 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) await _loadStatus();
   }
 
+  Future<void> _recordEvent(ClinicEvent event) async {
+    var occurrence = DateTime.now();
+    if (event.type == 'timed') {
+      final date = await showDatePicker(
+        context: context,
+        initialDate: occurrence,
+        firstDate: occurrence.subtract(const Duration(days: 7)),
+        lastDate: occurrence,
+      );
+      if (date == null || !mounted) {
+        return;
+      }
+      final time = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(occurrence),
+        helpText: 'When did the event begin?',
+      );
+      if (time == null || !mounted) {
+        return;
+      }
+      occurrence = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      );
+    }
+    setState(() => _savingEvent = true);
+    try {
+      await EventsService.record(event, occurrence);
+      await _loadStatus(syncClinicProfile: false);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('${event.label} recorded.')));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _savingEvent = false);
+      }
+    }
+  }
+
   Future<void> _openSettings() async {
     await Navigator.push(
       context,
@@ -423,17 +477,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ),
-            if (_assignedEvents.isNotEmpty)
+            for (final event in _assignedEvents)
               Card(
-                child: ListTile(
-                  key: const Key('assigned-events'),
-                  leading: const Icon(Icons.event_note),
-                  title: const Text('Events'),
-                  subtitle: const Text('Record a clinic-assigned event'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const EventsScreen()),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: FilledButton.icon(
+                    key: Key('event-${event.id}'),
+                    onPressed: _loading || _savingEvent ||
+                            (event.type == 'daily' && event.recordedToday)
+                        ? null
+                        : () => _recordEvent(event),
+                    icon: Icon(event.type == 'daily' && event.recordedToday
+                        ? Icons.check_circle
+                        : Icons.event_note),
+                    label: Text(event.type == 'daily' && event.recordedToday
+                        ? '${event.label} · Recorded today'
+                        : event.label),
                   ),
                 ),
               ),

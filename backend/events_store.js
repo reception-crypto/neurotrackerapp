@@ -24,10 +24,10 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
   }
   function saveDefinition({ id, label, question, type }) {
     label = String(label || '').trim();
-    question = String(question || '').trim();
+    question = String(question || label).trim();
     if (!label || label.length > 80 || !question || question.length > 160 ||
         !['daily', 'timed'].includes(type)) {
-      throw new Error('Provide a label, question, and valid Event type.');
+      throw new Error('Provide a label and valid Event type.');
     }
     const data = read();
     if (id && !data.definitions[id]) throw new Error('Event not found.');

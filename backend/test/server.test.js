@@ -62,14 +62,16 @@ test('clinic Events are assigned per patient and event times are optional in rev
   assert.ok(csrfToken);
   const save = await fetch(`${baseUrl}/admin/events/save`, {
     method: 'POST', headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ csrfToken, label: 'Infusion', question: 'Infusion today?', type: 'daily' }),
+    body: new URLSearchParams({ csrfToken, label: 'Infusion', type: 'daily' }),
     redirect: 'manual',
   });
   assert.equal(save.status, 302);
   const empty = await fetch(`${baseUrl}/api/events`, { headers: build7Headers(token) });
   assert.deepEqual((await empty.json()).events, []);
   const page = await fetch(`${baseUrl}/admin/enrolments`, { headers: adminHeaders() });
-  const match = (await page.text()).match(/name="eventIds" value="([a-f0-9-]+)"/);
+  assert.doesNotMatch(await page.text(), /name="eventIds"/);
+  const editPage = await fetch(`${baseUrl}/admin/enrolments?editPatientId=${identity.saved.patientId}`, { headers: adminHeaders() });
+  const match = (await editPage.text()).match(/name="eventIds" value="([a-f0-9-]+)"/);
   assert.ok(match);
   const eventId = match[1];
   const payload = { eventId, occurredAt: new Date().toISOString(), localDate: todayIso() };
@@ -77,12 +79,16 @@ test('clinic Events are assigned per patient and event times are optional in rev
     method: 'POST', headers: build7Headers(token), body: JSON.stringify(payload),
   });
   assert.equal(unassigned.status, 400);
-  const assignment = await fetch(`${baseUrl}/admin/enrolments/events`, {
+  const form = new URLSearchParams({ csrfToken, patientId: identity.saved.patientId,
+    formMode: 'edit', profileModel: 'legacy-v1', displayName: 'Events Synthetic',
+    primaryDisorderId: 'migraine', action: 'save', updateEvents: 'true', eventIds: eventId });
+  for (const id of ['headache', 'nausea', 'vomiting']) form.append('primarySymptomIds', id);
+  const assignment = await fetch(`${baseUrl}/admin/enrolments/save-profile`, {
     method: 'POST', headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ csrfToken, patientId: identity.saved.patientId, eventIds: eventId }),
+    body: form,
     redirect: 'manual',
   });
-  assert.equal(assignment.status, 302);
+  assert.equal(assignment.status, 200);
   const allowed = await fetch(`${baseUrl}/api/events`, { headers: build7Headers(token) });
   assert.equal((await allowed.json()).events.length, 1);
   const recorded = await fetch(`${baseUrl}/api/events`, {

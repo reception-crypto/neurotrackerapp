@@ -2358,6 +2358,15 @@ function profileIdentityFields(patient = null, profileRequest = null) {
   return `<div class="field"><label>Patient display name</label><input name="displayName" required maxlength="160" value="${html(patient.displayName)}"><span class="muted">${html(patient.supportId)} · Correcting the name keeps this PatientId, diary history, devices, and clinical profile.</span></div>${bpField}${emailField}`;
 }
 
+function eventAssignmentFields(patient) {
+  if (!patient || patient.reviewIdentity || patient.quarantinedAt) return '';
+  const assigned = eventsStore.assigned(patient.patientId);
+  const available = eventsStore.definitions().filter(event => event.active);
+  return `<h3>Events</h3><input type="hidden" name="updateEvents" value="true">
+    <p class="muted">Assigned Events appear as buttons on this patient’s app homepage.</p>
+    <div class="patient-list">${available.map(event => `<label><input type="checkbox" name="eventIds" value="${html(event.id)}" ${assigned.some(item => item.id === event.id) ? 'checked' : ''}>${html(event.label)} · ${event.type === 'daily' ? 'Once per day' : 'Timed, repeatable'}</label>`).join('') || '<span class="muted">No active Events. Create them in Events.</span>'}</div>`;
+}
+
 function legacyProfileEditor(patient = null, profileRequest = null) {
   const profile = patient?.clinicalProfile ||
     patient?.suggestedProfile || {
@@ -2400,6 +2409,7 @@ function legacyProfileEditor(patient = null, profileRequest = null) {
       <div class="field"><label>Disorder</label><select name="secondaryDisorderId" id="secondaryDisorder">${disorderOptions(profile.secondaryDisorderId || '', true)}</select></div>
       <p class="muted"><span id="secondaryCount">0</span>/3 symptoms selected</p>
       ${symptomSelectors('secondary', [profile.secondaryDisorderId], profile.secondarySymptomIds || [])}
+      ${eventAssignmentFields(patient)}
       <div class="toolbar" style="margin-top:18px">
         ${actions}
       </div>
@@ -2518,6 +2528,7 @@ function independentProfileEditor(patient = null, profileRequest = null) {
       <div class="patient-list" id="symptomChoices">
         ${symptomChoices.map(symptom => `<label><input type="checkbox" name="symptomIds" value="${html(symptom.id)}" ${selected.symptomIds.includes(symptom.id) ? 'checked' : ''}>${html(symptom.displayName)}${symptom.active ? '' : ' (archived)'}</label>`).join('')}
       </div>
+      ${eventAssignmentFields(patient)}
       <div class="toolbar" style="margin-top:18px">
         ${actions}
       </div>
@@ -2580,7 +2591,6 @@ function enrolmentPage({
     : allPatients;
   const patients = filterPatientsBySearch(statusFilteredPatients, q);
   const csrfToken = adminCsrfToken();
-  const availableEvents = eventsStore.definitions().filter(event => event.active);
   const editPatient = allPatients.find(
     patient => patient.patientId === editPatientId && !patient.quarantinedAt,
   ) || null;
@@ -2624,20 +2634,12 @@ function enrolmentPage({
           <input type="hidden" name="patientId" value="${html(patient.patientId)}">
           <button class="danger" type="submit">Revoke devices</button>
         </form>`;
-    const assignedEvents = eventsStore.assigned(patient.patientId);
-    const eventAssignments = patient.quarantinedAt ? '' : `<form method="post" action="/admin/enrolments/events">
-      <input type="hidden" name="csrfToken" value="${csrfToken}">
-      <input type="hidden" name="patientId" value="${html(patient.patientId)}">
-      ${availableEvents.map(event => `<label style="display:block;white-space:nowrap"><input style="width:auto" type="checkbox" name="eventIds" value="${html(event.id)}" ${assignedEvents.some(item => item.id === event.id) ? 'checked' : ''}> ${html(event.label)}</label>`).join('') || '<span class="muted">No active Events</span>'}
-      <button style="width:auto;padding:7px 10px" type="submit">Save Events</button>
-    </form>`;
     return `<tr>
     <td>${html(patient.displayName)}</td>
     <td>${html(patient.email || '—')}</td>
     <td>${html(patient.bpPatientId || '—')}</td>
     <td>${html(patient.supportId)}</td>
     <td>${status}${status ? '<br>' : ''}${html(profileDescription(patient.clinicalProfile))}</td>
-    <td>${eventAssignments}</td>
     <td>${patient.activeDevices}${patient.observedBuilds ? `<br><span class="muted">${html(patient.observedBuilds)}</span>` : ''}</td>
     <td>${actions}</td>
   </tr>`;
@@ -2680,8 +2682,8 @@ function enrolmentPage({
       ${q || enrolmentStatus ? '<div class="field"><label>&nbsp;</label><a class="button secondary" href="/admin/enrolments">Clear filters</a></div>' : ''}
     </form>
     <p class="muted">${html(searchSummary)}</p>
-    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Email</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Events</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
-    <tbody>${patientRows || `<tr><td colspan="8">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Clinic name</th><th>Email</th><th>BP Patient ID</th><th>Support ID</th><th>Assigned profile</th><th>Active devices / observed builds</th><th>Actions</th></tr></thead>
+    <tbody>${patientRows || `<tr><td colspan="7">${q ? 'No matching enrolments were found.' : 'No patient identities yet.'}</td></tr>`}</tbody></table></div>
   </section>`;
   return pageShell('Clinic enrolments', body);
 }
@@ -3033,8 +3035,8 @@ app.get('/admin/patient-search',requirePortalUser,requirePermission('patient_rev
 function eventsPage(message = '') {
   const definitions = eventsStore.definitions();
   const edit = definitions.find(item => item.id === message) || null;
-  const rows = definitions.map(event => `<tr><td>${html(event.label)}</td><td>${html(event.question)}</td><td>${event.type === 'daily' ? 'Once per day' : 'Timed, repeatable'}</td><td>${event.active ? 'Active' : 'Archived'}</td><td><a href="/admin/events?edit=${encodeURIComponent(event.id)}">Edit</a> <form class="inline-form" method="post" action="/admin/events/active"><input type="hidden" name="csrfToken" value="${adminCsrfToken()}"><input type="hidden" name="id" value="${html(event.id)}"><input type="hidden" name="active" value="${event.active ? 'false' : 'true'}"><button type="submit">${event.active ? 'Archive' : 'Reactivate'}</button></form></td></tr>`).join('');
-  return pageShell('Events', `<section class="panel"><h2>Events</h2><p class="muted">Patients see only Events assigned to them in Enrolments. Archived Events keep their history.</p>${message && !edit ? `<p>${html(message)}</p>` : ''}<div class="table-wrap"><table><thead><tr><th>Label</th><th>Patient question</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No Events yet.</td></tr>'}</tbody></table></div></section><section class="panel"><h2>${edit ? 'Edit Event' : 'Create Event'}</h2><form method="post" action="/admin/events/save" class="toolbar"><input type="hidden" name="csrfToken" value="${adminCsrfToken()}"><input type="hidden" name="id" value="${html(edit?.id || '')}"><div class="field"><label>Label</label><input name="label" maxlength="80" required value="${html(edit?.label || '')}"></div><div class="field"><label>Patient question</label><input name="question" maxlength="160" required value="${html(edit?.question || '')}"></div><div class="field"><label>Type</label><select name="type"><option value="daily" ${edit?.type === 'daily' ? 'selected' : ''}>Once per day</option><option value="timed" ${edit?.type === 'timed' ? 'selected' : ''}>Timed, repeatable</option></select></div><button type="submit">Save Event</button></form></section>`);
+  const rows = definitions.map(event => `<tr><td>${html(event.label)}</td><td>${event.type === 'daily' ? 'Once per day' : 'Timed, repeatable'}</td><td>${event.active ? 'Active' : 'Archived'}</td><td><a href="/admin/events?edit=${encodeURIComponent(event.id)}">Edit</a> <form class="inline-form" method="post" action="/admin/events/active"><input type="hidden" name="csrfToken" value="${adminCsrfToken()}"><input type="hidden" name="id" value="${html(event.id)}"><input type="hidden" name="active" value="${event.active ? 'false' : 'true'}"><button type="submit">${event.active ? 'Archive' : 'Reactivate'}</button></form></td></tr>`).join('');
+  return pageShell('Events', `<section class="panel"><h2>Events</h2><p class="muted">Assign Events in Enrolments → Edit profile. Patients see a homepage button for each assigned Event. Archived Events keep their history.</p>${message && !edit ? `<p>${html(message)}</p>` : ''}<div class="table-wrap"><table><thead><tr><th>Label</th><th>Type</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No Events yet.</td></tr>'}</tbody></table></div></section><section class="panel"><h2>${edit ? 'Edit Event' : 'Create Event'}</h2><form method="post" action="/admin/events/save" class="toolbar"><input type="hidden" name="csrfToken" value="${adminCsrfToken()}"><input type="hidden" name="id" value="${html(edit?.id || '')}"><div class="field"><label>Label</label><input name="label" maxlength="80" required value="${html(edit?.label || '')}"></div><div class="field"><label>Type</label><select name="type"><option value="daily" ${edit?.type === 'daily' ? 'selected' : ''}>Once per day</option><option value="timed" ${edit?.type === 'timed' ? 'selected' : ''}>Timed, repeatable</option></select></div><button type="submit">Save Event</button></form></section>`);
 }
 
 app.get('/admin/events', requirePortalUser, requirePermission('enrolments'), (req, res) =>
@@ -3226,6 +3228,11 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
         );
       }
     }
+    const updateEvents = formMode === 'edit' && req.body.updateEvents === 'true';
+    const eventIds = values(req.body.eventIds);
+    if (updateEvents && eventIds.some(id => !eventsStore.definitions().some(event => event.id === id && event.active))) {
+      throw new Error('Unknown or archived Event. Reload Edit Profile before saving.');
+    }
     const saved = identityStore.saveClinicalProfile({
       patientId,
       displayName: String(req.body.displayName || '').trim(),
@@ -3235,6 +3242,7 @@ app.post('/admin/enrolments/save-profile',requirePortalUser,requirePermission('e
         : req.body.email,
       clinicalProfile,
     });
+    if (updateEvents) eventsStore.assign(saved.patientId, eventIds);
     if (['save-and-issue', 'save-issue-and-email'].includes(req.body.action)) {
       const issued = identityStore.issueEnrolmentCode({
         patientId: saved.patientId,
