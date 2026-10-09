@@ -427,7 +427,10 @@ function createDisorderCatalogStore({
 
   function symptomLookupFor(store) {
     const lookup = new Map([
-      ...staticSymptomDefinitions.map(item => [item.id, publicSymptom(item)]),
+      ...staticSymptomDefinitions.map(item => [item.id, publicSymptom({
+        ...item,
+        active: store.builtInSymptomActiveOverrides?.[item.id] ?? item.active,
+      })]),
       ...Object.values(store.customSymptoms || {}).map(
         item => [item.id, publicSymptom(item)],
       ),
@@ -546,6 +549,15 @@ function createDisorderCatalogStore({
       !Array.isArray(store.auditLog)
     ) {
       throw new Error('The disorder catalogue schema is invalid.');
+    }
+
+    if (store.builtInSymptomActiveOverrides !== undefined) {
+      const overrides = store.builtInSymptomActiveOverrides;
+      if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides) ||
+          Object.entries(overrides).some(([id, active]) =>
+            staticSymptomsById.get(id)?.kind !== 'built-in' || typeof active !== 'boolean')) {
+        throw new Error('The built-in symptom activity overrides are invalid.');
+      }
     }
 
     const symptomKeys = new Set(
@@ -1018,6 +1030,36 @@ function createDisorderCatalogStore({
     return publicSymptom(record);
   }
 
+  function updateSymptom(input = {}) {
+    const id = String(input.id || '').trim();
+    const definition = staticSymptomsById.get(id);
+    if (!definition || definition.kind !== 'built-in') {
+      return updateCustomSymptom(input);
+    }
+    if (input.displayName != null || input.confirmation != null ||
+        typeof input.active !== 'boolean') {
+      throw new Error('Built-in symptoms can only be deleted or restored.');
+    }
+    const store = readStore();
+    const before = symptomLookupFor(store).get(id);
+    if (before.active === input.active) return before;
+    store.builtInSymptomActiveOverrides = {
+      ...store.builtInSymptomActiveOverrides,
+      [id]: input.active,
+    };
+    const after = symptomLookupFor(store).get(id);
+    audit(store, {
+      actor: input.actor || 'clinic-admin',
+      action: input.active ? 'built_in_symptom_restored' : 'built_in_symptom_deleted',
+      symptomId: id,
+      before: symptomAuditSnapshot(before),
+      after: symptomAuditSnapshot(after),
+    });
+    validateCurrentStore(store);
+    writeStore(store);
+    return after;
+  }
+
   function setDisorderSymptoms({
     disorderId,
     symptomIds = [],
@@ -1121,6 +1163,7 @@ function createDisorderCatalogStore({
     updateCustomDisorder,
     createCustomSymptom,
     updateCustomSymptom,
+    updateSymptom,
     setDisorderSymptoms,
     definitions,
     findDisorder: resolveDisorder,

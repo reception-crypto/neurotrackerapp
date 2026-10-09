@@ -536,3 +536,34 @@ test('stored custom definitions cannot introduce retired symptoms', () => {
     assert.match(fs.readFileSync(catalogPath, 'utf8'), /sweating-changes/);
   });
 });
+
+
+test('built-in deletion persists, removes assignment choices, retains identity, and restores', () => {
+  withCatalog(({ catalog, dataDir }) => {
+    const deleted = catalog.updateSymptom({ id: 'headache', active: false, actor: 'test-admin' });
+    assert.equal(deleted.active, false);
+    assert.equal(deleted.kind, 'built-in');
+    assert.equal(catalog.symptomDefinitions().some(item => item.id === 'headache'), false);
+    assert.equal(catalog.findGlobalSymptom({ id: 'headache' }).displayName, 'Headache');
+    assert.equal(catalog.findDisorder({ id: 'migraine' }).allowedSymptomIds.includes('headache'), false);
+    const reopened = createDisorderCatalogStore({ dataDir });
+    assert.equal(reopened.findGlobalSymptom({ id: 'headache' }).active, false);
+    assert.equal(reopened.symptomDefinitions({ includeInactive: true }).some(item => item.id === 'headache'), true);
+    assert.equal(reopened.updateSymptom({ id: 'headache', active: true }).active, true);
+    assert.equal(reopened.findDisorder({ id: 'migraine' }).allowedSymptomIds.includes('headache'), true);
+    assert.deepEqual(reopened.snapshot().auditLog.map(event => event.action), [
+      'built_in_symptom_deleted', 'built_in_symptom_restored',
+    ]);
+  });
+});
+
+test('built-in deletion cannot leave a disorder below three choices and failed writes are atomic', () => {
+  withCatalog(({ catalog }) => {
+    const ids = catalog.findDisorder({ id: 'migraine' }).allowedSymptomIds;
+    catalog.setDisorderSymptoms({ disorderId: 'migraine', symptomIds: ids.slice(0, 3) });
+    const before = catalog.snapshot();
+    assert.throws(() => catalog.updateSymptom({ id: ids[0], active: false }), /fewer than three active/);
+    assert.deepEqual(catalog.snapshot(), before);
+    assert.throws(() => catalog.updateSymptom({ id: ids[0], displayName: 'Changed', confirmation: 'Changed' }), /only be deleted or restored/);
+  });
+});

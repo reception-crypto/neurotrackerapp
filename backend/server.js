@@ -2854,7 +2854,7 @@ function symptomManagementPage({ error = '', message = '' } = {}) {
     : '';
   const rows = symptoms.map(symptom => {
     const status = symptom.kind === 'built-in'
-      ? 'Built in'
+      ? (symptom.active ? 'Built in' : 'Deleted built in')
       : symptom.active
       ? 'Active custom'
       : 'Archived custom';
@@ -2873,7 +2873,11 @@ function symptomManagementPage({ error = '', message = '' } = {}) {
             <button class="${symptom.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${symptom.active ? 'archive' : 'reactivate'}">${symptom.active ? 'Archive' : 'Reactivate'}</button>
           </form>
         </details>`
-      : '<span class="muted">Stable built-in definition</span>';
+      : `<form class="inline-form" method="post" action="/admin/disorders/update-symptom" onsubmit="return confirm('${symptom.active ? 'Delete this symptom from future assignments? Existing patient records will be preserved.' : 'Restore this symptom for future assignments?'}')">
+          <input type="hidden" name="csrfToken" value="${csrfToken}">
+          <input type="hidden" name="symptomId" value="${html(symptom.id)}">
+          <button class="${symptom.active ? 'danger' : 'secondary'}" type="submit" name="action" value="${symptom.active ? 'delete' : 'reactivate'}">${symptom.active ? 'Delete' : 'Restore'}</button>
+        </form>`;
     return `<tr>
       <td>${html(symptom.displayName)}</td>
       <td><code>${html(symptom.id)}</code></td>
@@ -2888,7 +2892,7 @@ function symptomManagementPage({ error = '', message = '' } = {}) {
   const body = `${errorNotice}${messageNotice}
     <section class="panel"><h2>Symptom catalogue</h2>
       <p>${activation}</p>
-      <p class="muted">Symptoms are independent clinical definitions and are not nested beneath disorders. A readable canonical ID is created from the original approved name and remains fixed after later display-name corrections. Archiving prevents future assignment without deleting historical references.</p>
+      <p class="muted">Symptoms are independent clinical definitions and are not nested beneath disorders. A readable canonical ID is created from the original approved name and remains fixed after later display-name corrections. Archiving or deleting prevents future assignment without deleting historical references. Built-in symptoms can be restored. Each disorder must retain at least three active symptoms.</p>
       <div class="table-wrap"><table><thead><tr><th>Display name</th><th>Canonical ID (fixed)</th><th>Status</th><th>Mobile support</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section>
     <section class="panel"><h2>Create a custom symptom</h2>
@@ -2988,14 +2992,14 @@ app.post('/admin/disorders/update-symptom',requirePortalUser,requirePermission('
     if (action === 'rename') {
       input.displayName = req.body.displayName;
       input.confirmation = req.body.confirmation;
-    } else if (action === 'archive') {
+    } else if (action === 'archive' || action === 'delete') {
       input.active = false;
     } else if (action === 'reactivate') {
       input.active = true;
     } else {
       throw new Error('The requested symptom action is invalid.');
     }
-    const updated = disorderCatalog.updateCustomSymptom(input);
+    const updated = disorderCatalog.updateSymptom(input);
     const refreshedProfiles = action === 'rename'
       ? identityStore.refreshProfilesForSymptom(updated.id)
       : 0;

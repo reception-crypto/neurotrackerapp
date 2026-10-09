@@ -500,3 +500,23 @@ test('Build 7 nested profiles remain usable while independent mode is enabled', 
     3,
   );
 });
+
+
+test('portal deletes and restores built-in symptoms with CSRF protection', async () => {
+  const token = await csrfToken();
+  const submit = body => fetch(`${baseUrl}/admin/disorders/update-symptom`, {
+    method: 'POST',
+    headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(body),
+  });
+  const denied = await submit({ symptomId: 'headache', action: 'delete' });
+  assert.equal(denied.status, 403);
+  const deleted = await submit({ csrfToken: token, symptomId: 'headache', action: 'delete' });
+  assert.equal(deleted.status, 200);
+  const page = await deleted.text();
+  assert.match(page, /Deleted built in/);
+  assert.match(page, /value="reactivate">Restore/);
+  const restored = await submit({ csrfToken: token, symptomId: 'headache', action: 'reactivate' });
+  assert.equal(restored.status, 200);
+  assert.doesNotMatch(await restored.text(), /Deleted built in/);
+});
