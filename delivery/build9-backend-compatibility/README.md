@@ -127,3 +127,22 @@ exact backup path printed by the deployment command:
 Rollback moves newer data into a timestamped retained directory before
 restoring the snapshot. It does not silently delete post-deployment clinical
 data.
+
+
+## Events availability update on an existing release
+
+For an already deployed Events backend, use the guarded deployment with
+`-PreserveEnvironment`. This updates source files, including `events_store.js`,
+while preserving the production `.env` exactly and verifying that Build 7–10
+mobile configurations remain identical locally and publicly. Existing data is
+backed up before replacement and restored if verification fails.
+
+```powershell
+.\Deploy-Build9CompatibleBackend.ps1 `
+  -BackendPath 'C:\Projects\neurotrackerapp\backend' `
+  -PreserveEnvironment
+```
+
+Configure Event intervals in the portal after deployment: Self-Injectable can
+use 1 calendar month and Botox 84 days. Patient button availability display also
+requires the updated mobile app; the backend enforces intervals for older apps.

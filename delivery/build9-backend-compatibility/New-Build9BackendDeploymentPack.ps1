@@ -166,6 +166,7 @@ $backendFiles = @(
     'clinical_profiles.js',
     'disorder_catalog.js',
     'enrolment_mailer.js',
+    'events_store.js',
     'identity_store.js',
     'package-lock.json',
     'package.json',

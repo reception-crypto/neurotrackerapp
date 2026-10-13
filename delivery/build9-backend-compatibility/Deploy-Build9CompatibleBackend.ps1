@@ -5,7 +5,8 @@ param(
     [string]$BackupRoot = 'C:\NeuroSolDeployment\Backups',
     [string]$PublicBaseUrl = '',
     [int]$StartupTimeoutSeconds = 90,
-    [switch]$SkipPublicVerification
+    [switch]$SkipPublicVerification,
+    [switch]$PreserveEnvironment
 )
 
 Set-StrictMode -Version Latest
@@ -194,6 +195,20 @@ $service = Get-Service -Name $ServiceName -ErrorAction Stop
 if ($service.Status -ne 'Running') {
     throw "Service '$ServiceName' must be running before deployment preflight."
 }
+function Get-CurrentReleaseConfiguration {
+    param([string]$BaseUri)
+    $configs = @(
+        Get-NeuroSolMobileConfig -BaseUri $BaseUri -Build 7
+        Get-NeuroSolMobileConfig -BaseUri $BaseUri -Build 8 -Independent
+        Get-NeuroSolMobileConfig -BaseUri $BaseUri -Build 9 -Independent -Diary
+        Get-NeuroSolMobileConfig -BaseUri $BaseUri -Build 10 -Independent -Diary
+    )
+    return ConvertTo-Json -InputObject $configs -Depth 20 -Compress
+}
+if ($PreserveEnvironment) {
+    $environmentHashBefore = (Get-FileHash -LiteralPath $environmentPath -Algorithm SHA256).Hash
+    $configurationBefore = Get-CurrentReleaseConfiguration -BaseUri $localBaseUri
+}
 Write-Host "Preflight: current backend at $resolvedBackendPath"
 Wait-NeuroSolHealth -BaseUri $localBaseUri -TimeoutSeconds 30 | Out-Null
 
@@ -214,6 +229,7 @@ foreach ($sourceFile in @(
     'clinical_profiles.js',
     'disorder_catalog.js',
     'enrolment_mailer.js',
+    'events_store.js',
     'portal_users.js',
     'profile_requests.js'
 )) {
@@ -239,6 +255,7 @@ $managedFiles = @(
     'clinical_profiles.js',
     'disorder_catalog.js',
     'enrolment_mailer.js',
+    'events_store.js',
     'package.json',
     'package-lock.json',
     'portal_users.js',
@@ -334,16 +351,21 @@ try {
 
     $identitySecretBefore = [string]($settings['IDENTITY_SECRET'])
     $adminPasswordBefore = [string]($settings['ADMIN_PASSWORD'])
-    Set-NeuroSolDotEnvValues -Path $environmentPath -Updates @{
-        NODE_ENV = 'production'
-        HOST = '127.0.0.1'
-        MIN_SUPPORTED_MOBILE_BUILD = '7'
-        LATEST_MOBILE_BUILD = '8'
-        ENABLE_CUSTOM_DISORDERS = 'true'
-        ENABLE_INDEPENDENT_PROFILES = 'true'
-        MAX_BACKDATE_DAYS = '7'
-        GOOGLE_PLAY_URL = [string]$release.googlePlayUrl
-        APP_STORE_URL = [string]$release.appStoreUrl
+    if (-not $PreserveEnvironment) {
+        Set-NeuroSolDotEnvValues -Path $environmentPath -Updates @{
+            NODE_ENV = 'production'
+            HOST = '127.0.0.1'
+            MIN_SUPPORTED_MOBILE_BUILD = '7'
+            LATEST_MOBILE_BUILD = '8'
+            ENABLE_CUSTOM_DISORDERS = 'true'
+            ENABLE_INDEPENDENT_PROFILES = 'true'
+            MAX_BACKDATE_DAYS = '7'
+            GOOGLE_PLAY_URL = [string]$release.googlePlayUrl
+            APP_STORE_URL = [string]$release.appStoreUrl
+        }
+    }
+    if ($PreserveEnvironment -and (Get-FileHash -LiteralPath $environmentPath -Algorithm SHA256).Hash -ne $environmentHashBefore) {
+        throw 'The production environment file changed during the source-only deployment.'
     }
     $updatedSettings = Read-NeuroSolDotEnv -Path $environmentPath
     if (
@@ -372,7 +394,13 @@ try {
         -Description 'Post-migration clinical-data verification'
 
     Write-Host 'Verifying local Build 7, Build 8 and gated Build 9 responses...'
-    Assert-NeuroSolCompatibilityResponses -BaseUri $localBaseUri
+    if ($PreserveEnvironment) {
+        if ((Get-CurrentReleaseConfiguration -BaseUri $localBaseUri) -ne $configurationBefore) {
+            throw 'Mobile release configuration changed during the source-only deployment.'
+        }
+    } else {
+        Assert-NeuroSolCompatibilityResponses -BaseUri $localBaseUri
+    }
 
     if (-not $PublicBaseUrl) {
         if ($updatedSettings.ContainsKey('PUBLIC_BASE_URL')) {
@@ -384,7 +412,14 @@ try {
     }
     if (-not $SkipPublicVerification) {
         Write-Host 'Verifying the public HTTPS Build 7/8/9 path...'
-        Assert-NeuroSolCompatibilityResponses -BaseUri $PublicBaseUrl
+        if ($PreserveEnvironment) {
+            Wait-NeuroSolHealth -BaseUri $PublicBaseUrl -TimeoutSeconds $StartupTimeoutSeconds | Out-Null
+            if ((Get-CurrentReleaseConfiguration -BaseUri $PublicBaseUrl) -ne $configurationBefore) {
+                throw 'Public mobile release configuration does not match the preserved configuration.'
+            }
+        } else {
+            Assert-NeuroSolCompatibilityResponses -BaseUri $PublicBaseUrl
+        }
     }
 
     $result = [ordered]@{
@@ -395,8 +430,9 @@ try {
         backendPath = $resolvedBackendPath
         dataDirectory = $dataDirectory
         backupPath = $backupPath
-        minimumMobileBuild = 7
-        latestMobileBuild = 8
+        minimumMobileBuild = [int]$updatedSettings['MIN_SUPPORTED_MOBILE_BUILD']
+        latestMobileBuild = [int]$updatedSettings['LATEST_MOBILE_BUILD']
+        environmentPreserved = [bool]$PreserveEnvironment
         customDisordersEnabled = $true
         independentProfilesEnabled = $true
         maximumBackdateDays = 7
@@ -415,7 +451,7 @@ try {
     Write-Host "Source commit: $($release.sourceCommit)"
     Write-Host 'Build 7 support: ACTIVE'
     Write-Host 'Build 8 support: ACTIVE'
-    Write-Host 'Build 9 diary/backdating backend: READY but not advertised'
+    Write-Host "Environment preserved: $PreserveEnvironment"
     Write-Host "Recovery backup: $backupPath"
 } catch {
     $deploymentError = $_

@@ -62,7 +62,7 @@ test('clinic Events are assigned per patient and event times are optional in rev
   assert.ok(csrfToken);
   const save = await fetch(`${baseUrl}/admin/events/save`, {
     method: 'POST', headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ csrfToken, label: 'Infusion', type: 'daily' }),
+    body: new URLSearchParams({ csrfToken, label: 'Infusion', type: 'daily', availabilityUnit: 'days', availabilityInterval: '84' }),
     redirect: 'manual',
   });
   assert.equal(save.status, 302);
@@ -95,6 +95,15 @@ test('clinic Events are assigned per patient and event times are optional in rev
     method: 'POST', headers: build7Headers(token), body: JSON.stringify(payload),
   });
   assert.equal(recorded.status, 201);
+  const availability = await fetch(`${baseUrl}/api/events`, { headers: build7Headers(token) });
+  const assignedEvent = (await availability.json()).events[0];
+  assert.equal(assignedEvent.availabilityInterval, 84);
+  assert.equal(assignedEvent.available, false);
+  assert.ok(assignedEvent.nextAvailableAt);
+  const duplicate = await fetch(`${baseUrl}/api/events`, {
+    method: 'POST', headers: build7Headers(token), body: JSON.stringify(payload),
+  });
+  assert.equal(duplicate.status, 400);
   const review = await fetch(`${baseUrl}/admin?patientId=${identity.saved.patientId}`, { headers: adminHeaders() });
   const html = await review.text();
   assert.match(html, /Show event times/);

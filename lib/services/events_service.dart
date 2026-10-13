@@ -11,12 +11,16 @@ class ClinicEvent {
   final String question;
   final String type;
   final bool recordedToday;
+  final bool available;
+  final DateTime? nextAvailableAt;
   const ClinicEvent(
     this.id,
     this.label,
     this.question,
     this.type, {
     this.recordedToday = false,
+    this.available = true,
+    this.nextAvailableAt,
   });
   factory ClinicEvent.fromJson(
     Map<String, dynamic> value, {
@@ -27,6 +31,10 @@ class ClinicEvent {
     value['question'] as String,
     value['type'] as String,
     recordedToday: recordedToday,
+    available: value['available'] != false,
+    nextAvailableAt: DateTime.tryParse(
+      value['nextAvailableAt'] as String? ?? '',
+    )?.toLocal(),
   );
 }
 

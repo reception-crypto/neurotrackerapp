@@ -17,12 +17,28 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
     fs.renameSync(temp, file);
   }
   function definitions() { return Object.values(read().definitions); }
+  function nextDate(event, occurrence) {
+    const date = new Date(occurrence);
+    if (event.availabilityUnit === 'months') {
+      const day = date.getUTCDate();
+      date.setUTCDate(1);
+      date.setUTCMonth(date.getUTCMonth() + event.availabilityInterval);
+      const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+      date.setUTCDate(Math.min(day, lastDay));
+    } else date.setUTCDate(date.getUTCDate() + event.availabilityInterval);
+    return date;
+  }
   function assigned(patientId) {
     const data = read();
     return (data.assignments[patientId] || [])
-      .map(id => data.definitions[id]).filter(item => item?.active);
+      .map(id => data.definitions[id]).filter(item => item?.active).map(event => {
+        const latest = data.entries.filter(entry => entry.patientId === patientId && entry.eventId === event.id)
+          .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0];
+        const next = event.availabilityInterval && latest ? nextDate(event, latest.occurredAt) : null;
+        return { ...event, available: !next || now() >= next, nextAvailableAt: next?.toISOString() || null };
+      });
   }
-  function saveDefinition({ id, label, question, type }) {
+  function saveDefinition({ id, label, question, type, availabilityUnit, availabilityInterval }) {
     label = String(label || '').trim();
     question = String(question || label).trim();
     if (!label || label.length > 80 || !question || question.length > 160 ||
@@ -33,10 +49,16 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
     if (id && !data.definitions[id]) throw new Error('Event not found.');
     const eventId = id || crypto.randomUUID();
     const previous = data.definitions[eventId];
+    availabilityUnit = availabilityUnit ?? previous?.availabilityUnit ?? 'none';
+    availabilityInterval = availabilityUnit === 'none' ? 0 : Number(availabilityInterval ?? previous?.availabilityInterval);
+    if (!['none', 'days', 'months'].includes(availabilityUnit) ||
+        (availabilityUnit !== 'none' && (!Number.isInteger(availabilityInterval) || availabilityInterval < 1 || availabilityInterval > 3650))) {
+      throw new Error('Choose an availability unit and a whole interval from 1 to 3650.');
+    }
     if (previous && previous.type !== type && data.entries.some(entry => entry.eventId === eventId)) {
       throw new Error('The type of an Event with recorded entries cannot change.');
     }
-    data.definitions[eventId] = { id: eventId, label, question, type, active: previous?.active ?? true };
+    data.definitions[eventId] = { id: eventId, label, question, type, availabilityUnit, availabilityInterval, active: previous?.active ?? true };
     write(data);
     return data.definitions[eventId];
   }
@@ -79,6 +101,17 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
     if (event.type === 'daily' && data.entries.some(entry =>
       entry.patientId === patientId && entry.eventId === event.id && entry.localDate === localDate)) {
       throw new Error('This Event has already been recorded for that day.');
+    }
+    if (event.availabilityInterval) {
+      const history = data.entries.filter(entry => entry.patientId === patientId && entry.eventId === event.id);
+      const latest = history.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0];
+      if (latest && instant < nextDate(event, latest.occurredAt)) {
+        throw new Error(`This Event is available again on ${nextDate(event, latest.occurredAt).toISOString()}.`);
+      }
+      if (history.some(entry => {
+        const existing = new Date(entry.occurredAt);
+        return date >= existing ? date < nextDate(event, existing) : existing < nextDate(event, date);
+      })) throw new Error('The Event time is too close to another recorded occurrence.');
     }
     const entry = {
       id: crypto.randomUUID(), patientId, eventId: event.id,
