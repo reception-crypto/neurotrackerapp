@@ -32,10 +32,10 @@ jobs:
             echo "Legacy shared mobile credential reference found."
             exit 1
           fi
-      - name: Verify additive Build 9 identity
+      - name: Verify additive Build 10 identity
         run: |
-          grep -n -E '^version: 1\.2\.0\+9$' pubspec.yaml
-          grep -n -E 'appBuildNumber = 9' lib/app_identity.dart
+          grep -n -E '^version: 1\.2\.1\+10$' pubspec.yaml
+          grep -n -E 'appBuildNumber = 10' lib/app_identity.dart
           grep -n -E 'clinic-managed-v1' lib/app_identity.dart
           grep -n -E 'canonical-v1' lib/app_identity.dart
           grep -n -E 'independent-v1' lib/app_identity.dart
@@ -70,6 +70,7 @@ jobs:
       - run: node --check clinical_profiles.js
       - run: node --check disorder_catalog.js
       - run: node --check portal_users.js
+      - run: node --check events_store.js
       - name: Verify reconciled backend identity
         run: |
           grep -n -E '"version": "0\.11\.0"' package.json
