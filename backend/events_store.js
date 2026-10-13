@@ -8,6 +8,12 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
   function read() {
     if (!fs.existsSync(file)) return blank();
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const event of Object.values(data.definitions || {})) {
+      // Preserve a conservative minimum for legacy calendar-month settings.
+      if (event.availabilityUnit === 'months') event.availabilityInterval *= 31;
+      event.availabilityInterval = event.availabilityInterval || 0;
+      event.availabilityUnit = 'days';
+    }
     return { ...blank(), ...data };
   }
   function write(data) {
@@ -19,13 +25,7 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
   function definitions() { return Object.values(read().definitions); }
   function nextDate(event, occurrence) {
     const date = new Date(occurrence);
-    if (event.availabilityUnit === 'months') {
-      const day = date.getUTCDate();
-      date.setUTCDate(1);
-      date.setUTCMonth(date.getUTCMonth() + event.availabilityInterval);
-      const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
-      date.setUTCDate(Math.min(day, lastDay));
-    } else date.setUTCDate(date.getUTCDate() + event.availabilityInterval);
+    date.setUTCDate(date.getUTCDate() + event.availabilityInterval);
     return date;
   }
   function assigned(patientId) {
@@ -49,12 +49,16 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
     if (id && !data.definitions[id]) throw new Error('Event not found.');
     const eventId = id || crypto.randomUUID();
     const previous = data.definitions[eventId];
-    availabilityUnit = availabilityUnit ?? previous?.availabilityUnit ?? 'none';
-    availabilityInterval = availabilityUnit === 'none' ? 0 : Number(availabilityInterval ?? previous?.availabilityInterval);
-    if (!['none', 'days', 'months'].includes(availabilityUnit) ||
-        (availabilityUnit !== 'none' && (!Number.isInteger(availabilityInterval) || availabilityInterval < 1 || availabilityInterval > 3650))) {
-      throw new Error('Choose an availability unit and a whole interval from 1 to 3650.');
+    if (availabilityUnit != null && !['none', 'days'].includes(availabilityUnit)) {
+      throw new Error('Event intervals must be specified in days.');
     }
+    const intervalInput = availabilityInterval ?? previous?.availabilityInterval ?? 0;
+    availabilityInterval = Number(intervalInput);
+    if (!['number', 'string'].includes(typeof intervalInput) ||
+        !Number.isInteger(availabilityInterval) || availabilityInterval < 0 || availabilityInterval > 3650) {
+      throw new Error('Provide a whole number of days from 0 to 3650.');
+    }
+    availabilityUnit = 'days';
     if (previous && previous.type !== type && data.entries.some(entry => entry.eventId === eventId)) {
       throw new Error('The type of an Event with recorded entries cannot change.');
     }
