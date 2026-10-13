@@ -28,13 +28,13 @@ test('only clinic-assigned Events can be recorded; removal keeps history', () =>
 });
 
 
-test('custom intervals enforce exact boundaries, month ends, and backdating', () => {
+test('custom intervals enforce exact day boundaries and backdating', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-events-'));
   try {
     let instant = new Date('2026-01-31T01:00:00Z');
     const store = createEventsStore({ dataDir: dir, now: () => instant });
-    const monthly = store.saveDefinition({ label: 'Self-Injectable', type: 'timed', availabilityUnit: 'months', availabilityInterval: 1 });
-    const botox = store.saveDefinition({ label: 'Botox', type: 'timed', availabilityUnit: 'days', availabilityInterval: 84 });
+    const monthly = store.saveDefinition({ label: 'Self-Injectable', type: 'timed', availabilityInterval: 28 });
+    const botox = store.saveDefinition({ label: 'Botox', type: 'timed', availabilityInterval: 84 });
     store.assign('p', [monthly.id, botox.id]);
     const record = (event, date = instant) => store.record('p', { eventId: event.id, occurredAt: date.toISOString(), localDate: date.toISOString().slice(0, 10) });
     record(monthly); record(botox);
@@ -55,8 +55,33 @@ test('custom intervals enforce exact boundaries, month ends, and backdating', ()
     assert.equal(store.assigned('p')[0].available, false);
     store.assign('other', [botox.id]);
     assert.equal(store.assigned('other')[0].available, true);
-    assert.throws(() => store.saveDefinition({ label: 'Invalid', type: 'timed', availabilityUnit: 'days', availabilityInterval: 1.5 }), /whole interval/);
+    assert.throws(() => store.saveDefinition({ label: 'Invalid', type: 'timed', availabilityInterval: 1.5 }), /whole number of days/);
     const updated = store.saveDefinition({ id: botox.id, label: 'Botox updated', type: 'timed' });
     assert.equal(updated.availabilityInterval, 84);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('legacy month settings migrate conservatively to editable days', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-events-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({
+      definitions: { injection: { id: 'injection', label: 'Injection', type: 'timed', active: true, availabilityUnit: 'months', availabilityInterval: 1 } },
+      assignments: { p: ['injection'] },
+      entries: [{ patientId: 'p', eventId: 'injection', occurredAt: '2026-01-31T01:00:00.000Z' }],
+    }));
+    const store = createEventsStore({ dataDir: dir, now: () => new Date('2026-02-28T01:00:00Z') });
+    assert.equal(store.definitions()[0].availabilityInterval, 31);
+    assert.equal(store.assigned('p')[0].nextAvailableAt, '2026-03-03T01:00:00.000Z');
+    assert.equal(store.assigned('p')[0].available, false);
+    store.saveDefinition({ id: 'injection', label: 'Injection', type: 'timed', availabilityInterval: '28' });
+    assert.equal(store.assigned('p')[0].available, true);
+    assert.equal(JSON.parse(fs.readFileSync(store.file)).definitions.injection.availabilityUnit, 'days');
+    store.saveDefinition({ id: 'injection', label: 'Injection', type: 'timed', availabilityInterval: 0 });
+    assert.equal(store.assigned('p')[0].nextAvailableAt, null);
+    for (const value of [-1, 1.5, 3651, 'invalid', true, []]) {
+      assert.throws(() => store.saveDefinition({ label: 'Invalid', type: 'timed', availabilityInterval: value }), /whole number of days/);
+    }
+    assert.throws(() => store.saveDefinition({ label: 'Invalid', type: 'timed', availabilityUnit: 'months', availabilityInterval: 1 }), /specified in days/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -144,5 +144,5 @@ backed up before replacement and restored if verification fails.
 ```
 
 Configure Event intervals in the portal after deployment: Self-Injectable can
-use 1 calendar month and Botox 84 days. Patient button availability display also
+use a clinic-prescribed number of days and Botox 84 days. Patient button availability display also
 requires the updated mobile app; the backend enforces intervals for older apps.

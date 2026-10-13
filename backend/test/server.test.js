@@ -58,11 +58,15 @@ test('clinic Events are assigned per patient and event times are optional in rev
   const identity = await enrolClinicManaged({ patientId: 'pt-events-synthetic', displayName: 'Events Synthetic' });
   const token = identity.accessToken;
   const eventsPage = await fetch(`${baseUrl}/admin/events`, { headers: adminHeaders() });
-  const csrfToken = (await eventsPage.text()).match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
+  const eventsHtml = await eventsPage.text();
+  assert.match(eventsHtml, /Minimum days between Events/);
+  assert.match(eventsHtml, /name="availabilityInterval" type="number" min="0"/);
+  assert.doesNotMatch(eventsHtml, /name="availabilityUnit"|Calendar months/);
+  const csrfToken = eventsHtml.match(/name="csrfToken" value="([a-f0-9]+)"/)?.[1];
   assert.ok(csrfToken);
   const save = await fetch(`${baseUrl}/admin/events/save`, {
     method: 'POST', headers: { ...adminHeaders(), 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ csrfToken, label: 'Infusion', type: 'daily', availabilityUnit: 'days', availabilityInterval: '84' }),
+    body: new URLSearchParams({ csrfToken, label: 'Infusion', type: 'daily', availabilityInterval: '84' }),
     redirect: 'manual',
   });
   assert.equal(save.status, 302);

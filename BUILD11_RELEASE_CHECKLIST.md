@@ -4,7 +4,7 @@ Version: 1.2.2+11. Base: merged codex/events-homepage (a80f9d1).
 
 ## Release changes
 
-- Per-Event minimum intervals in days or calendar months.
+- Per-Event customisable minimum intervals in days.
 - Patient buttons disable during an interval and show the next available date.
 - Server enforcement prevents early or overlapping backdated occurrences.
 - Existing Events remain unrestricted until the clinic configures an interval.
@@ -20,7 +20,7 @@ Version: 1.2.2+11. Base: merged codex/events-homepage (a80f9d1).
 ## Acceptance before store release
 
 - Confirm the merged Events backend has been deployed on the terminal server.
-- Set Self-Injectable to one calendar month and Botox to 84 days in Admin > Events.
+- Set Self-Injectable to the clinic-prescribed number of days and Botox to 84 days in Admin > Events.
 - Verify assigned buttons become disabled after recording and show eligibility dates.
 - Verify daily and unrestricted timed Events still work.
 - Verify profile sync, daily entry, seven-day backdating, history, and reminders.
