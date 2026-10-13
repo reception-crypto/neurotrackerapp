@@ -486,6 +486,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     onPressed:
                         _loading ||
                             _savingEvent ||
+                            !event.available ||
                             (event.type == 'daily' && event.recordedToday)
                         ? null
                         : () => _recordEvent(event),
@@ -497,6 +498,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     label: Text(
                       event.type == 'daily' && event.recordedToday
                           ? '${event.label} · Recorded today'
+                          : !event.available && event.nextAvailableAt != null
+                          ? '${event.label} · Available ${event.nextAvailableAt!.day}/${event.nextAvailableAt!.month}/${event.nextAvailableAt!.year}'
                           : event.label,
                     ),
                   ),
