@@ -32,10 +32,10 @@ jobs:
             echo "Legacy shared mobile credential reference found."
             exit 1
           fi
-      - name: Verify additive Build 10 identity
+      - name: Verify additive Build 11 identity
         run: |
-          grep -n -E '^version: 1\.2\.1\+10$' pubspec.yaml
-          grep -n -E 'appBuildNumber = 10' lib/app_identity.dart
+          grep -n -E '^version: 1\.2\.2\+11$' pubspec.yaml
+          grep -n -E 'appBuildNumber = 11' lib/app_identity.dart
           grep -n -E 'clinic-managed-v1' lib/app_identity.dart
           grep -n -E 'canonical-v1' lib/app_identity.dart
           grep -n -E 'independent-v1' lib/app_identity.dart
@@ -50,7 +50,7 @@ jobs:
             exit 1
           fi
       - name: Parse CodeMagic release script
-        run: bash -n delivery/build-neurosol-ios-build9.sh
+        run: bash -n delivery/build-neurosol-ios-build11.sh
 
   backend:
     runs-on: ubuntu-latest
@@ -111,7 +111,7 @@ jobs:
           $Scripts = Get-ChildItem `
             .\delivery\build9-backend-compatibility\*.ps1
           $Scripts += Get-Item `
-            .\delivery\build-neurosol-android-build9.ps1
+            .\delivery\build-neurosol-android-build11.ps1
           foreach ($Script in $Scripts) {
             $Tokens = $null
             $Errors = $null

@@ -3,10 +3,10 @@ import 'package:neurotrackerapp/services/clinic_profile_service.dart';
 import 'package:neurotrackerapp/services/identity_service.dart';
 
 void main() {
-  test('newer builds are advisory while Build 10 remains supported', () {
+  test('newer builds are advisory while Build 11 remains supported', () {
     const supported = MobileConfiguration(
       minimumBuild: 7,
-      latestBuild: 11,
+      latestBuild: 12,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
@@ -17,8 +17,8 @@ void main() {
 
   test('minimum build is the hard compatibility gate', () {
     const unsupported = MobileConfiguration(
-      minimumBuild: 11,
-      latestBuild: 11,
+      minimumBuild: 12,
+      latestBuild: 12,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
@@ -30,7 +30,7 @@ void main() {
   test('current build reports no update available', () {
     const current = MobileConfiguration(
       minimumBuild: 7,
-      latestBuild: 10,
+      latestBuild: 11,
       googlePlayUrl: '',
       appStoreUrl: '',
     );
@@ -40,14 +40,14 @@ void main() {
   });
 
   test(
-    'mobile requests advertise the Build 10 version and existing capabilities',
+    'mobile requests advertise the Build 11 version and existing capabilities',
     () {
       final headers = IdentityService.mobileHeaders(
         json: true,
         accessToken: 'synthetic-token',
       );
 
-      expect(headers['X-NeuroSol-Build'], '10');
+      expect(headers['X-NeuroSol-Build'], '11');
       expect(headers['X-NeuroSol-Profile'], 'clinic-managed-v1');
       expect(headers['X-NeuroSol-Disorders'], 'canonical-v1');
       expect(headers['X-NeuroSol-Profile-Model'], 'independent-v1');
