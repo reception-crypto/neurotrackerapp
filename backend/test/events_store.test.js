@@ -85,3 +85,26 @@ test('legacy month settings migrate conservatively to editable days', () => {
     assert.throws(() => store.saveDefinition({ label: 'Invalid', type: 'timed', availabilityUnit: 'months', availabilityInterval: 1 }), /specified in days/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('deleting an entry is patient-scoped, durable and recalculates availability', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neurosol-events-delete-'));
+  try {
+    const options = { dataDir: dir, now: () => new Date('2026-09-29T01:00:00Z') };
+    const store = createEventsStore(options);
+    const event = store.saveDefinition({ label: 'Infusion', type: 'daily', availabilityInterval: 28 });
+    store.assign('a', [event.id]);
+    store.assign('b', [event.id]);
+    const input = { eventId: event.id, occurredAt: '2026-09-29T00:00:00Z', localDate: '2026-09-29' };
+    const entry = store.record('a', input);
+    store.record('b', input);
+    assert.equal(store.removeEntry('b', entry.id), false);
+    assert.equal(store.assigned('a')[0].available, false);
+    assert.equal(store.removeEntry('a', entry.id), true);
+    assert.equal(store.removeEntry('a', entry.id), false);
+    assert.deepEqual(createEventsStore(options).entries('a'), []);
+    assert.equal(store.entries('b').length, 1);
+    assert.equal(store.assigned('a')[0].available, true);
+    assert.equal(store.assigned('a')[0].nextAvailableAt, null);
+    store.record('a', input);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
