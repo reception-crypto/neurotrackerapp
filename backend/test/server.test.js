@@ -114,6 +114,30 @@ test('clinic Events are assigned per patient and event times are optional in rev
   assert.doesNotMatch(html, /Reported occurrence/);
   const timed = await fetch(`${baseUrl}/admin?patientId=${identity.saved.patientId}&showEventTimes=1`, { headers: adminHeaders() });
   assert.match(await timed.text(), /Reported occurrence/);
+  assert.match(html, /Delete entry/);
+  const entryId = (await recorded.json()).entry.id;
+  const deleteEntry = (body, headers = adminHeaders()) => fetch(`${baseUrl}/admin/events/entries/delete`, {
+    method: 'POST', redirect: 'manual',
+    headers: { ...headers, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(body),
+  });
+  const deletion = { patientId: identity.saved.patientId, entryId, csrfToken };
+  assert.equal((await deleteEntry(deletion, {})).status, 401);
+  portalUserStore.save({ username: 'event-reviewer', password: 'event-reviewer-password',
+    permissions: ['patient_review', 'enrolments'] });
+  const reviewer = portalHeaders('event-reviewer', 'event-reviewer-password');
+  assert.equal((await deleteEntry(deletion, reviewer)).status, 403);
+  const readOnlyReview = await fetch(`${baseUrl}/admin?patientId=${identity.saved.patientId}`, { headers: reviewer });
+  assert.doesNotMatch(await readOnlyReview.text(), /Delete entry/);
+  assert.equal((await deleteEntry({ ...deletion, csrfToken: 'invalid' })).status, 403);
+  assert.equal((await deleteEntry({ ...deletion, patientId: 'another-patient' })).status, 404);
+  assert.equal((await deleteEntry(deletion)).status, 302);
+  assert.equal((await deleteEntry(deletion)).status, 404);
+  const afterDelete = await fetch(`${baseUrl}/api/events`, { headers: build7Headers(token) });
+  const state = await afterDelete.json();
+  assert.deepEqual(state.entries, []);
+  assert.equal(state.events[0].available, true);
+
 });
 
 function validSubmission({
