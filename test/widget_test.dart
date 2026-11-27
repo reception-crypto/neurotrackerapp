@@ -164,7 +164,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final event = find.byKey(const Key('event-sample'));
-      await tester.ensureVisible(event);
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -350));
+      await tester.pumpAndSettle();
       await tester.tap(event);
       await tester.pumpAndSettle();
       expect(find.text('Record Event?'), findsOneWidget);
