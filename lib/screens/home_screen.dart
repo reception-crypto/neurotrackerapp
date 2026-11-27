@@ -265,6 +265,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _recordEvent(ClinicEvent event) async {
+    if (_savingEvent) return;
+    setState(() => _savingEvent = true);
+    try {
+      await _confirmAndRecordEvent(event);
+    } finally {
+      if (mounted) setState(() => _savingEvent = false);
+    }
+  }
+
+  Future<void> _confirmAndRecordEvent(ClinicEvent event) async {
     var occurrence = DateTime.now();
     if (event.type == 'timed') {
       final date = await showDatePicker(
@@ -292,7 +302,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         time.minute,
       );
     }
-    setState(() => _savingEvent = true);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Record Event?'),
+        content: Text(
+          '${event.question}\n\n${event.label}\n'
+          '${MaterialLocalizations.of(context).formatFullDate(occurrence)} '
+          '${TimeOfDay.fromDateTime(occurrence).format(context)}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm Event'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     try {
       await EventsService.record(event, occurrence);
       await _loadStatus(syncClinicProfile: false);
@@ -311,10 +342,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           content: Text(error.toString().replaceFirst('Exception: ', '')),
         ),
       );
-    } finally {
-      if (mounted) {
-        setState(() => _savingEvent = false);
-      }
     }
   }
 

@@ -126,13 +126,22 @@ function createEventsStore({ dataDir, now = () => new Date() }) {
     write(data);
     return entry;
   }
+  function removeEntry(patientId, entryId) {
+    const data = read();
+    const index = data.entries.findIndex(entry =>
+      entry.patientId === patientId && entry.id === entryId);
+    if (index === -1) return false;
+    data.entries.splice(index, 1);
+    write(data);
+    return true;
+  }
   function removePatient(patientId) {
     const data = read();
     delete data.assignments[patientId];
     data.entries = data.entries.filter(entry => entry.patientId !== patientId);
     write(data);
   }
-  return { file, definitions, assigned, saveDefinition, setActive, assign, entries, record, removePatient };
+  return { file, definitions, assigned, saveDefinition, setActive, assign, entries, record, removeEntry, removePatient };
 }
 
 module.exports = { createEventsStore };

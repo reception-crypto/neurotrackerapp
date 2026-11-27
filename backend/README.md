@@ -347,3 +347,9 @@ REVIEW_DISPLAY_NAME=Google Play Review
 
 Each clean reviewer installation receives a separate synthetic PatientId and
 the fixed synthetic Migraine profile. Never use real patient information.
+
+## Correcting accidental Event entries
+
+In Patient Review, select the patient and use **Delete entry** in the Events table. Confirm the deletion when prompted. This requires both Patient Review and Manage Patients permissions (administrators have access). The server verifies the patient/entry pair and CSRF token before deleting. Event definitions, assignments and other entries remain intact; availability and once-per-day checks are recalculated from the remaining history. Deleted entries cannot be restored through the portal.
+
+The mobile homepage now requires an explicit **Confirm Event** action after an Event is tapped (and after choosing an occurrence time for timed Events). Cancel or dismiss the dialog to leave the Event unrecorded. Build and distribute the updated Flutter app to enable this behaviour on phones; deploy the updated backend for portal deletion.
