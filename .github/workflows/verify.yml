@@ -33,10 +33,10 @@ jobs:
             echo "Legacy shared mobile credential reference found."
             exit 1
           fi
-      - name: Verify additive Build 11 identity
+      - name: Verify additive Build 12 identity
         run: |
-          grep -n -E '^version: 1\.2\.2\+11$' pubspec.yaml
-          grep -n -E 'appBuildNumber = 11' lib/app_identity.dart
+          grep -n -E '^version: 1\.2\.3\+12$' pubspec.yaml
+          grep -n -E 'appBuildNumber = 12' lib/app_identity.dart
           grep -n -E 'clinic-managed-v1' lib/app_identity.dart
           grep -n -E 'canonical-v1' lib/app_identity.dart
           grep -n -E 'independent-v1' lib/app_identity.dart
@@ -112,7 +112,7 @@ jobs:
           $Scripts = Get-ChildItem `
             .\delivery\build9-backend-compatibility\*.ps1
           $Scripts += Get-Item `
-            .\delivery\build-neurosol-android-build11.ps1
+            .\delivery\build-neurosol-android-build12.ps1
           foreach ($Script in $Scripts) {
             $Tokens = $null
             $Errors = $null
