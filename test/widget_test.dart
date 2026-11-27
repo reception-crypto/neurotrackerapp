@@ -1,5 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neurotrackerapp/main.dart';
 import 'package:neurotrackerapp/models/daily_entry.dart';
 import 'package:neurotrackerapp/models/patient_profile.dart';
@@ -126,6 +130,57 @@ void main() {
       find.textContaining('reception@pascoeneurology.com'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('only confirming an Event sends a record request', (
+    tester,
+  ) async {
+    final submissions = <Map<String, dynamic>>[];
+    final client = MockClient((request) async {
+      expect(request.url.path, '/api/events');
+      if (request.method == 'POST') {
+        submissions.add(jsonDecode(request.body) as Map<String, dynamic>);
+        return http.Response('{}', 201);
+      }
+      return http.Response(
+        jsonEncode({
+          'events': [
+            {
+              'id': 'sample',
+              'label': 'Sample Event',
+              'question': 'Record this occurrence?',
+              'type': 'daily',
+            },
+          ],
+          'entries': submissions,
+        }),
+        200,
+      );
+    });
+
+    await http.runWithClient(() async {
+      await tester.pumpWidget(
+        const MaterialApp(home: HomeScreen(profile: testProfile)),
+      );
+      await tester.pumpAndSettle();
+      final event = find.byKey(const Key('event-sample'));
+      await tester.ensureVisible(event);
+      await tester.tap(event);
+      await tester.pumpAndSettle();
+      expect(find.text('Record Event?'), findsOneWidget);
+      expect(submissions, isEmpty);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(submissions, isEmpty);
+
+      await tester.tap(event);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirm Event'));
+      await tester.pumpAndSettle();
+      expect(submissions.single['eventId'], 'sample');
+      expect(find.text('Sample Event · Recorded today'), findsOneWidget);
+    }, () => client);
   });
 
   testWidgets('home offers one manual check-in when today is incomplete', (
