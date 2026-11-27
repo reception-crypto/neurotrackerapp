@@ -214,7 +214,7 @@ foreach ($requiredKey in @(
 }
 $storeFile = $keyProperties['storeFile'] -replace '\\\\', '\'
 if (-not [IO.Path]::IsPathRooted($storeFile)) {
-    $storeFile = Join-Path (Join-Path $projectRoot 'android') $storeFile
+    $storeFile = Join-Path (Join-Path $projectRoot 'android\app') $storeFile
 }
 if (-not (Test-Path -LiteralPath $storeFile -PathType Leaf)) {
     throw "The configured Android keystore was not found: $storeFile"
